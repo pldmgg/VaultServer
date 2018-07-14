@@ -1,15 +1,33 @@
 [System.Collections.ArrayList]$script:FunctionsForSBUse = @(
-    ${Function:NewCryptographyKey}.Ast.Extent.Text 
-    ${Function:DecryptFile}.Ast.Extent.Text
-    ${Function:EncryptFile}.Ast.Extent.Text
+    ${Function:ConvertFromHCLToPrintF}.Ast.Extent.Text 
+    ${Function:GetCurrentuser}.Ast.Extent.Text
+    ${Function:GetDomainController}.Ast.Extent.Text
+    ${Function:GetElevation}.Ast.Extent.Text
+    ${Function:GetGroupObjectsInLDAP}.Ast.Extent.Text
+    ${Function:GetModuleDependencies}.Ast.Extent.Text
+    ${Function:GetNativePath}.Ast.Extent.Text
+    ${Function:GetUserObjectsInLDAP}.Ast.Extent.Text
+    ${Function:InvokeModuleDependencies}.Ast.Extent.Text
+    ${Function:InvokePSCompatibility}.Ast.Extent.Text
+    ${Function:NewUniqueString}.Ast.Extent.Text
+    ${Function:PauseForWarning}.Ast.Extent.Text
+    ${Function:ResolveHost}.Ast.Extent.Text
+    ${Function:TestIsValidIPAddress}.Ast.Extent.Text
+    ${Function:TestLDAP}.Ast.Extent.Text
+    ${Function:TestPort}.Ast.Extent.Text
     ${Function:UnzipFile}.Ast.Extent.Text
-    ${Function:Get-DecryptedContent}.Ast.Extent.Text
-    ${Function:Extract-PfxCerts}.Ast.Extent.Text
-    ${Function:Get-EncryptionCert}.Ast.Extent.Text
-    ${Function:Get-PfxCertificateBetter}.Ast.Extent.Text
-    ${Function:Get-PrivatekeyProperty}.Ast.Extent.Text
-    ${Function:New-EncryptedFile}.Ast.Extent.Text
-    ${Function:New-SelfSignedCertificateEx}.Ast.Extent.Text
+    ${Function:Add-CAPubKeyToSSHAndSSHDConfig}.Ast.Extent.Text
+    ${Function:Configure-VaultServerForLDAPAuth}.Ast.Extent.Text
+    ${Function:ConfigureVaultServerForSSHManagement}.Ast.Extent.Text
+    ${Function:Get-LDAPCert}.Ast.Extent.Text
+    ${Function:Get-VaultAccessorLookup}.Ast.Extent.Text
+    ${Function:Get-VaultLogin}.Ast.Extent.Text
+    ${Function:Get-VaultTokenAccessors}.Ast.Extent.Text
+    ${Function:Get-VaultTokens}.Ast.Extent.Text
+    ${Function:New-SSHCredentials}.Ast.Extent.Text
+    ${Function:Revoke-VaultToken}.Ast.Extent.Text
+    ${Function:Sign-SSHHostPublicKey}.Ast.Extent.Text
+    ${Function:Sign-SSHUserPublicKey}.Ast.Extent.Text
 )
 
 # Below $opensslkeysource from http://www.jensign.com/opensslkey/index.html

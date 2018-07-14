@@ -54,34 +54,53 @@ Describe -Name "General Project Validation: $env:BHProjectName" -Tag 'Validation
         $Module = Get-Module $env:BHProjectName
         $Module.Name -eq $env:BHProjectName | Should Be $True
         $Commands = $Module.ExportedCommands.Keys
-        $Commands -contains 'NewCryptographyKey' | Should Be $False
-        $Commands -contains 'DecryptFile' | Should Be $False
-        $Commands -contains 'EncryptFile' | Should Be $False
+        $Commands -contains 'ConvertFromHCLToPrintF' | Should Be $False
+        $Commands -contains 'GetCurrentUser' | Should Be $False
+        $Commands -contains 'GetDomainController' | Should Be $False
+        $Commands -contains 'GetElevation' | Should Be $False
+        $Commands -contains 'GetGroupObjectsInLDAP' | Should Be $False
         $Commands -contains 'GetModuleDependencies' | Should Be $False
+        $Commands -contains 'GetNativePath' | Should Be $False
+        $Commands -contains 'GetUserObjectsInLDAP' | Should Be $False
         $Commands -contains 'InvokeModuleDependencies' | Should Be $False
         $Commands -contains 'InvokePSCompatibility' | Should Be $False
-        $Commands -contains 'ConvertSize' | Should Be $False
         $Commands -contains 'NewUniqueString' | Should Be $False
+        $Commands -contains 'PauseForWarning' | Should Be $False
+        $Commands -contains 'ResolveHost' | Should Be $False
+        $Commands -contains 'TestIsValidIPAddress' | Should Be $False
+        $Commands -contains 'TestLDAP' | Should Be $False
+        $Commands -contains 'TestPort' | Should Be $False
         $Commands -contains 'UnzipFile' | Should Be $False
         
-        $Commands -contains 'Get-DecryptedContent' | Should Be $True
-        $Commands -contains 'Extract-PfxCerts' | Should Be $True
-        $Commands -contains 'Get-EncryptionCert' | Should Be $True
-        $Commands -contains 'Get-PfxCertificateBetter' | Should Be $True
-        $Commands -contains 'Get-PrivateKeyProperty' | Should Be $True
-        $Commands -contains 'New-EncryptedFile' | Should Be $True
-        $Commands -contains 'New-SelfSignedCertificateEx' | Should Be $True
+        $Commands -contains 'Add-CAPubKeyToSSHAndSSHDConfig' | Should Be $True
+        $Commands -contains 'Configure-VaultServerForLDAPAuth' | Should Be $True
+        $Commands -contains 'Configure-VaultServerForSSHManagement' | Should Be $True
+        $Commands -contains 'Get-LDAPCert' | Should Be $True
+        $Commands -contains 'Get-VaultAccessorLookup' | Should Be $True
+        $Commands -contains 'Get-VaultLogin' | Should Be $True
+        $Commands -contains 'Get-VaultTokenAccessors' | Should Be $True
+        $Commands -contains 'Get-VaultTokens' | Should Be $True
+        $Commands -contains 'New-SSHCredentials' | Should Be $True
+        $Commands -contains 'Revoke-VaultToken' | Should Be $True
+        $Commands -contains 'Sign-SSHHostPublicKey' | Should Be $True
+        $Commands -contains 'Sign-SSHUserPublicKey' | Should Be $True
     }
 
     It "Module '$env:BHProjectName' Private Functions Are Available in Internal Scope" {
         $Module = Get-Module $env:BHProjectName
-        [bool]$Module.Invoke({Get-Item function:NewCryptographyKey}) | Should Be $True
-        [bool]$Module.Invoke({Get-Item function:DecryptFile}) | Should Be $True
-        [bool]$Module.Invoke({Get-Item function:EncryptFile}) | Should Be $True
+        [bool]$Module.Invoke({Get-Item function:ConvertFromHCLToPrintF}) | Should Be $True
+        [bool]$Module.Invoke({Get-Item function:GetCurrentUser}) | Should Be $True
+        [bool]$Module.Invoke({Get-Item function:GetDomainController}) | Should Be $True
+        [bool]$Module.Invoke({Get-Item function:GetElevation}) | Should Be $True
+        [bool]$Module.Invoke({Get-Item function:GetGroupObjectsInLDAP}) | Should Be $True
         [bool]$Module.Invoke({Get-Item function:GetModuleDependencies}) | Should Be $True
-        [bool]$Module.Invoke({Get-Item function:InvokeModuleDependencies}) | Should Be $True
         [bool]$Module.Invoke({Get-Item function:InvokePSCompatibility}) | Should Be $True
         [bool]$Module.Invoke({Get-Item function:NewUniqueString}) | Should Be $True
+        [bool]$Module.Invoke({Get-Item function:PauseForWarning}) | Should Be $True
+        [bool]$Module.Invoke({Get-Item function:ResolveHost}) | Should Be $True
+        [bool]$Module.Invoke({Get-Item function:TestIsValidIPAddress}) | Should Be $True
+        [bool]$Module.Invoke({Get-Item function:TestLDAP}) | Should Be $True
+        [bool]$Module.Invoke({Get-Item function:TestPort}) | Should Be $True
         [bool]$Module.Invoke({Get-Item function:UnzipFile}) | Should Be $True
     }
 }
