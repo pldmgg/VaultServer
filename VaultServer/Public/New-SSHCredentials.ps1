@@ -225,7 +225,18 @@ function New-SSHCredentials {
     }
 
     # Finally, figure out the most efficient ssh command to use to remote into the remote host.
-    Get-SSHClientAuthSanity -SSHKeyFilePath $NewSSHKeyResult.PublicKeyFilePath -AuthMethod PublicKeyCertificate
+    $Output = Get-SSHClientAuthSanity -SSHKeyFilePath $NewSSHKeyResult.PublicKeyFilePath -AuthMethod PublicKeyCertificate
+    if (Test-Path $NewSSHKeyResult.PrivateKeyFilePath) {
+        $Output | Add-Member -Type NoteProperty -Name PrivateKeyPath -Value $NewSSHKeyResult.PrivateKeyFilePath
+    }
+    if (Test-Path $NewSSHKeyResult.PublicKeyFilePath) {
+        $Output | Add-Member -Type NoteProperty -Name PublicKeyPath -Value $NewSSHKeyResult.PublicKeyFilePath
+    }
+    if (Test-Path $SignSSHUserPublicKeyResult.SignedCertFile.FullName) {
+        $Output | Add-Member -Type NoteProperty -Name PublicCertPath -Value $SignSSHUserPublicKeyResult.SignedCertFile.FullName
+    }
+
+    $Output
 
     Pop-Location
 
@@ -234,8 +245,8 @@ function New-SSHCredentials {
 # SIG # Begin signature block
 # MIIMiAYJKoZIhvcNAQcCoIIMeTCCDHUCAQExCzAJBgUrDgMCGgUAMGkGCisGAQQB
 # gjcCAQSgWzBZMDQGCisGAQQBgjcCAR4wJgIDAQAABBAfzDtgWUsITrck0sYpfvNR
-# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUpBsKWVeuFwzCbE6MkVyXE+qT
-# zzagggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
+# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUgj7HeYniz+mhPJ2p5lpWw2Ga
+# y2agggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
 # 9w0BAQsFADAwMQwwCgYDVQQGEwNMQUIxDTALBgNVBAoTBFpFUk8xETAPBgNVBAMT
 # CFplcm9EQzAxMB4XDTE3MDkyMDIxMDM1OFoXDTE5MDkyMDIxMTM1OFowPTETMBEG
 # CgmSJomT8ixkARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMT
@@ -292,11 +303,11 @@ function New-SSHCredentials {
 # ARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMTB1plcm9TQ0EC
 # E1gAAAH5oOvjAv3166MAAQAAAfkwCQYFKw4DAhoFAKB4MBgGCisGAQQBgjcCAQwx
 # CjAIoAKAAKECgAAwGQYJKoZIhvcNAQkDMQwGCisGAQQBgjcCAQQwHAYKKwYBBAGC
-# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFDRYPQSZhNvLM36u
-# wPjjP6wrQR7+MA0GCSqGSIb3DQEBAQUABIIBAJFNm57iKKhvz5bo0VOGl8dE8ywI
-# AtJset8Y0+/nDmeglsdz0m2Cy9ZvLB9Gh9W0acJaNWNkf1xs3TOrdoyZC2wnTKQD
-# wQ162p5foqEQQEymUICjANmbdWIIK6iUvAZq8cZTnDE6QS4q1xjHJ0GKTxCGpm+/
-# M61FFb3MP6z1ercr7XcVQKSgRj1aUdMGv7Me3TS94OZwqqdI9y9e/BUePneJJpbg
-# Q1yFOnkLrULEo2x3vi2xSPxHgMTHmBzNN4OAXhZSiOUy4ltBe7owG5jkOqOb9NxH
-# c+ZFQ+K9RmyzerM2o98AOhJdodo9UhPrFfPd5LQt8CCdbwyWlaVGkIcM2Vk=
+# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFM6IAsmBaSPwRrMX
+# JQquSIY0zgsDMA0GCSqGSIb3DQEBAQUABIIBAJNZH95yumlfn9eVLfk2bV43eJSd
+# qdCDpadgbLSIX+5CWVt5RAkFYuY81jpy1AwNLltEwyZyrAutXdPvAsqfWR8oz2I5
+# e+YcpTxn/bXMLJEezhimIJ5ytZV4el47GhgVX0E1FO2DkkUfrp8fcbutwK5sFF5z
+# EjLawldrKBf8SJZkAtNpePOB55eYFgHL8rvWcXBZpn+3c33I3bCh8C4kAgNID4PI
+# DQAj+DOB8I7nQfiIZwtJyQKEVAvQ+LThLiPUxFp2mPpX57VEIxllyNcaRjH4lh12
+# 5c/ZeUhFiE2wPJ8Q+GdER0vm7QN1se1WrqnWeTTEtctkDnzQQ9GWuz+emhk=
 # SIG # End signature block
