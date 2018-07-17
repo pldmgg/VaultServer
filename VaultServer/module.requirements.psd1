@@ -10,4 +10,8 @@
         DependencyType  = 'PSGalleryNuget'
         Version         = 'Latest'
     }
+    'NTFSSecurity' = @{
+        DependencyType  = 'PSGalleryNuget'
+        Version         = 'Latest'
+    }
 }

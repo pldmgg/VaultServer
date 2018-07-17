@@ -429,13 +429,21 @@ function Add-CAPubKeyToSSHAndSSHDConfig {
     }
 
     # Add the CA Public Certs to $sshdir/authorized_keys in their appropriate formats
-    Add-Content -Path "$sshdir/authorized_keys" -Value $("ssh-rsa-cert-v01@openssh.com " + "$PublicKeyOfCAUsedToSignUserKeysAsString")
-    Add-Content -Path "$sshdir/authorized_keys" -Value $("ssh-rsa-cert-v01@openssh.com " + "$PublicKeyOfCAUsedToSignHostKeysAsString")
+    $ContentToAddToAuthKeys = @(
+        "ssh-rsa-cert-v01@openssh.com " + $PublicKeyOfCAUsedToSignUserKeysAsString
+        "ssh-rsa-cert-v01@openssh.com " + $PublicKeyOfCAUsedToSignHostKeysAsString
+    )
+    $ContentToAddToAuthKeysString = $ContentToAddToAuthKeys -join "`n"
+    Add-Content -Path "$sshdir/authorized_keys" -Value $ContentToAddToAuthKeysString
     $null = $FilesUpdated.Add($(Get-Item "$sshdir/authorized_keys"))
 
     # Add the CA Public Certs to $sshdir/ssh_known_hosts in their appropriate formats
-    Add-Content -Path $sshdir/ssh_known_hosts -Value $("@cert-authority * " + "$PublicKeyOfCAUsedToSignUserKeysAsString")
-    Add-Content -Path $sshdir/ssh_known_hosts -Value $("@cert-authority * " + "$PublicKeyOfCAUsedToSignHostKeysAsString")
+    $ContentToAddToKnownHosts = @(
+        "@cert-authority * " + $PublicKeyOfCAUsedToSignUserKeysAsString
+        "@cert-authority * " + $PublicKeyOfCAUsedToSignHostKeysAsString
+    )
+    $ContentToAddToKnownHostsString = $ContentToAddToKnownHosts -join "`n"
+    Add-Content -Path $sshdir/ssh_known_hosts -Value $ContentToAddToKnownHostsString
     $null = $FilesUpdated.Add($(Get-Item "$sshdir/ssh_known_hosts"))
 
     # Make sure $PublicKeyOfCAUsedToSignUserKeysAsString and $PublicKeyOfCAUsedToSignHostKeysAsString are written
@@ -501,7 +509,7 @@ function Add-CAPubKeyToSSHAndSSHDConfig {
 
     try {
         $AuthorizedPrincipalsFile = Generate-AuthorizedPrincipalsFile @AuthPrincSplatParams
-        if (!$AuthorizedPrincipalsFile) {throw "There was a problem with the Generate-AuthroizedPrincipalsFile function! Halting!"}
+        if (!$AuthorizedPrincipalsFile) {throw "There was a problem with the Generate-AuthorizedPrincipalsFile function! Halting!"}
 
         $null = $FilesUpdated.Add($(Get-Item "$sshdir/authorized_principals"))        
     }
@@ -513,30 +521,24 @@ function Add-CAPubKeyToSSHAndSSHDConfig {
     }
 
     # Now we need to fix permissions for $sshdir/authroized_principals...
-    if ($(Get-Module -ListAvailable).Name -notcontains "NTFSSecurity") {
-        Install-Module NTFSSecurity
+    if ($PSVersionTable.PSEdition -eq "Core") {
+        Invoke-WinCommand -ComputerName localhost -ScriptBlock {
+            $SecurityDescriptor = Get-NTFSSecurityDescriptor -Path "$($args[0])/authorized_principals"
+            $SecurityDescriptor | Disable-NTFSAccessInheritance -RemoveInheritedAccessRules
+            $SecurityDescriptor | Clear-NTFSAccess
+            $SecurityDescriptor | Add-NTFSAccess -Account "NT AUTHORITY\SYSTEM" -AccessRights "FullControl" -AppliesTo ThisFolderSubfoldersAndFiles
+            $SecurityDescriptor | Add-NTFSAccess -Account "Administrators" -AccessRights "FullControl" -AppliesTo ThisFolderSubfoldersAndFiles
+            $SecurityDescriptor | Set-NTFSSecurityDescriptor
+        } -ArgumentList $sshdir
     }
-    try {
-        if ($(Get-Module).Name -notcontains "NTFSSecurity") {Import-Module NTFSSecurity}
+    else {
+        $SecurityDescriptor = Get-NTFSSecurityDescriptor -Path "$sshdir/authorized_principals"
+        $SecurityDescriptor | Disable-NTFSAccessInheritance -RemoveInheritedAccessRules
+        $SecurityDescriptor | Clear-NTFSAccess
+        $SecurityDescriptor | Add-NTFSAccess -Account "NT AUTHORITY\SYSTEM" -AccessRights "FullControl" -AppliesTo ThisFolderSubfoldersAndFiles
+        $SecurityDescriptor | Add-NTFSAccess -Account "Administrators" -AccessRights "FullControl" -AppliesTo ThisFolderSubfoldersAndFiles
+        $SecurityDescriptor | Set-NTFSSecurityDescriptor
     }
-    catch {
-        if ($_.Exception.GetType().FullName -eq "System.Management.Automation.RuntimeException") {
-            Write-Verbose "NTFSSecurity Module is already loaded..."
-        }
-        else {
-            Write-Error "There was a problem loading the NTFSSecurity Module! Halting!"
-            $global:FunctionResult = "1"
-            if ($Output.Count -gt 0) {[pscustomobject]$Output}
-            return
-        }
-    }
-
-    $SecurityDescriptor = Get-NTFSSecurityDescriptor -Path "$sshdir/authorized_principals"
-    $SecurityDescriptor | Disable-NTFSAccessInheritance -RemoveInheritedAccessRules
-    $SecurityDescriptor | Clear-NTFSAccess
-    $SecurityDescriptor | Add-NTFSAccess -Account "NT AUTHORITY\SYSTEM" -AccessRights "FullControl" -AppliesTo ThisFolderSubfoldersAndFiles
-    $SecurityDescriptor | Add-NTFSAccess -Account "Administrators" -AccessRights "FullControl" -AppliesTo ThisFolderSubfoldersAndFiles
-    $SecurityDescriptor | Set-NTFSSecurityDescriptor
 
     # Now that we have set content for $PublicKeyOfCAUsedToSignUserKeysFilePath, $sshdir/authorized_principals, and
     # $sshdir/authorized_keys, we need to update sshd_config to reference these files
@@ -684,8 +686,8 @@ function Add-CAPubKeyToSSHAndSSHDConfig {
 # SIG # Begin signature block
 # MIIMiAYJKoZIhvcNAQcCoIIMeTCCDHUCAQExCzAJBgUrDgMCGgUAMGkGCisGAQQB
 # gjcCAQSgWzBZMDQGCisGAQQBgjcCAR4wJgIDAQAABBAfzDtgWUsITrck0sYpfvNR
-# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUPpEoGmJlE2oyvD2lwK3hzji2
-# 0Qegggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
+# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUcvjyDcoaHAlC6nmsULMG1RZv
+# qQigggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
 # 9w0BAQsFADAwMQwwCgYDVQQGEwNMQUIxDTALBgNVBAoTBFpFUk8xETAPBgNVBAMT
 # CFplcm9EQzAxMB4XDTE3MDkyMDIxMDM1OFoXDTE5MDkyMDIxMTM1OFowPTETMBEG
 # CgmSJomT8ixkARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMT
@@ -742,11 +744,11 @@ function Add-CAPubKeyToSSHAndSSHDConfig {
 # ARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMTB1plcm9TQ0EC
 # E1gAAAH5oOvjAv3166MAAQAAAfkwCQYFKw4DAhoFAKB4MBgGCisGAQQBgjcCAQwx
 # CjAIoAKAAKECgAAwGQYJKoZIhvcNAQkDMQwGCisGAQQBgjcCAQQwHAYKKwYBBAGC
-# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFDze+ntNoiPGkDHG
-# BTtZus99yOwsMA0GCSqGSIb3DQEBAQUABIIBABcPpRXBdECWa2hP4zgCmvh0g09a
-# l32s+SCtq6sv+ahbZLxvdJxmiphDuXWr5WQbCL9g5Ck+qVfNSNLlnxjvNVmBtp5O
-# ZvihGU/mdJ3zf86LkU2lBneKf8zd9zxosC5ZiJPr1zRIIFWeZuNWJzANs18Maj46
-# GfHwzWbWaQ9np4nOWRBA61lLHmXiqAnNMIJwbefpIHRIyI0aD0t0QzYMKNzKH3FZ
-# broXVXQmgKq9WX4mrXDkb8lQo7MOZ5+MAG5Q9po/Jqvg7qeemZ5hTGdn9npp/Den
-# 058B8n3jxeQ2pQc0OaHXAnMRMkuHOJpENdlm43AuR+aSlxtkN+Tbi5+1CAE=
+# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFFSQuZEtj8Hc57L0
+# MgjTpL6KJgOSMA0GCSqGSIb3DQEBAQUABIIBAHl8Shoxvs4orsbqv7jNKC9pboEE
+# UPmPlqtiRZU+SP8YEGC876DKqJRh31scYZrgl8ij3O8NhZ7Y2MVbq+OlN2oSqNPd
+# ijgjdUX5J53ZIGZcD8sD0KXGlggMnI1mmzMSBnLDgYoAodnoj9OCqez4xl3edKs7
+# hpspGHeJ8L+vtt0smmjLGbefBF4KVNltIlqLSUzh0kB0vRamZaIaL0NNyO3WcJxD
+# TGRHk5iimQ7Q5xfRT0iWf6EdbQW4H/oEDpq0p6nLeNvV/k0U3cWVH32RlEYrIiGz
+# 8KebcjkPLGLWmB+wbl+gdc5yUz2DPiKum+dSqMqt6r+JJxj7UNWWa55YTNg=
 # SIG # End signature block

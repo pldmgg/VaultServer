@@ -151,7 +151,9 @@ function Sign-SSHUserPublicKey {
     ##### BEGIN Main Body #####
 
     # HTTP API Request
-    $PubKeyContent = Get-Content $PathToSSHUserPublicKeyFile
+    # The below removes 'comment' text from the Host Public key because sometimes it can cause problems
+    # with the below json
+    $PubKeyContent = $($(Get-Content $PathToSSHUserPublicKeyFile) -split "[\s]")[0..1] -join " "
     $ValidPrincipalsCommaSeparated = $AuthorizedUserPrincipals -join ','
     # In the below JSON, <HostNameOrDomainPre> - Use the HostName if user is a Local Account and the DomainPre if the user
     # is a Domain Account
@@ -202,8 +204,8 @@ function Sign-SSHUserPublicKey {
 # SIG # Begin signature block
 # MIIMiAYJKoZIhvcNAQcCoIIMeTCCDHUCAQExCzAJBgUrDgMCGgUAMGkGCisGAQQB
 # gjcCAQSgWzBZMDQGCisGAQQBgjcCAR4wJgIDAQAABBAfzDtgWUsITrck0sYpfvNR
-# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUWgOC73hyc14RqoTOqqyjDyBe
-# KCqgggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
+# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUdUdTS9dI3akclciEfi1L0AYf
+# uDOgggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
 # 9w0BAQsFADAwMQwwCgYDVQQGEwNMQUIxDTALBgNVBAoTBFpFUk8xETAPBgNVBAMT
 # CFplcm9EQzAxMB4XDTE3MDkyMDIxMDM1OFoXDTE5MDkyMDIxMTM1OFowPTETMBEG
 # CgmSJomT8ixkARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMT
@@ -260,11 +262,11 @@ function Sign-SSHUserPublicKey {
 # ARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMTB1plcm9TQ0EC
 # E1gAAAH5oOvjAv3166MAAQAAAfkwCQYFKw4DAhoFAKB4MBgGCisGAQQBgjcCAQwx
 # CjAIoAKAAKECgAAwGQYJKoZIhvcNAQkDMQwGCisGAQQBgjcCAQQwHAYKKwYBBAGC
-# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFIUuuE9nn3OkusDJ
-# NNxtvBg9EaQLMA0GCSqGSIb3DQEBAQUABIIBAFtZYB3H6HsfCZM5IZpqdFWx8vl0
-# 5gG7UQZO0ALJeqdJw2hXcJRP9BsoEcEbDaqJa3Fh6lkCsCSMSTKxdY/7/EAJkcB2
-# cTbyTakixu5WTRjGIs32eZOZmWc2QpPbXhyMiw0SaLBcZIpXAbIbvLzKLiNNSVZY
-# NCL4pX43Cy2S9YytP7VR6kHT0zJ3sc9Qi2/g2CZl4jnxC+MXenmzFlUsxMGa8Eac
-# r9JTZuLWZ0zf+czhhm7nUt9v86Fu/CYgdHXFG1afQerDiX+e7AomRc3ns1S31GQc
-# MP2ggsQKK12AE1tkBkND7Zz1m2Hn8hHvxjehd7q4OeGcPL620i8/SFHeg5Q=
+# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFCr0Xfak/7m/7ObY
+# azaTyQ7fZivfMA0GCSqGSIb3DQEBAQUABIIBALCdnkqyKS14Ul7q8AYKCwH8bol1
+# ArTQzPYMna94OM8kWV36gs904dmVowyBkRrVGtQauxHwDJRpZ9xoRFAlvqeMcVe1
+# UYBZgDOhlZsGeuiXmExFckZeeXiOvV9sPTIr+OeXF4LQPwXLzX1+BYoLxbAy/c+3
+# KIllvVsVtXuZSUN9Bwwfm6bC0skr5zkI4vIetJSkxPfFzul42nEXcdhfRSZJTC/e
+# EVrXNPJNMscBGsUzd9iafX+bFfMHjwe+pdNMj3vJ6/NMnTtbyKxoD94xHRsAQPGY
+# fM/E+2qflWmtXLTNEaZH7YPCgd9WFuEDFxJqJ3m/F+rw0mC3Q5e9Ci0t7bI=
 # SIG # End signature block

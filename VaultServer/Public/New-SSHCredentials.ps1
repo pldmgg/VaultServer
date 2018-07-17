@@ -56,17 +56,6 @@
 
         This parameter is a switch. If used, the new SSH Key Pair will be added to the ssh-agent service.
 
-    .PARAMETER AllowAwaitModuleInstall
-        This parameter is OPTIONAL. This parameter should only be used in conjunction with the
-        -BlankSSHPrivateKeyPwd switch.
-
-        This parameter is a switch.
-
-        If you would like the Private Key file to be unprotected, and if you would like to avoid the
-        ssh-keygen prompt for a password, the PowerShell Await Module is required.
-
-        Use this switch along with the -BlankSSHPrivateKeyPwd switch to avoid prompts altogether.
-
     .PARAMETER RemovePrivateKey
         This parameter is OPTIONAL. This parameter should only be used in conjunction with the
         -AddtoSSHAgent switch.
@@ -81,8 +70,6 @@
             VaultServerBaseUri      = $VaultServerBaseUri
             VaultAuthToken          = $VaultAuthToken
             NewSSHKeyName           = $NewSSHKeyName
-            BlankSSHPrivateKeyPwd   = $True
-            AllowAwaitModuleInstall = $True
             AddToSSHAgent           = $True
         }
         PS C:\Users\zeroadmin> $NewSSHCredsResult = New-SSHCredentials @NewSSHCredentialsSplatParams
@@ -116,9 +103,6 @@ function New-SSHCredentials {
 
         [Parameter(Mandatory=$False)]
         [switch]$AddToSSHAgent,
-
-        [Parameter(Mandatory=$False)]
-        [switch]$AllowAwaitModuleInstall,
 
         [Parameter(Mandatory=$False)]
         [switch]$RemovePrivateKey
@@ -166,19 +150,15 @@ function New-SSHCredentials {
     if ($NewSSHKeyPurpose) {
         $NewSSHKeySplatParams.Add("NewSSHKeyPurpose",$NewSSHKeyPurpose)
     }
-    if (!$BlankSSHPrivateKeyPwd) {
-        if ($NewSSHKeyPwd) {
-            $KeyPwd = $NewSSHKeyPwd
-        }
-        else {
-            $KeyPwd = Read-Host -Prompt "Please enter a password to protect the new SSH Private Key $NewSSHKeyName"
-        }
-        $NewSSHKeySplatParams.Add("NewSSHKeyPwd",$KeyPwd)
+    
+    if ($NewSSHKeyPwd) {
+        $KeyPwd = $NewSSHKeyPwd
     }
-    else {
-        if ($AllowAwaitModuleInstall) {
-            $NewSSHKeySplatParams.Add("AllowAwaitModuleInstall",$True)
-        }
+    if (!$BlankSSHPrivateKeyPwd -and !$NewSSHKeyPwd) {
+        $KeyPwd = Read-Host -Prompt "Please enter a password to protect the new SSH Private Key $NewSSHKeyName"
+    }
+    if ($KeyPwd) {
+        $NewSSHKeySplatParams.Add("NewSSHKeyPwd",$KeyPwd)
     }
     
     try {
@@ -254,8 +234,8 @@ function New-SSHCredentials {
 # SIG # Begin signature block
 # MIIMiAYJKoZIhvcNAQcCoIIMeTCCDHUCAQExCzAJBgUrDgMCGgUAMGkGCisGAQQB
 # gjcCAQSgWzBZMDQGCisGAQQBgjcCAR4wJgIDAQAABBAfzDtgWUsITrck0sYpfvNR
-# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUPOy4aDUjLsT4d1bEMNYqi90W
-# rVugggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
+# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUpBsKWVeuFwzCbE6MkVyXE+qT
+# zzagggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
 # 9w0BAQsFADAwMQwwCgYDVQQGEwNMQUIxDTALBgNVBAoTBFpFUk8xETAPBgNVBAMT
 # CFplcm9EQzAxMB4XDTE3MDkyMDIxMDM1OFoXDTE5MDkyMDIxMTM1OFowPTETMBEG
 # CgmSJomT8ixkARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMT
@@ -312,11 +292,11 @@ function New-SSHCredentials {
 # ARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMTB1plcm9TQ0EC
 # E1gAAAH5oOvjAv3166MAAQAAAfkwCQYFKw4DAhoFAKB4MBgGCisGAQQBgjcCAQwx
 # CjAIoAKAAKECgAAwGQYJKoZIhvcNAQkDMQwGCisGAQQBgjcCAQQwHAYKKwYBBAGC
-# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFGEa6ppQmafzneOG
-# y9cZGiKc+B+OMA0GCSqGSIb3DQEBAQUABIIBAMJpVSDZce1WGrv8sl9cn3MaHklB
-# hcAin3TfcLxGhEWBC536FSQZL/WyX6/pno/1Nfc0kd8DCZk3342QeYt+KM0kImBz
-# V2xeEr7oAfxHG0DLStknfN7d1rlZX9vRi47kkbwmMl/H+JrNkjNqnGSnBW85WoSd
-# VBFWeRQIRPwQSnMZ1PT/kEKQswl9pDMDOlKzEC80M2lph9pPXsgJe6Li+HJ+clAy
-# hla4Ampy7Ot8IzL+c39l5Wl5i+7YClni3Z4QvMWZWL9AVWJNV2uNZZ1nnDT1fg0N
-# cxWDaM4IzhToQ4QM+7NnT3Mxe0K0KFcI5wxPIio0vUoMZaTxT2+fY0A5LGs=
+# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFDRYPQSZhNvLM36u
+# wPjjP6wrQR7+MA0GCSqGSIb3DQEBAQUABIIBAJFNm57iKKhvz5bo0VOGl8dE8ywI
+# AtJset8Y0+/nDmeglsdz0m2Cy9ZvLB9Gh9W0acJaNWNkf1xs3TOrdoyZC2wnTKQD
+# wQ162p5foqEQQEymUICjANmbdWIIK6iUvAZq8cZTnDE6QS4q1xjHJ0GKTxCGpm+/
+# M61FFb3MP6z1ercr7XcVQKSgRj1aUdMGv7Me3TS94OZwqqdI9y9e/BUePneJJpbg
+# Q1yFOnkLrULEo2x3vi2xSPxHgMTHmBzNN4OAXhZSiOUy4ltBe7owG5jkOqOb9NxH
+# c+ZFQ+K9RmyzerM2o98AOhJdodo9UhPrFfPd5LQt8CCdbwyWlaVGkIcM2Vk=
 # SIG # End signature block

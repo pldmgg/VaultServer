@@ -7,7 +7,7 @@ function GetUserObjectsInLDAP {
     # PortsThatWork
     try {
         $DomainControllerInfo = GetDomainController -ErrorAction Stop
-        $LDAPInfo = Test-LDAP -ADServerHostNameOrIP $DomainControllerInfo.PrimaryDomainController -ErrorAction Stop
+        $LDAPInfo = TestLDAP -ADServerHostNameOrIP $DomainControllerInfo.PrimaryDomainController -ErrorAction Stop
         if (!$DomainControllerInfo) {throw "Problem with GetDomainController function! Halting!"}
         if (!$LDAPInfo) {throw "Problem with TestLDAP function! Halting!"}
     }
@@ -36,7 +36,7 @@ function GetUserObjectsInLDAP {
         $LDAPUri = $LDAPInfo.LDAPBaseUri + ":3269"
     }
 
-    $Connection = [ADSI]($LDAPUri)
+    $Connection = [System.DirectoryServices.DirectoryEntry]($LDAPUri)
     #$UsersLDAPContainer = $Connection.Children | Where-Object {$_.distinguishedName -match "Users"}
     #$UserObjectsInLDAP = $UsersLDAPContainer.Children | Where-Object {$_.objectClass -contains "user" -and $_.objectClass -notcontains "group"}
     $Searcher = New-Object System.DirectoryServices.DirectorySearcher
@@ -50,8 +50,8 @@ function GetUserObjectsInLDAP {
 # SIG # Begin signature block
 # MIIMiAYJKoZIhvcNAQcCoIIMeTCCDHUCAQExCzAJBgUrDgMCGgUAMGkGCisGAQQB
 # gjcCAQSgWzBZMDQGCisGAQQBgjcCAR4wJgIDAQAABBAfzDtgWUsITrck0sYpfvNR
-# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUslpEoU2cR80v6OUrmfEGE4BW
-# E2agggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
+# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUFVoXQt4cgG+3/kMvIbzLfPzq
+# gGSgggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
 # 9w0BAQsFADAwMQwwCgYDVQQGEwNMQUIxDTALBgNVBAoTBFpFUk8xETAPBgNVBAMT
 # CFplcm9EQzAxMB4XDTE3MDkyMDIxMDM1OFoXDTE5MDkyMDIxMTM1OFowPTETMBEG
 # CgmSJomT8ixkARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMT
@@ -108,11 +108,11 @@ function GetUserObjectsInLDAP {
 # ARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMTB1plcm9TQ0EC
 # E1gAAAH5oOvjAv3166MAAQAAAfkwCQYFKw4DAhoFAKB4MBgGCisGAQQBgjcCAQwx
 # CjAIoAKAAKECgAAwGQYJKoZIhvcNAQkDMQwGCisGAQQBgjcCAQQwHAYKKwYBBAGC
-# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFKwZedNsOx2b+p3O
-# jO1BWDppdn29MA0GCSqGSIb3DQEBAQUABIIBAEgOQe4dVd/LL7gxkcYEUbKh4pPv
-# TFbz7fwW7208F5EfpRiFV4v7jb6G3KaP2Z17Bd5D/yrPICavufXzo9fvRCXKbiXf
-# SzTiUgj/zoAb1NMJrP5puyX8zLF4j0suKHv4OI9/833BzFX6EoqcsxlIu9T6/hsB
-# rXbSL1Kv+CJW/dP0bX9pDvqD06PEc4aa63AnYE00zL1DYgBfPaapCpYraB5Fwq20
-# lwmGAGY6pFtoWqsh48+EAHmeK9ySdcWq3YzQnSbfbSv3cSj7VqWd85asa4zzxtZ1
-# VAT5iFuCFBkCC3WlMwxQZwxrcCC1gygb/xGnE9eePdDdp0Rj3b3aByHDVO8=
+# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFE45miYcWOJ7mntp
+# TtSWpcn5BywZMA0GCSqGSIb3DQEBAQUABIIBAB2qynhNCh5qyNnbxmDaGQHa5nT0
+# X0jKWxpZtK3GATGJahXQ5UuoPcS/8fnBX4gExGSA8Vpx3CTQNNmN8pV2IiMZpUq8
+# HF0aZ0XA5Q1q6HFQoXrGVAkjAmtLrkqfr6IXjzBgwSXZ6tfS4s5iaWwv2QZb2dD0
+# NizmreWQXnU6bXpodCgzgO6Uqd0LRxvYO94n+CBNES5tQKDCibM95XZgRgqezAL/
+# 7CjpI1Zc1bncFGhHL9308D8/lTplHrCuy4oN6fXtmvnik3LdBSnRxW7oXhA25gEH
+# C0L2E9pUlH2U3IjJtlGiaC59hDK2l1DwkQyrPTafrveXwb60SSOBn9LzL2M=
 # SIG # End signature block

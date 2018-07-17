@@ -130,7 +130,9 @@ function Sign-SSHHostPublicKey {
     ##### BEGIN Main Body #####
 
     # HTTP API Request
-    $PubKeyContent = Get-Content $PathToSSHHostPublicKeyFile
+    # The below removes 'comment' text from the Host Public key because sometimes it can cause problems
+    # with the below json
+    $PubKeyContent = $($(Get-Content $PathToSSHHostPublicKeyFile) -split "[\s]")[0..1] -join " "
 
     $jsonRequest = @"
 {
@@ -158,31 +160,26 @@ function Sign-SSHHostPublicKey {
     Set-Content -Value $($SignedSSHClientPubKeyCertResponse.Content | ConvertFrom-Json).data.signed_key.Trim() -Path $SignedPubKeyCertFilePath
 
     # Make sure permissions on "$sshdir/ssh_host_rsa_key-cert.pub" are set properly
-    if ($(Get-Module -ListAvailable).Name -notcontains "NTFSSecurity") {
-        Install-Module NTFSSecurity
+    if ($PSVersionTable.PSEdition -eq "Core") {
+        Invoke-WinCommand -ComputerName localhost -ScriptBlock {
+            $SecurityDescriptor = Get-NTFSSecurityDescriptor -Path $args[0]
+            $SecurityDescriptor | Disable-NTFSAccessInheritance -RemoveInheritedAccessRules
+            $SecurityDescriptor | Clear-NTFSAccess
+            $SecurityDescriptor | Add-NTFSAccess -Account "NT AUTHORITY\SYSTEM" -AccessRights "FullControl" -AppliesTo ThisFolderSubfoldersAndFiles
+            $SecurityDescriptor | Add-NTFSAccess -Account "Administrators" -AccessRights "FullControl" -AppliesTo ThisFolderSubfoldersAndFiles
+            $SecurityDescriptor | Add-NTFSAccess -Account "NT AUTHORITY\Authenticated Users" -AccessRights "ReadAndExecute, Synchronize" -AppliesTo ThisFolderSubfoldersAndFiles
+            $SecurityDescriptor | Set-NTFSSecurityDescriptor
+        } -ArgumentList $SignedPubKeyCertFilePath
     }
-
-    try {
-        if ($(Get-Module).Name -notcontains "NTFSSecurity") {Import-Module NTFSSecurity}
+    else {
+        $SecurityDescriptor = Get-NTFSSecurityDescriptor -Path $SignedPubKeyCertFilePath
+        $SecurityDescriptor | Disable-NTFSAccessInheritance -RemoveInheritedAccessRules
+        $SecurityDescriptor | Clear-NTFSAccess
+        $SecurityDescriptor | Add-NTFSAccess -Account "NT AUTHORITY\SYSTEM" -AccessRights "FullControl" -AppliesTo ThisFolderSubfoldersAndFiles
+        $SecurityDescriptor | Add-NTFSAccess -Account "Administrators" -AccessRights "FullControl" -AppliesTo ThisFolderSubfoldersAndFiles
+        $SecurityDescriptor | Add-NTFSAccess -Account "NT AUTHORITY\Authenticated Users" -AccessRights "ReadAndExecute, Synchronize" -AppliesTo ThisFolderSubfoldersAndFiles
+        $SecurityDescriptor | Set-NTFSSecurityDescriptor
     }
-    catch {
-        if ($_.Exception.GetType().FullName -eq "System.Management.Automation.RuntimeException") {
-            Write-Verbose "NTFSSecurity Module is already loaded..."
-        }
-        else {
-            Write-Error "There was a problem loading the NTFSSecurity Module! Halting!"
-            $global:FunctionResult = "1"
-            return
-        }
-    }
-
-    $SecurityDescriptor = Get-NTFSSecurityDescriptor -Path $SignedPubKeyCertFilePath
-    $SecurityDescriptor | Disable-NTFSAccessInheritance -RemoveInheritedAccessRules
-    $SecurityDescriptor | Clear-NTFSAccess
-    $SecurityDescriptor | Add-NTFSAccess -Account "NT AUTHORITY\SYSTEM" -AccessRights "FullControl" -AppliesTo ThisFolderSubfoldersAndFiles
-    $SecurityDescriptor | Add-NTFSAccess -Account "Administrators" -AccessRights "FullControl" -AppliesTo ThisFolderSubfoldersAndFiles
-    $SecurityDescriptor | Add-NTFSAccess -Account "NT AUTHORITY\Authenticated Users" -AccessRights "ReadAndExecute, Synchronize" -AppliesTo ThisFolderSubfoldersAndFiles
-    $SecurityDescriptor | Set-NTFSSecurityDescriptor
 
     # Update sshd_config
     [System.Collections.ArrayList]$sshdContent = Get-Content $sshdConfigPath
@@ -236,8 +233,8 @@ function Sign-SSHHostPublicKey {
 # SIG # Begin signature block
 # MIIMiAYJKoZIhvcNAQcCoIIMeTCCDHUCAQExCzAJBgUrDgMCGgUAMGkGCisGAQQB
 # gjcCAQSgWzBZMDQGCisGAQQBgjcCAR4wJgIDAQAABBAfzDtgWUsITrck0sYpfvNR
-# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUxKjYRoQWuwD2FxlpHgcpxHaM
-# Tjygggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
+# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUZajRlotBSytFUYKyHdZKkD8j
+# Eyigggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
 # 9w0BAQsFADAwMQwwCgYDVQQGEwNMQUIxDTALBgNVBAoTBFpFUk8xETAPBgNVBAMT
 # CFplcm9EQzAxMB4XDTE3MDkyMDIxMDM1OFoXDTE5MDkyMDIxMTM1OFowPTETMBEG
 # CgmSJomT8ixkARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMT
@@ -294,11 +291,11 @@ function Sign-SSHHostPublicKey {
 # ARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMTB1plcm9TQ0EC
 # E1gAAAH5oOvjAv3166MAAQAAAfkwCQYFKw4DAhoFAKB4MBgGCisGAQQBgjcCAQwx
 # CjAIoAKAAKECgAAwGQYJKoZIhvcNAQkDMQwGCisGAQQBgjcCAQQwHAYKKwYBBAGC
-# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFAsyHJvh03wt7PS0
-# HkJyU1McYBaoMA0GCSqGSIb3DQEBAQUABIIBADAPQjsXv+EBXjjHIJETs7Zg23LU
-# BRgLPtUMopGw2BcGJTGxOrynsNqkSC98O2pu5oHHhALIMfG+ExlRhU3V90Qiorp/
-# Lxi/scXeqFoGERz74CVdizva3iwYMA7CwMftN6yGiHHUYhvBKP1c9L4z2IepYLHY
-# GY3DpAzsZckF+qgmoNR+wRxxrAPljCYITbFAv7nTBgfFu/dAx8icacR0meRQ273f
-# EWxm+AQnQan8z/VD/3h1hyR+9tI5dPSJPLEVS64Pqauwj8sc1CIr1ejwkGdcbTff
-# Z42CYKn5ZfiDMjsrEM+Z6eFl83cw8G8tRXQTD2Rsb1VExWBhbj3DmOmM3nc=
+# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFPJXGXeplXPfxj1s
+# HulIXMRskVoLMA0GCSqGSIb3DQEBAQUABIIBADbKpkcMAQVUy70b/2o8MW+mkG0/
+# voanlljkokCHYsi9KGJb4FZ77wFn64OGmJuFZCcXv4emsj2ML3rCJE6pVAyJFw6F
+# M63npjGESU7ZcVae2qkvpm5uv1seJXlw1FWfx/yF809GRUAurXXZKPUCTeUzsNHF
+# k+0NpZIUNhytvNLa7okSYFI4qKi8gsfkGilFMql2pNGsaWOWvbRAq/yuN85RY5yL
+# CdFDJcJAKMCAGQapLIFqwYWzErvprW7JExFoyClKpnTFpZJ835akgF1PNfCV4eZm
+# GFIG3cKEMnk6xgbd6AE0RDrFcUEYrSPaHZlbY/y/RF4hpDom0ak+RofL/a8=
 # SIG # End signature block

@@ -72,7 +72,7 @@
 
         This parameter takes an integer with possible values: 389, 636, 3268, or 3269. Depending
         on how you have LDAP configured, use the appropriate port number. If you are not sure,
-        use the Test-LDAP function to determine which ports are in use.
+        use the TestLDAP function to determine which ports are in use.
 
     .PARAMETER BindUserDN
         This parameter is MANDATORY.
@@ -293,7 +293,7 @@ function Configure-VaultServerForLDAPAuth {
 
     # Make sure $LDAPUserOUDN exists
     try {
-        $LDAPUserOUDNDirectoryEntry = [ADSI]("$LDAPUri/$LDAPUserOUDN")
+        $LDAPUserOUDNDirectoryEntry = [System.DirectoryServices.DirectoryEntry]("$LDAPUri/$LDAPUserOUDN")
         $LDAPUserOUDNDirectoryEntry.Close()
     }
     catch {
@@ -304,7 +304,7 @@ function Configure-VaultServerForLDAPAuth {
 
     # Make sure $LDAPGroupOUDN exists
     try {
-        $LDAPGroupOUDNDirectoryEntry = [ADSI]("$LDAPUri/$LDAPGroupOUDN")
+        $LDAPGroupOUDNDirectoryEntry = [System.DirectoryServices.DirectoryEntry]("$LDAPUri/$LDAPGroupOUDN")
         $LDAPGroupOUDNDirectoryEntry.Close()
     }
     catch {
@@ -588,7 +588,7 @@ function Configure-VaultServerForLDAPAuth {
 
         # Make sure $LDAPVaultAdminsSecurityGroupDN exists
         try {
-            $LDAPVaultAdminsSecurityGroupDNDirectoryEntry = [ADSI]("$LDAPUri/$LDAPVaultAdminsSecurityGroupDN")
+            $LDAPVaultAdminsSecurityGroupDNDirectoryEntry = [System.DirectoryServices.DirectoryEntry]("$LDAPUri/$LDAPVaultAdminsSecurityGroupDN")
             $LDAPVaultAdminsSecurityGroupDNDirectoryEntry.Close()
         }
         catch {
@@ -634,7 +634,7 @@ function Configure-VaultServerForLDAPAuth {
 
         # Make sure $LDAPVaultUsersSecurityGroupDN exists
         try {
-            $LDAPVaultUsersSecurityGroupDNDirectoryEntry = [ADSI]("$LDAPUri/$LDAPVaultUsersSecurityGroupDN")
+            $LDAPVaultUsersSecurityGroupDNDirectoryEntry = [System.DirectoryServices.DirectoryEntry]("$LDAPUri/$LDAPVaultUsersSecurityGroupDN")
             $LDAPVaultUsersSecurityGroupDNDirectoryEntry.Close()
         }
         catch {
@@ -684,8 +684,8 @@ function Configure-VaultServerForLDAPAuth {
 # SIG # Begin signature block
 # MIIMiAYJKoZIhvcNAQcCoIIMeTCCDHUCAQExCzAJBgUrDgMCGgUAMGkGCisGAQQB
 # gjcCAQSgWzBZMDQGCisGAQQBgjcCAR4wJgIDAQAABBAfzDtgWUsITrck0sYpfvNR
-# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUcJRWgC/k6+pz97P0+OuinHSq
-# FWagggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
+# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUc6iqE37M3fkvtMWnzFwLKTbV
+# d7agggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
 # 9w0BAQsFADAwMQwwCgYDVQQGEwNMQUIxDTALBgNVBAoTBFpFUk8xETAPBgNVBAMT
 # CFplcm9EQzAxMB4XDTE3MDkyMDIxMDM1OFoXDTE5MDkyMDIxMTM1OFowPTETMBEG
 # CgmSJomT8ixkARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMT
@@ -742,11 +742,11 @@ function Configure-VaultServerForLDAPAuth {
 # ARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMTB1plcm9TQ0EC
 # E1gAAAH5oOvjAv3166MAAQAAAfkwCQYFKw4DAhoFAKB4MBgGCisGAQQBgjcCAQwx
 # CjAIoAKAAKECgAAwGQYJKoZIhvcNAQkDMQwGCisGAQQBgjcCAQQwHAYKKwYBBAGC
-# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFJZjxaONC5+Efq60
-# UQ6MwDWPcHoSMA0GCSqGSIb3DQEBAQUABIIBALbyVQ9BdP8cOLF22JnV8XxTMMFB
-# D9i342pWBB5WphH51RA74NX5orV2ThD2i9aH4LioGwOTRtnfgUW+RCQNmzYJ4Iz3
-# wz6tU7wS4K706nmCKWArDmURQStuz4vmnDNcqCmyjUKj2jAUZhMZZX1BeIkOwr8J
-# 8YflC3dslwn3b0FoPL+SbRrLRpm2Hs/OQd5+ytgWxgx7LpztSwrvFx9jej5wuVWj
-# GGKCHNglEqmoYYXlxxW9tDxPYiG20Q/b3zL4OdBS3UlCBROinBTKmUjjqQoo7Dci
-# eaxFhZZlN+ZplMGa3zpcb+I9a7sVXCMDMB1gupg+n9t2gZfKn17PZLNI1zk=
+# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFBxKKs9gsvKh750T
+# ms2H5F1gfks7MA0GCSqGSIb3DQEBAQUABIIBAAo/WBaqEWUkxQmx3YsW3RTxJuFa
+# ZMR4pDChVQSe/DbhKZkSNr/eqK3jAAiAB5Umn89pcEWohUnYcVe44SFbMnVKZ+4t
+# WKCODT/8mAK3B007Rh95vagrxZWfzGc10WAEFu2XupLhOxOUmPpSseD+xjjikNig
+# YHHTU5mDKdBwW6saSxNAAUNpkMaw/WeVt4BTEqDXRK2uWMvqdupHgrAUws/nKe5p
+# BBJM9iq7HhiNKCwUlYzFDmJZ+CdgvXo5UzbYjxJPL9X89k7yiVrYpgMv+YPR4K1C
+# LMr2dzJ+UUJOtxKnqLCBLmP7rXposIykctBYtDtneZhyhOxvVjVpCPTuuNc=
 # SIG # End signature block

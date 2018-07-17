@@ -38,3098 +38,4161 @@ if ($ModulesToInstallAndImport.Count -gt 0) {
 
 <#
     .SYNOPSIS
-        This function uses openssl.exe to extract all public certificates and private key from a .pfx file. Each public certificate
-        and the private key is written to its own separate file in the specified. OutputDirectory. If openssl.exe is not available
-        on the current system, it is downloaded to the Current User's Downloads folder and added to $env:Path.
-
-        NOTE: Nothing is installed.
-
-    .DESCRIPTION
-        See SYNOPSIS.
-
-    .NOTES
-        Depends on openssl.exe.
-
-        NOTE: Nothing needs to be installed in order to use openssl.exe.
-
-    .PARAMETER PFXFilePath
-        Mandatory.
-
-        This parameter takes a string that represents the full path to a .pfx file
-
-    .PARAMETER PFXFilePwd
-        Optional.
-
-        This parameter takes a string (i.e. plain text password) or a secure string.
-
-        If the private key in the .pfx file is password protected, use this parameter.
-
-    .PARAMETER StripPrivateKeyPwd
-        Optional.
-
-        This parameter takes a boolean $true or $false.
-
-        By default, this function writes the private key within the .pfx to a file in a protected format, i.e.
-            -----BEGIN PRIVATE KEY-----
-            -----END PRIVATE KEY-----
-
-        If you set this parameter to $true, then this function will ALSO (in addition to writing out the above protected
-        format to its own file) write the unprotected private key to its own file with format
-            -----BEGIN RSA PRIVATE KEY----
-            -----END RSA PRIVATE KEY----
-
-        WARNING: This parameter is set to $true by default.
-
-    .PARAMETER OutputDirectory
-        Optional.
-
-        This parameter takes a string that represents a file path to a *directory* that will contain all file outputs.
-
-        If this parameter is not used, all file outputs are written to the same directory as the .pfx file.
-
-    .PARAMETER DownloadAndAddOpenSSLToPath
-        Optional.
-
-        This parameter downloads openssl.exe from https://indy.fulgan.com/SSL/ to the current user's Downloads folder,
-        and adds openssl.exe to $env:Path.
-
-        WARNING: If openssl.exe is not already part of your $env:Path prior to running this function, this parameter
-        becomes MANDATORY, or the function will fail.
-
-    .EXAMPLE
-        # If your private key is password protected...
-        $PSSigningCertFile = "C:\Certs\Testing2\ZeroCode.pfx"
-        $PFXSigningPwdAsSecureString = Read-Host -Prompt "Please enter the private key's password" -AsSecureString
-        $OutDir = "C:\Certs\Testing2"
-
-        Extract-PFXCerts -PFXFilePath $PSSigningCertFile `
-        -PFXFilePwd $PFXSigningPwdAsSecureString `
-        -StripPrivateKeyPwd $true `
-        -OutputDirectory $OutDir
-
-    .EXAMPLE
-        # If your private key is NOT password protected...
-        $PSSigningCertFile = "C:\Certs\Testing2\ZeroCode.pfx"
-        $OutputDirectory = "C:\Certs\Testing2"
-
-        Extract-PFXCerts -PFXFilePath $PSSigningCertFile `
-        -StripPrivateKeyPwd $true `
-        -OutputDirectory $OutDir
-#>
-function Extract-PfxCerts {
-    [CmdletBinding(
-        PositionalBinding=$true,
-        ConfirmImpact='Medium'
-    )]
-    Param(
-        [Parameter(Mandatory=$False)]
-        [string]$PFXFilePath = $(Read-Host -Prompt "Please enter the full path to the .pfx file."),
-
-        [Parameter(Mandatory=$False)]
-        $PFXFilePwd, # This is only needed if the .pfx contains a password-protected private key, which should be the case 99% of the time
-
-        [Parameter(Mandatory=$False)]
-        [bool]$StripPrivateKeyPwd = $true,
-
-        [Parameter(Mandatory=$False)]
-        [string]$OutputDirectory, # If this parameter is left blank, all output files will be in the same directory as the original .pfx
-
-        [Parameter(Mandatory=$False)]
-        [switch]$DownloadAndAddOpenSSLToPath
-    )
-
-    ##### BEGIN Variable/Parameter Transforms and PreRun Prep #####
-    # Check for Win32 or Win64 OpenSSL Binary
-    if (! $(Get-Command openssl.exe -ErrorAction SilentlyContinue)) {
-        if ($DownloadAndAddOpenSSLToPath) {
-            Write-Host "Downloading openssl.exe from https://indy.fulgan.com/SSL/..."
-            $LatestWin64OpenSSLVer = $($($(Invoke-WebRequest -Uri https://indy.fulgan.com/SSL/).Links | Where-Object {$_.href -like "*[a-z]-x64*"}).href | Sort-Object)[-1]
-            Invoke-WebRequest -Uri "https://indy.fulgan.com/SSL/$LatestWin64OpenSSLVer" -OutFile "$env:USERPROFILE\Downloads\$LatestWin64OpenSSLVer"
-            $SSLDownloadUnzipDir = $(Get-ChildItem "$env:USERPROFILE\Downloads\$LatestWin64OpenSSLVer").BaseName
-            if (! $(Test-Path "$env:USERPROFILE\Downloads\$SSLDownloadUnzipDir")) {
-                New-Item -Path "$env:USERPROFILE\Downloads\$SSLDownloadUnzipDir" -ItemType Directory
-            }
-            UnzipFile -PathToZip "$env:USERPROFILE\Downloads\$LatestWin64OpenSSLVer" -TargetDir "$env:USERPROFILE\Downloads\$SSLDownloadUnzipDir"
-            # Add OpenSSL to $env:Path
-            if ($env:Path[-1] -eq ";") {
-                $env:Path = "$env:Path$env:USERPROFILE\Downloads\$SSLDownloadUnzipDir"
-            }
-            else {
-                $env:Path = "$env:Path;$env:USERPROFILE\Downloads\$SSLDownloadUnzipDir"
-            }
-        }
-        else {
-            Write-Error "The Extract-PFXCerts function requires openssl.exe. Openssl.exe cannot be found on this machine. Use the -DownloadAndAddOpenSSLToPath parameter to download openssl.exe and add it to `$env:Path. NOTE: Openssl.exe does NOT require installation. Halting!"
-            $global:FunctionResult = "1"
-            return
-        }
-    }
-
-    # OpenSSL can't handle PowerShell SecureStrings, so need to convert it back into Plain Text
-    if ($PFXFilePwd) {
-        if ($PFXFilePwd.GetType().FullName -eq "System.Security.SecureString") {
-            $PwdForPFXOpenSSL = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($PFXFilePwd))
-        }
-        if ($PFXFilePwd.GetType().FullName -eq "System.String") {
-            $PwdForPFXOpenSSL = $PFXFilePwd
-        }
-    }
-
-    $privpos = $PFXFilePath.LastIndexOf("\")
-    $PFXFileDir = $PFXFilePath.Substring(0, $privpos)
-    $PFXFileName = $PFXFilePath.Substring($privpos+1)
-    $PFXFileNameSansExt = $($PFXFileName.Split("."))[0]
-
-    if (!$OutputDirectory) {
-        $OutputDirectory = $PFXFileDir
-    }
-
-    $ProtectedPrivateKeyOut = "$PFXFileNameSansExt"+"_protected_private_key"+".pem"
-    $UnProtectedPrivateKeyOut = "$PFXFileNameSansExt"+"_unprotected_private_key"+".pem"
-    $AllPublicKeysInChainOut = "$PFXFileNameSansExt"+"_all_public_keys_in_chain"+".pem"
-    ##### END Variable/Parameter Transforms and PreRun Prep #####
-
-
-    ##### BEGIN Parameter Validation #####
-    if (!$(Test-Path $PFXFilePath)) {
-        Write-Error "The path $PFXFilePath was not found! Halting!"
-        $global:FunctionResult = "1"
-        return
-    }
-
-    if (! $(Test-Path $OutputDirectory)) {
-        Write-Error "The path $OutputDirectory was not found! Halting!"
-        $global:FunctionResult = "1"
-        return
-    }
-    
-    ##### END Parameter Validation #####
-
-
-    ##### BEGIN Main Body #####
-    # The .pfx File could (and most likely does) contain a private key
-    # Extract Private Key and Keep It Password Protected
-    try {
-        $ProcessInfo = New-Object System.Diagnostics.ProcessStartInfo
-        $ProcessInfo.FileName = "openssl.exe"
-        $ProcessInfo.RedirectStandardError = $true
-        $ProcessInfo.RedirectStandardOutput = $true
-        $ProcessInfo.UseShellExecute = $false
-        $ProcessInfo.Arguments = "pkcs12 -in $PFXFilePath -nocerts -out $OutputDirectory\$ProtectedPrivateKeyOut -nodes -password pass:$PwdForPFXOpenSSL"
-        $Process = New-Object System.Diagnostics.Process
-        $Process.StartInfo = $ProcessInfo
-        $Process.Start() | Out-Null
-        $Process.WaitForExit()
-        $stdout = $Process.StandardOutput.ReadToEnd()
-        $stderr = $Process.StandardError.ReadToEnd()
-        $AllOutput = $stdout + $stderr
-
-        if ($AllOutput -match "error") {
-            Write-Warning "openssl.exe reports that -PFXFilePwd is incorrect. However, it may be that at this stage in the process, it is not protected with a password. Trying without password..."
-            throw
-        }
-    }
-    catch {
-        try {
-            $ProcessInfo = New-Object System.Diagnostics.ProcessStartInfo
-            $ProcessInfo.FileName = "openssl.exe"
-            $ProcessInfo.RedirectStandardError = $true
-            $ProcessInfo.RedirectStandardOutput = $true
-            $ProcessInfo.UseShellExecute = $false
-            $ProcessInfo.Arguments = "pkcs12 -in $PFXFilePath -nocerts -out $OutputDirectory\$ProtectedPrivateKeyOut -nodes -password pass:"
-            $Process = New-Object System.Diagnostics.Process
-            $Process.StartInfo = $ProcessInfo
-            $Process.Start() | Out-Null
-            $Process.WaitForExit()
-            $stdout = $Process.StandardOutput.ReadToEnd()
-            $stderr = $Process.StandardError.ReadToEnd()
-            $AllOutput = $stdout + $stderr
-
-            if ($AllOutput -match "error") {
-                Write-Warning "openssl.exe reports that -PFXFilePwd is incorrect."
-                throw
-            }
-        }
-        catch {
-            $PFXFilePwdFailure = $true
-        }
-    }
-    if ($PFXFilePwdFailure -eq $true) {
-        Write-Verbose "The value for -PFXFilePwd is incorrect or was not supplied (and is needed). Halting!"
-        Write-Error "The value for -PFXFilePwd is incorrect or was not supplied (and is needed). Halting!"
-        $global:FunctionResult = "1"
-        return
-    }
-    
-
-    if ($StripPrivateKeyPwd) {
-        # Strip Private Key of Password
-        & openssl.exe rsa -in "$PFXFileDir\$ProtectedPrivateKeyOut" -out "$OutputDirectory\$UnProtectedPrivateKeyOut" 2>&1 | Out-Null
-    }
-
-    New-Variable -Name "$PFXFileNameSansExt`PrivateKeyInfo" -Value $(
-        if ($StripPrivateKeyPwd) {
-            [pscustomobject][ordered]@{
-                ProtectedPrivateKeyFilePath     = "$OutputDirectory\$ProtectedPrivateKeyOut"
-                UnProtectedPrivateKeyFilePath   = "$OutputDirectory\$UnProtectedPrivateKeyOut"
-            }
-        }
-        else {
-            [pscustomobject][ordered]@{
-                ProtectedPrivateKeyFilePath     = "$OutputDirectory\$ProtectedPrivateKeyOut"
-                UnProtectedPrivateKeyFilePath   = $null
-            }
-        }
-    )
-    
-
-    # Setup $ArrayOfPubCertPSObjects for PSCustomObject Collection
-    $ArrayOfPubCertPSObjects = @()
-    # The .pfx File Also Contains ALL Public Certificates in Chain 
-    # The below extracts ALL Public Certificates in Chain
-    try {
-        $ProcessInfo = New-Object System.Diagnostics.ProcessStartInfo
-        $ProcessInfo.FileName = "openssl.exe"
-        $ProcessInfo.RedirectStandardError = $true
-        $ProcessInfo.RedirectStandardOutput = $true
-        $ProcessInfo.UseShellExecute = $false
-        $ProcessInfo.Arguments = "pkcs12 -in $PFXFilePath -nokeys -out $OutputDirectory\$AllPublicKeysInChainOut -password pass:$PwdForPFXOpenSSL"
-        $Process = New-Object System.Diagnostics.Process
-        $Process.StartInfo = $ProcessInfo
-        $Process.Start() | Out-Null
-        $Process.WaitForExit()
-        $stdout = $Process.StandardOutput.ReadToEnd()
-        $stderr = $Process.StandardError.ReadToEnd()
-        $AllOutput = $stdout + $stderr
-
-        if ($AllOutput -match "error") {
-            Write-Warning "openssl.exe reports that -PFXFilePwd is incorrect. However, it may be that at this stage in the process, it is not protected with a password. Trying without password..."
-            throw
-        }
-    }
-    catch {
-        try {
-            $ProcessInfo = New-Object System.Diagnostics.ProcessStartInfo
-            $ProcessInfo.FileName = "openssl.exe"
-            $ProcessInfo.RedirectStandardError = $true
-            $ProcessInfo.RedirectStandardOutput = $true
-            $ProcessInfo.UseShellExecute = $false
-            $ProcessInfo.Arguments = "pkcs12 -in $PFXFilePath -nokeys -out $OutputDirectory\$AllPublicKeysInChainOut -password pass:"
-            $Process = New-Object System.Diagnostics.Process
-            $Process.StartInfo = $ProcessInfo
-            $Process.Start() | Out-Null
-            $Process.WaitForExit()
-            $stdout = $Process.StandardOutput.ReadToEnd()
-            $stderr = $Process.StandardError.ReadToEnd()
-            $AllOutput = $stdout + $stderr
-
-            if ($AllOutput -match "error") {
-                Write-Warning "openssl.exe reports that -PFXFilePwd is incorrect."
-                throw
-            }
-        }
-        catch {
-            $PFXFilePwdFailure = $true
-        }
-    }
-    if ($PFXFilePwdFailure -eq $true) {
-        Write-Verbose "The value for -PFXFilePwd is incorrect or was not supplied (and is needed). Halting!"
-        Write-Error "The value for -PFXFilePwd is incorrect or was not supplied (and is needed). Halting!"
-        $global:FunctionResult = "1"
-        return
-    }
-    New-Variable -Name "CertObj$PFXFileNameSansExt" -Scope Script -Value $(
-        [pscustomobject][ordered]@{
-            CertName                = "$PFXFileNameSansExt`AllPublicKCertsInChain"
-            AllCertInfo             = Get-Content "$OutputDirectory\$AllPublicKeysInChainOut"
-            FileLocation            = "$OutputDirectory\$AllPublicKeysInChainOut"
-        }
-    ) -Force
-
-    $ArrayOfPubCertPSObjects +=, $(Get-Variable -Name "CertObj$PFXFileNameSansExt" -ValueOnly)
-
-
-    # Parse the Public Certificate Chain File and and Write Each Public Certificate to a Separate File
-    # These files should have the EXACT SAME CONTENT as the .cer counterparts
-    $PublicKeySansChainPrep1 = $(Get-Content "$OutputDirectory\$AllPublicKeysInChainOut") -join "`n"
-    $PublicKeySansChainPrep2 = $($PublicKeySansChainPrep1 -replace "-----END CERTIFICATE-----","-----END CERTIFICATE-----;;;").Split(";;;")
-    $PublicKeySansChainPrep3 = foreach ($obj1 in $PublicKeySansChainPrep2) {
-        if ($obj1 -like "*[\w]*") {
-            $obj1.Trim()
-        }
-    }
-    # Setup PSObject for Certs with CertName and CertValue
-    foreach ($obj1 in $PublicKeySansChainPrep3) {
-        $CertNamePrep = $($obj1).Split("`n") | foreach {if ($_ | Select-String "subject") {$_}}
-        $CertName = $($CertNamePrep | Select-String "CN=([\w]|[\W]){1,1000}$").Matches.Value -replace "CN=",""
-        $IndexNumberForBeginCert = $obj1.Split("`n") | foreach {
-            if ($_ -match "-----BEGIN CERTIFICATE-----") {
-                [array]::indexof($($obj1.Split("`n")),$_)
-            }
-        }
-        $IndexNumberForEndCert = $obj1.Split("`n") | foreach {
-            if ($_ -match "-----End CERTIFICATE-----") {
-                [array]::indexof($($obj1.Split("`n")),$_)
-            }
-        }
-        $CertValue = $($($obj1.Split("`n"))[$IndexNumberForBeginCert..$IndexNumberForEndCert] | Out-String).Trim()
-        $AttribFriendlyNamePrep = $obj1.Split("`n") | Select-String "friendlyName"
-        if ($AttribFriendlyNamePrep) {
-            $AttribFriendlyName = $($AttribFriendlyNamePrep.Line).Split(":")[-1].Trim()
-        }
-        $tmpFile = [IO.Path]::GetTempFileName()
-        $CertValue.Trim() | Out-File $tmpFile -Encoding Ascii
-
-        $CertDumpContent = certutil -dump $tmpfile
-
-        $SubjectTypePrep = $CertDumpContent | Select-String -Pattern "Subject Type="
-        if ($SubjectTypePrep) {
-            $SubjectType = $SubjectTypePrep.Line.Split("=")[-1]
-        }
-        $RootCertFlag = $CertDumpContent | Select-String -Pattern "Subject matches issuer"
-        
-        if ($SubjectType -eq "CA" -and $RootCertFlag) {
-            $RootCACert = $True
-        }
-        else {
-            $RootCACert = $False
-        }
-        if ($SubjectType -eq "CA" -and !$RootCertFlag) {
-            $IntermediateCACert = $True
-        }
-        else {
-            $IntermediateCACert = $False
-        }
-        if ($RootCACert -eq $False -and $IntermediateCACert -eq $False) {
-            $EndPointCert = $True
-        }
-        else {
-            $EndPointCert = $False
-        }
-
-        New-Variable -Name "CertObj$CertName" -Scope Script -Value $(
-            [pscustomobject][ordered]@{
-                CertName                = $CertName
-                FriendlyName            = $AttribFriendlyName
-                CertValue               = $CertValue.Trim()
-                AllCertInfo             = $obj1.Trim()
-                RootCACert              = $RootCACert
-                IntermediateCACert      = $IntermediateCACert
-                EndPointCert            = $EndPointCert
-                FileLocation            = "$OutputDirectory\$($CertName)_Public_Cert.pem"
-            }
-        ) -Force
-
-        $ArrayOfPubCertPSObjects +=, $(Get-Variable -Name "CertObj$CertName" -ValueOnly)
-
-        Remove-Item -Path $tmpFile -Force
-        Remove-Variable -Name "tmpFile" -Force
-    }
-
-    # Write each CertValue to Separate Files (i.e. writing all public keys in chain to separate files)
-    foreach ($obj1 in $ArrayOfPubCertPSObjects) {
-        if ($(Test-Path $obj1.FileLocation) -and !$Force) {
-            Write-Verbose "The extracted Public cert $($obj1.CertName) was NOT written to $OutputDirectory because it already exists there!"
-        }
-        if (!$(Test-Path $obj1.FileLocation) -or $Force) {
-            $obj1.CertValue | Out-File "$($obj1.FileLocation)" -Encoding Ascii
-            Write-Verbose "Public certs have been extracted and written to $OutputDirectory"
-        }
-    }
-
-    New-Variable -Name "PubAndPrivInfoOutput" -Scope Script -Value $(
-        [pscustomobject][ordered]@{
-            PublicKeysInfo      = $ArrayOfPubCertPSObjects
-            PrivateKeyInfo      = $(Get-Variable -Name "$PFXFileNameSansExt`PrivateKeyInfo" -ValueOnly)
-        }
-    ) -Force
-
-    $(Get-Variable -Name "PubAndPrivInfoOutput" -ValueOnly)
-    
-    $global:FunctionResult = "0"
-    ##### END Main Body #####
-
-}
-
-
-<#
-    .SYNOPSIS
-        This function decrypts a String, an Array of Strings, a File, or Files in a Directory that were encrypted using the
-        New-EncryptedFile function.
-
-    .DESCRIPTION
-        See SYNOPSIS.
-
-    .NOTES
-        IMPORTANT NOTES:
-        This function identifies a file as RSA encrypted or AES encrypted according to the file's extension. For example,
-        a file with an extension ".rsaencrypted" is identified as encrypted via RSA. A file with an extension ".aesencrypted"
-        is identified as encrypted via AES. If the file(s) you intend to decrypt do not have either of these file extensions,
-        or if you are decrypting a String or ArrayOfStrings in an interactive PowerShell Session, then you can use the
-        -TypeOfEncryptionUsed parameter and specify either "RSA" or "AES".
-
-        If the -TypeOfEncryptionUsed parameter is NOT used and -SourceType is "String" or "ArrayOfStrings", RSA decryption
-        will be used.
-        If the -TypeOfEncryptionUsed parameter is NOT used and -SourceType is "File", AES decryption will be used.
-        If the -TypeOfEncryptionUsed parameter is NOT used and -SourceType is "Directory", both RSA and AES decryption will be
-        attempted on each file.
-
-    .PARAMETER SourceType
-        Mandatory.
-
-        This parameter takes a string with one of the following values:
-            String
-            ArrayOfStrings
-            File
-            Directory
-
-        If -ContentToEncrypt is a string, -SourceType should be "String".
-        If -ContentToEncrypt is an array of strings, -SourceType should be "ArrayOfStrings".
-        If -ContentToEncrypt is a string that represents a full path to a file, -SourceType should be "File".
-        If -ContentToEncrypt is a string that represents a full path to a directory, -SourceType should be "Directory".
-
-    .PARAMETER ContentToDecrypt
-        Mandatory.
-
-        This parameter takes a string that is either:
-            - A string
-            - An array of strings
-            - A string that represents a full path to a file
-            - A string that represents a full path to a directory
-
-    .PARAMETER Recurse
-        Optional.
-
-        This parameter is a switch. It should only be used if -SourceType is "Directory". The function will fail
-        immediately if this parameter is used and -SourceType is NOT "Directory".
-
-        If this switch is NOT used, only files immediately under the directory specified by -ContentToEncrypt are
-        decrypted.
-
-        If this switch IS used, all files immediately under the directory specified by -ContentToEncrypt AS WELL AS
-        all files within subdirectories under the directory specified by -ContentToEncrypt are decrypted.
-
-    .PARAMETER FileToOutput
-        Optional.
-
-        This parameter specifies a full path to a NEW file that will contain decrypted information. This parameter should
-        ONLY be used if -SourceType is "String" or "ArrayOfStrings". If this parameter is used and -SourceType is NOT
-        "String" or "ArrayOfStrings", the function will immediately fail.
-
-    .PARAMETER PathToPfxFile
-        Optional. (However, either -PathToPfxFile or -CNOfCertInStore are required.)
-
-        This parameter takes a string that represents the full path to a .pfx file that was used for encryption. The
-        private key in the .pfx file will be used for decryption.
-
-        NOTE: RSA decryption is ALWAYS used by this function, either to decrypt the information directly or to decrypt the
-        AES Key that was used to encrypt the information originally so that it can be used in AES Decryption.
-
-    .PARAMETER CNOfCertInStore
-        Optional. (However, either -PathToPfxFile or -CNOfCertInStore are required.)
-
-        This parameter takes a string that represents the Common Name (CN) of the certificate that was used for RSA
-        encryption. This certificate must already exist in the Local Machine Store (i.e. Cert:\LocalMachine\My). The
-        private key in the certificate will be used for decryption.
-
-        NOTE: RSA decryption is ALWAYS used by this function, either to decrypt the information directly or to decrypt the
-        AES Key that was used to encrypt the information originally so that it can be used in AES Decryption.
-
-    .PARAMETER CertPwd
-        Optional. (However, this parameter is mandatory if the certificate is password protected).
-
-        This parameter takes a System.Security.SecureString that represents the password for the certificate.
-
-        Use this parameter if the certificate is password protected.
-
-    .PARAMETER TypeOfEncryptionUsed
-        Optional.
-
-        This parameter takes a string with value of either "RSA" or "AES".
-
-        If you want to force this function to use a particular type of decryption, use this parameter.
-
-        If this parameter is NOT used and -SourceType is "String" or "ArrayOfStrings", RSA decryption will be used.
-        If this parameter is NOT used and -SourceType is "File", AES decryption will be used.
-        If this parameter is NOT used and -SourceType is "Directory", both RSA and AES decryption will be attempted
-        on each file.
-
-    .PARAMETER AESKey
-        Optional.
-
-        This parameter takes a Base64 string that represents the AES Key used for AES Encryption. This same key will be used
-        for AES Decryption.
-
-    .PARAMETER AESKeyLocation
-        Optional.
-
-        This parameter takes a string that represents a full file path to a file that contains the AES Key originally used
-        for encryption. 
-
-        If the file extension ends with ".rsaencrypted", this function will use the specified Certificate
-        (i.e. the certificate specified via -PathToPfxFile or -CNOfCertInStore parameters, specifically the private key
-        contained therein) to decrypt the file, revealing the base64 string that represents the AES Key used for AES Encryption.
-
-        If the file extension does NOT end with ".rsaencrypted", the function will assume that the the file contains the
-        Base64 string that represents the AES key originally used for AES Encryption.
-
-    .PARAMETER NoFileOutput
-        Optional.
-
-        This parameter is a switch. If you do NOT want decrypted information written to a file, use this parameter. The
-        decrypted info will ONLY be written to console as part of the DecryptedContent Property of the PSCustomObject output.
-
-    .PARAMETER TryRSADecryption
-        Optional.
-
-        This parameter is a switch. Use it to try RSA Decryption even if you provide -AESKey or -AESKeyLocation.
-
-    .EXAMPLE
-        # Decrypting an Encrypted String without File Outputs
-        PS C:\Users\zeroadmin> $EncryptedStringTest = Get-Content C:\Users\zeroadmin\other\MySecret.txt.rsaencrypted
-        PS C:\Users\zeroadmin> Get-DecryptedContent -SourceType String -ContentToDecrypt $EncryptedStringTest -PathToPfxFile C:\Users\zeroadmin\other\ArrayOfStrings.pfx -NoFileOutput
-
-        Doing RSA Decryption
-
-        DecryptedFiles                     :
-        FailedToDecryptFiles               : {}
-        CertUsedDuringDecryption           : [Subject]
-                                            CN=ArrayOfStrings
-
-                                            [Issuer]
-                                            CN=ArrayOfStrings
-
-                                            [Serial Number]
-                                            32E38D18591854874EC467B73332EA76
-
-                                            [Not Before]
-                                            6/1/2017 4:13:36 PM
-
-                                            [Not After]
-                                            6/1/2018 4:33:36 PM
-
-                                            [Thumbprint]
-                                            C8CC2B8B03E33821A69B35F10B04D74E40A557B2
-
-        PFXCertUsedForPrivateKeyExtraction : C:\Users\zeroadmin\PrivateKeyExtractionTempDir\ArrayOfStrings.pfx
-        LocationOfCertUsedDuringDecryption : C:\Users\zeroadmin\other\ArrayOfStrings.pfx
-        UnprotectedAESKey                  :
-        LocationOfAESKey                   :
-        AllFileOutputs                     :
-        DecryptedContent                   : THisISmYPWD321!
-
-    .EXAMPLE
-        # Decrypting an Array Of Strings without File Outputs
-        PS C:\Users\zeroadmin> $enctext0 = Get-Content C:\Users\zeroadmin\other\ArrayOfStrings.txt0.rsaencrypted
-        PS C:\Users\zeroadmin> $enctext1 = Get-Content C:\Users\zeroadmin\other\ArrayOfStrings.txt1.rsaencrypted
-        PS C:\Users\zeroadmin> $enctext2 = Get-Content C:\Users\zeroadmin\other\ArrayOfStrings.txt2.rsaencrypted
-        PS C:\Users\zeroadmin> $enctextarray = @($enctext0,$enctext1,$enctext2)
-        PS C:\Users\zeroadmin> Get-DecryptedContent -SourceType ArrayOfStrings -ContentToDecrypt $enctextarray -PathToPfxFile C:\Users\zeroadmin\other\ArrayOfStrings.pfx -NoFileOutput
-        Doing RSA Decryption
-
-
-        DecryptedFiles                     :
-        FailedToDecryptFiles               : {}
-        CertUsedDuringDecryption           : [Subject]
-                                            CN=ArrayOfStrings
-
-                                            [Issuer]
-                                            CN=ArrayOfStrings
-
-                                            [Serial Number]
-                                            32E38D18591854874EC467B73332EA76
-
-                                            [Not Before]
-                                            6/1/2017 4:13:36 PM
-
-                                            [Not After]
-                                            6/1/2018 4:33:36 PM
-
-                                            [Thumbprint]
-                                            C8CC2B8B03E33821A69B35F10B04D74E40A557B2
-
-        PFXCertUsedForPrivateKeyExtraction : C:\Users\zeroadmin\PrivateKeyExtractionTempDir\ArrayOfStrings.pfx
-        LocationOfCertUsedDuringDecryption : C:\Users\zeroadmin\other\ArrayOfStrings.pfx
-        UnprotectedAESKey                  :
-        LocationOfAESKey                   :
-        AllFileOutputs                     :
-        DecryptedContent                   : {fruit, vegetables, meat}
-
-    .EXAMPLE
-        # Decrypting a File
-        PS C:\Users\zeroadmin> Get-DecryptedContent -SourceType File -ContentToDecrypt C:\Users\zeroadmin\tempdir\dolor.txt.aesencrypted -CNofCertInStore TempDirEncryption -AESKeyLocation C:\Users\zeroadmin\tempdir\tempdir.aeskey.rsaencrypted
-        Doing AES Decryption
-
-
-        DecryptedFiles                     : C:\Users\zeroadmin\tempdir\dolor.txt.aesencrypted.decrypted
-        FailedToDecryptFiles               : {}
-        CertUsedDuringDecryption           : [Subject]
-                                            CN=TempDirEncryption
-
-                                            [Issuer]
-                                            CN=TempDirEncryption
-
-                                            [Serial Number]
-                                            52711274E381F592437E8C18C7A3241C
-
-                                            [Not Before]
-                                            6/2/2017 10:57:26 AM
-
-                                            [Not After]
-                                            6/2/2018 11:17:26 AM
-
-                                            [Thumbprint]
-                                            F2EFEBB37C37844A230961447C7C91C1DE13F1A5
-
-        PFXCertUsedForPrivateKeyExtraction : C:\Users\zeroadmin\tempdir\PrivateKeyExtractionTempDir\TempDirEncryption.pfx
-        LocationOfCertUsedDuringDecryption : Cert:\LocalMachine\My
-        UnprotectedAESKey                  : BKcLSwqZjSq/D1RuqBGBxZ0dng+B3JwrWJVlhqgxrmo=
-        LocationOfAESKey                   : C:\Users\zeroadmin\tempdir\tempdir.aeskey.rsaencrypted
-        AllFileOutputs                     : {C:\Users\zeroadmin\tempdir\dolor.txt.aesencrypted.decrypted,
-                                            C:\Users\zeroadmin\tempdir\PrivateKeyExtractionTempDir\TempDirEncryption.pfx}
-        DecryptedContent                   : {1914 translation by H. Rackham, , "But I must explain to you how all this mistaken idea of denouncing pleasure and
-                                            praising pain was born and I will give you a complete account of the system, and expound the actual teachings of the
-                                            great explorer of the truth, the master-builder of human happiness. No one rejects, dislikes, or avoids pleasure itself,
-                                            because it is pleasure, but because those who do not know how to pursue pleasure rationally encounter consequences that
-                                            are extremely painful. Nor again is there anyone who loves or pursues or desires to obtain pain of itself, because it is
-                                            pain, but because occasionally circumstances occur in which toil and pain can procure him some great pleasure. To take a
-                                            trivial example, which of us ever undertakes laborious physical exercise, except to obtain some advantage from it? But
-                                            who has any right to find fault with a man who chooses to enjoy a pleasure that has no annoying consequences, or one who
-                                            avoids a pain that produces no resultant pleasure?", ...}
-
-    .EXAMPLE
-        # Decrypting All Files in a Directory
-        PS C:\Users\zeroadmin> Get-DecryptedContent -SourceType Directory -ContentToDecrypt C:\Users\zeroadmin\tempdir -Recurse -CNofCertInStore TempDirEncryption -AESKeyLocation C:\Users\zeroadmin\tempdir\tempdir.aeskey.rsaencrypted
-        Doing AES Decryption
-        WARNING: Unable to read IV from C:\Users\zeroadmin\tempdir\dolor.txt.original, verify this file was made using the included EncryptFile function.
-        WARNING: AES Decryption of C:\Users\zeroadmin\tempdir\dolor.txt.original failed...Will try RSA Decryption...
-        WARNING: Unable to read IV from C:\Users\zeroadmin\tempdir\tempdir.aeskey.rsaencrypted, verify this file was made using the included EncryptFile function.
-        WARNING: AES Decryption of C:\Users\zeroadmin\tempdir\tempdir.aeskey.rsaencrypted failed...Will try RSA Decryption...
-        WARNING: Unable to read IV from C:\Users\zeroadmin\tempdir\tempdir1\agricola.txt.original, verify this file was made using the included EncryptFile function.
-        WARNING: AES Decryption of C:\Users\zeroadmin\tempdir\tempdir1\agricola.txt.original failed...Will try RSA Decryption...
-
-
-        DecryptedFiles                     : {C:\Users\zeroadmin\tempdir\dolor.txt.aesencrypted.decrypted,
-                                            C:\Users\zeroadmin\tempdir\tempdir1\agricola.txt.aesencrypted.decrypted,
-                                            C:\Users\zeroadmin\tempdir\tempdir.aeskey.rsaencrypted.decrypted}
-        FailedToDecryptFiles               : {C:\Users\zeroadmin\tempdir\dolor.txt.original, C:\Users\zeroadmin\tempdir\tempdir1\agricola.txt.original}
-        CertUsedDuringDecryption           : [Subject]
-                                            CN=TempDirEncryption
-
-                                            [Issuer]
-                                            CN=TempDirEncryption
-
-                                            [Serial Number]
-                                            52711274E381F592437E8C18C7A3241C
-
-                                            [Not Before]
-                                            6/2/2017 10:57:26 AM
-
-                                            [Not After]
-                                            6/2/2018 11:17:26 AM
-
-                                            [Thumbprint]
-                                            F2EFEBB37C37844A230961447C7C91C1DE13F1A5
-
-        PFXCertUsedForPrivateKeyExtraction : C:\Users\zeroadmin\PrivateKeyExtractionTempDir\TempDirEncryption.pfx
-        LocationOfCertUsedDuringDecryption : Cert:\LocalMachine\My
-        UnprotectedAESKey                  : BKcLSwqZjSq/D1RuqBGBxZ0dng+B3JwrWJVlhqgxrmo=
-        LocationOfAESKey                   : C:\Users\zeroadmin\tempdir\tempdir.aeskey.rsaencrypted
-        AllFileOutputs                     : {C:\Users\zeroadmin\tempdir\dolor.txt.aesencrypted.decrypted,
-                                            C:\Users\zeroadmin\tempdir\tempdir1\agricola.txt.aesencrypted.decrypted,
-                                            C:\Users\zeroadmin\tempdir\tempdir.aeskey.rsaencrypted.decrypted,
-                                            C:\Users\zeroadmin\PrivateKeyExtractionTempDir\TempDirEncryption.pfx}
-        DecryptedContent                   : {1914 translation by H. Rackham, , "But I must explain to you how all this mistaken idea of denouncing pleasure and
-                                            praising pain was born and I will give you a complete account of the system, and expound the actual teachings of the
-                                            great explorer of the truth, the master-builder of human happiness. No one rejects, dislikes, or avoids pleasure itself,
-                                            because it is pleasure, but because those who do not know how to pursue pleasure rationally encounter consequences that
-                                            are extremely painful. Nor again is there anyone who loves or pursues or desires to obtain pain of itself, because it is
-                                            pain, but because occasionally circumstances occur in which toil and pain can procure him some great pleasure. To take a
-                                            trivial example, which of us ever undertakes laborious physical exercise, except to obtain some advantage from it? But
-                                            who has any right to find fault with a man who chooses to enjoy a pleasure that has no annoying consequences, or one who
-                                            avoids a pain that produces no resultant pleasure?", ...}
-#>
-function Get-DecryptedContent {
-    [CmdletBinding()]
-    Param(
-        [Parameter(Mandatory=$True)]
-        [ValidateSet("String","ArrayOfStrings","File","Directory")]
-        [string]$SourceType,
-
-        [Parameter(Mandatory=$True)]
-        [string[]]$ContentToDecrypt,
-
-        [Parameter(Mandatory=$False)]
-        [switch]$Recurse,
-
-        [Parameter(Mandatory=$False)]
-        [string]$FileToOutput,
-        
-        [Parameter(Mandatory=$False)]
-        [ValidatePattern("\.pfx$")]
-        [string]$PathToPfxFile,
-
-        [Parameter(Mandatory=$False)]
-        [string]$CNofCertInStore,
-
-        [Parameter(Mandatory=$False)]
-        [securestring]$CertPwd,
-
-        [Parameter(Mandatory=$False)]
-        [ValidateSet("AES","RSA")]
-        [string]$TypeOfEncryptionUsed,
-
-        [Parameter(Mandatory=$False)]
-        [string]$AESKey,
-
-        [Parameter(Mandatory=$False)]
-        [string]$AESKeyLocation,
-
-        [Parameter(Mandatory=$False)]
-        [switch]$NoFileOutput,
-
-        [Parameter(Mandatory=$False)]
-        [switch]$TryRSADecryption
-    )
-
-    ##### BEGIN Parameter Validation #####
-
-    if ($SourceType -match "String|ArrayOfStrings" -and !$FileToOutput) {
-        $NewFileName = NewUniqueString -PossibleNewUniqueString "DecryptedOutput" -ArrayOfStrings $(Get-ChildItem $(Get-Location).Path -File).BaseName
-        $FileToOutput = $(Get-Location).Path + '\' + $NewFileName + ".decrypted"
-    }
-    if ($SourceType -eq "File" -and $FileToOutput) {
-        $ErrMsg = "The parameter -FileToOutput should NOT be used when -SourceType is 'File' or 'Directory'. "
-        "Simply use '-SourceType File' or '-SourceType Directory' and the naming convention for the output file "
-        " will be handled automatically by the $($MyInvocation.MyCommand.Name) function. Halting!"
-        Write-Error $ErrMsg
-        $global:FunctionResult = "1"
-        return
-    }
-    if ($Recurse -and $SourceType -ne "Directory") {
-        Write-Error "The -Recurse switch should only be used when -SourceType is 'Directory'! Halting!"
-        $global:FunctionResult = "1"
-        return
-    }
-
-    $RegexDirectoryPath = '^(([a-zA-Z]:\\)|(\\\\))((?![.<>:"\/\\|?*]).)+((?![.<>:"\/|?*]).)+$'
-    $RegexFilePath = '^(([a-zA-Z]:\\)|(\\\\))((?![.<>:"\/\\|?*]).)+((?![<>:"\/|?*]).)+((.*?\.)|(.*?\.[\w]+))+$'
-    # NOTE: The below Linux Regex representations are simply commonly used naming conventions - they are not
-    # strict definitions of Linux File or Directory Path formats
-    $LinuxRegexFilePath = '^((~)|(\/[\w^ ]+))+\/?([\w.])+[^.]$'
-    $LinuxRegexDirectoryPath = '^((~)|(\/[\w^ ]+))+\/?$'
-    if ($SourceType -eq "File" -and $ContentToDecrypt -notmatch $RegexFilePath -and
-    $ContentToDecrypt -notmatch $LinuxRegexFilePath
-    ) {
-        $ErrMsg = "The -SourceType specified was 'File' but '$ContentToDecrypt' does not appear to " +
-        "be a valid file path. This is either because a full path was not provided or because the file does " +
-        "not have a file extenstion. Please correct and try again. Halting!"
-        Write-Error $ErrMsg
-        $global:FunctionResult = "1"
-        return
-    }
-    if ($SourceType -eq "Directory" -and $ContentToDecrypt -notmatch $RegexDirectoryPath -and
-    $ContentToDecrypt -notmatch $LinuxRegexDirectoryPath
-    ) {
-        $ErrMsg = "The -SourceType specified was 'Directory' but '$ContentToDecrypt' does not appear to be " +
-        "a valid directory path. This is either because a full path was not provided or because the directory " +
-        "name ends with something that appears to be a file extension. Please correct and try again. Halting!"
-        Write-Error $ErrMsg
-        $global:FunctionResult = "1"
-        return
-    }
-
-    if ($SourceType -eq "File" -and !$(Test-Path $ContentToDecrypt)) {
-        Write-Error "The path '$ContentToDecrypt' was not found! Halting!"
-        $global:FunctionResult = "1"
-        return
-    }
-    if ($SourceType -eq "Directory" -and !$(Test-Path $ContentToDecrypt)) {
-        Write-Error "The path '$ContentToDecrypt' was not found! Halting!"
-        $global:FunctionResult = "1"
-        return
-    }
-    if ($SourceType -eq "Directory") {
-        if ($Recurse) {
-            $PossibleFilesToEncrypt = Get-ChildItem -Path $ContentToDecrypt -Recurse -File
-        }
-        if (!$Recurse) {
-            $PossibleFilesToEncrypt = Get-ChildItem -Path $ContentToDecrypt -File
-        }
-        if ($PossibleFilesToEncrypt.Count -lt 1) {
-            Write-Error "No files were found in the directory '$ContentToDecrypt'. Halting!"
-            $global:FunctionResult = "1"
-            return
-        }
-    }
-
-    if ($FileToOutput) {
-        $FileToOutputDirectory = $FileToOutput | Split-Path -Parent
-        $FileToOutputFile = $FileToOutput | Split-Path -Leaf
-        $FileToOutputFileSansExt = $($FileToOutputFile.Split("."))[0]
-        if (!$(Test-Path $FileToOutputDirectory)) {
-            Write-Error "The directory $FileToOutputDirectory does not exist. Please check the path. Halting!"
-            $global:FunctionResult = "1"
-            return
-        }
-    }
-
-    # Gather the Cert Used For RSA Decryption and the AES Key (if necessary)
-    if ($PathToPfxFile -and $CNofCertInStore) {
-        $ErrMsg = "Please use *either* -PathToPfxFile *or* -CNOfCertInStore. Halting!"
-        Write-Error $ErrMsg
-        $global:FunctionResult = "1"
-        return
-    }
-
-    if (!$PathToPfxFile -and !$CNofCertInStore) {
-        Write-Error "You must use either the -PathToPfxFile or the -CNofCertInStore parameter! Halting!"
-        $global:FunctionResult = "1"
-        return
-    }
-
-    # Validate PathToPfxFile
-    if ($PathToPfxFile) { 
-        if (!$(Test-Path $PathToPfxFile)) {
-            Write-Error "The path '$PathToPfxFile'was not found at the path specified. Halting."
-            $global:FunctionResult = "1"
-            return
-        }
-
-        # See if Cert is password protected
-        try {
-            # First, try null password
-            $Cert1 = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new($PathToPfxFile, $null, [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::Exportable)
-        }
-        catch {
-            Write-Warning "Either the Private Key in '$PathToPfxFile' is Password Protected, or it is marked as Unexportable..."
-            if (!$CertPwd) {
-                $CertPwd = Read-Host -Prompt "Please enter the password for the certificate. If there is no password, simply press [ENTER]" -AsSecureString
-            }
-
-            # Next, try $CertPwd 
-            try {
-                $Cert1 = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new($PathToPfxFile, $CertPwd, [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::Exportable)
-            }
-            catch {
-                $ErrMsg = "Either the password supplied for the Private Key in $PathToPfxFile' is " +
-                "incorrect or it is not marked as Exportable! Halting!"
-                Write-Error $ErrMsg
-                $global:FunctionResult = "1"
-                return
-            }
-        }
-    }
-    
-    # Validate CNofCertInStore {
-    if ($CNofCertInStore) {
-        [array]$Cert1 = @(Get-ChildItem "Cert:\LocalMachine\My" | Where-Object {$_.Subject -match "CN=$CNofCertInStore,"})
-
-        if ($Cert1.Count -gt 1) {
-            Write-Warning "Multiple certificates under 'Cert:\LocalMachine\My' with a CommonName '$CNofCertInStore' have been identified! They are as follows:"
-            for ($i=0; $i -lt $Cert1.Count; $i++) {
-                Write-Host "$i) " + "Subject: " + $Cert1[$i].Subject + ' | Thumbprint: ' + $Cert1[$i].Thumbprint
-            }
-            $ValidChoiceNumbers = 0..$($Cert1.Count-1)
-            $CertChoicePrompt = "Please enter the number that corresponds to the Certificate that you " +
-            "would like to use. [0..$($Cert1.Count-1)]"
-            $CertChoice = Read-Host -Prompt $CertChoicePrompt
-            while ($ValidChoiceNumbers -notcontains $CertChoice) {
-                Write-Host "'$CertChoice' is not a valid choice number! Valid choice numbers are $($ValidChoiceNumbers -join ",")"
-                $CertChoice = Read-Host -Prompt $CertChoicePrompt
-            }
-            
-            $Cert1 = $Cert1[$CertChoice]
-        }
-        if ($Cert1.Count -lt 1) {
-            Write-Error "Unable to find a a certificate matching CN=$CNofCertInStore in 'Cert:\LocalMachine\My'! Halting!"
-            $global:FunctionResult = "1"
-            return
-        }
-        if ($Cert1.Count -eq 1) {
-            $Cert1 = $Cert1[0]
-        }
-    }
-
-    # Make sure we have the Private Key
-    if ($Cert1.PrivateKey -eq $null -and $Cert1.HasPrivateKey -eq $True) {
-        try {
-            $ContentToDecryptParentDirTest = $ContentToDecrypt | Split-Path -Parent
-            $TempOutputDirPrep = $(Resolve-Path $ContentToDecryptParentDirTest -ErrorAction SilentlyContinue).Path
-            if (!$TempOutputDirPrep) {
-                throw
-            }
-        }
-        catch {
-            if ($NoFileOutput) {
-                $TempOutputDirPrep = $(Get-Location).Path
-            }
-            else {
-                $TempOutputDirPrep = $FileToOutput | Split-Path -Parent
-            }
-        }
-
-        $PrivKeyTempDirName = NewUniqueString -PossibleNewUniqueString "PrivateKeyExtractionTempDir" -ArrayOfStrings $(Get-ChildItem -Path $TempOutputDirPrep -Directory).BaseName
-        $TempOutputDir = "$TempOutputDirPrep\$PrivKeyTempDirName"
-        $null = New-Item -Type Directory -Path $TempOutputDir
-        
-        if ($CertPwd) {
-            $PrivateKeyInfo = Get-PrivateKeyProperty -CertObject $Cert1 -TempOutputDirectory $TempOutputDir -CertPwd $CertPwd -DownloadAndAddOpenSSLToPath
-        }
-        else {
-            $PrivateKeyInfo = Get-PrivateKeyProperty -CertObject $Cert1 -TempOutputDirectory $TempOutputDir -DownloadAndAddOpenSSLToPath
-        }
-        
-        if ($PrivateKeyInfo.KeySize -eq $null) {
-            Write-Error "Failed to get Private Key Info from $($Cert1.Subject) ! Halting!"
-            $global:FunctionResult = "1"
-            return
-        }
-    }
-    if ($Cert1.PrivateKey -eq $null -and $Cert1.HasPrivateKey -eq $False) {
-        Write-Error "There is no private key available for the certificate $($Cert1.Subject)! We need the private key to decrypt the file! Halting!"
-        $global:FunctionResult = "1"
-        return
-    }
-
-    # Figure out if we need an AES key. If so, get it.
-    if ($($TypeOfEncryptionUsed -eq "AES" -or $ContentToDecrypt -match "\.aesencrypted" -or $AESKey -or $AESKeyLocation) -or
-    $($SourceType -eq "Directory" -and $TypeOfEncryptionUsed -ne "RSA" -and !$TryRSADecryption)
-    ) {
-        $NeedAES = $True
-    }
-    else {
-        $NeedAES = $False
-    }
-    
-    if ($NeedAES) {
-        if (!$AESKey -and !$AESKeyLocation) {
-            $ErrMsg = "The $($MyInvocation.MyCommand.Name) function has determined that either the -AESKey " +
-            "parameter or the -AESKeyLocation parameter is needed in order to decrypt the specified content! Halting!"
-            Write-Error $ErrMsg
-            $global:FunctionResult = "1"
-            return
-        }
-        if ($AESKeyLocation) {
-            if (!$(Test-Path $AESKeyLocation)) {
-                Write-Verbose "The path $AESKeyLocation was not found! Halting!"
-                Write-Error "The path $AESKeyLocation was not found! Halting!"
-                $global:FunctionResult = "1"
-                return
-            }
-            if ($(Get-ChildItem $AESKeyLocation).Extension -eq ".rsaencrypted") {
-                $EncryptedBase64String = Get-Content $AESKeyLocation
-                $EncryptedBytes2 = [System.Convert]::FromBase64String($EncryptedBase64String)
-                #$EncryptedBytes2 = [System.IO.File]::ReadAllBytes($AESKeyLocation)
-                try {
-                    if ($PrivateKeyInfo) {
-                        #$DecryptedBytes2 = $PrivateKeyInfo.Decrypt($EncryptedBytes2, $true)
-                        $DecryptedBytes2 = $PrivateKeyInfo.Decrypt($EncryptedBytes2, [System.Security.Cryptography.RSAEncryptionPadding]::OaepSHA256)
-                    }
-                    else {
-                        #$DecryptedBytes2 = $Cert1.PrivateKey.Decrypt($EncryptedBytes2, $true)
-                        $DecryptedBytes2 = $Cert1.PrivateKey.Decrypt($EncryptedBytes2, [System.Security.Cryptography.RSAEncryptionPadding]::OaepSHA256)
-                    }
-                }
-                catch {
-                    try {
-                        if ($PrivateKeyInfo) {
-                            #$DecryptedBytes2 = $PrivateKeyInfo.Decrypt($EncryptedBytes2, $true)
-                            $DecryptedBytes2 = $PrivateKeyInfo.Decrypt($EncryptedBytes2, [System.Security.Cryptography.RSAEncryptionPadding]::Pkcs1)
-                        }
-                        else {
-                            #$DecryptedBytes2 = $Cert1.PrivateKey.Decrypt($EncryptedBytes2, $true)
-                            $DecryptedBytes2 = $Cert1.PrivateKey.Decrypt($EncryptedBytes2, [System.Security.Cryptography.RSAEncryptionPadding]::Pkcs1)
-                        }
-                    }
-                    catch {
-                        Write-Error "Problem decrypting the file that contains the AES Key (i.e. '$AESKeyLocation')! Halting!"
-                        $global:FunctionResult = "1"
-                        return
-                    }
-                }
-                
-                if ($PSVersionTable.PSEdition -eq "Core") {
-                    $DecryptedContent2 = [system.text.encoding]::UTF8.GetString($DecryptedBytes2)
-                }
-                else {
-                    $DecryptedContent2 = [system.text.encoding]::Unicode.GetString($DecryptedBytes2)
-                }
-
-                # Need to write $DecryptedContent2 to tempfile to strip BOM if present
-                $tmpFile = [IO.Path]::GetTempFileName()
-                $null = [System.IO.File]::WriteAllLines($tmpFile, $DecryptedContent2.Trim())
-                $AESKey = Get-Content $tmpFile
-                $null = Remove-Item $tmpFile -Force
-            }
-            # If the $AESKeyLocation file extension is not .rsaencrypted, assume it's the unprotected AESKey
-            if ($(Get-ChildItem $AESKeyLocation).Extension -ne ".rsaencrypted"){
-                $AESKey = Get-Content $AESKeyLocation
-            }
-        }
-    }
-
-    ##### END Parameter Validation #####
-
-    ##### BEGIN Main Body #####
-
-    [System.Collections.ArrayList]$DecryptedFiles = @()
-    [System.Collections.ArrayList]$FailedToDecryptFiles = @()
-    # Do RSA Decryption on $ContentToDecrypt
-    if ($TypeOfEncryptionUsed -ne "AES" -or $TryRSADecryption) {
-        #Write-Host "Doing RSA Decryption"
-        if ($SourceType -eq "String" -or $SourceType -eq "File") {
-            if ($SourceType -eq "String") {
-                $EncryptedString2 = $ContentToDecrypt
-                $OutputFile = if ($FileToOutput -match "\.decrypted$") {
-                    $FileToOutput
-                }
-                else {
-                    "$FileToOutput.decrypted"
-                }
-            }
-            if ($SourceType -eq "File") {
-                $EncryptedString2 = Get-Content $ContentToDecrypt
-                $OutputFile = if ($ContentToDecrypt -match "\.decrypted$") {
-                    $ContentToDecrypt
-                }
-                else {
-                    "$ContentToDecrypt.decrypted"
-                }
-            }
-
-            try {
-                $EncryptedBytes2 = [System.Convert]::FromBase64String($EncryptedString2)
-                if ($PrivateKeyInfo) {
-                    #$DecryptedBytes2 = $PrivateKeyInfo.Decrypt($EncryptedBytes2, $true)
-                    $DecryptedBytes2 = $PrivateKeyInfo.Decrypt($EncryptedBytes2, [System.Security.Cryptography.RSAEncryptionPadding]::OaepSHA256)
-                }
-                else {
-                    #$DecryptedBytes2 = $Cert1.PrivateKey.Decrypt($EncryptedBytes2, $true)
-                    $DecryptedBytes2 = $Cert1.PrivateKey.Decrypt($EncryptedBytes2, [System.Security.Cryptography.RSAEncryptionPadding]::OaepSHA256)
-                }
-                $DecryptedContent2 = [system.text.encoding]::UTF8.GetString($DecryptedBytes2)
-                $DecryptedContent2 = $DecryptedContent2.Trim()
-                # Need to write $DecryptedContent2 using [System.IO.File]::WriteAllLines() to strip BOM if present
-                $null = [System.IO.File]::WriteAllLines("$OutputFile", $DecryptedContent2)
-
-                $null = $DecryptedFiles.Add($OutputFile)
-            }
-            catch {
-                try {
-                    $EncryptedBytes2 = [System.Convert]::FromBase64String($EncryptedString2)
-                    if ($PrivateKeyInfo) {
-                        #$DecryptedBytes2 = $PrivateKeyInfo.Decrypt($EncryptedBytes2, $true)
-                        $DecryptedBytes2 = $PrivateKeyInfo.Decrypt($EncryptedBytes2, [System.Security.Cryptography.RSAEncryptionPadding]::Pkcs1)
-                    }
-                    else {
-                        #$DecryptedBytes2 = $Cert1.PrivateKey.Decrypt($EncryptedBytes2, $true)
-                        $DecryptedBytes2 = $Cert1.PrivateKey.Decrypt($EncryptedBytes2, [System.Security.Cryptography.RSAEncryptionPadding]::Pkcs1)
-                    }
-                    $DecryptedContent2 = [system.text.encoding]::UTF8.GetString($DecryptedBytes2)
-                    $DecryptedContent2 = $DecryptedContent2.Trim()
-                    # Need to write $DecryptedContent2 using [System.IO.File]::WriteAllLines() to strip BOM if present
-                    $null = [System.IO.File]::WriteAllLines("$OutputFile", $DecryptedContent2)
-
-                    $null = $DecryptedFiles.Add($OutputFile)
-                }
-                catch {
-                    #Write-Error $_
-                    $null = $FailedToDecryptFiles.Add($OutputFile)
-                }
-            }
-        }
-        if ($SourceType -eq "ArrayOfStrings") {
-            $ArrayOfEncryptedStrings = $ContentToDecrypt
-
-            for ($i=0; $i -lt $ArrayOfEncryptedStrings.Count; $i++) {
-                $OutputFile = if ($FileToOutput -match "\.decrypted$") {
-                    $FileToOutput -replace "\.decrypted$","$i.decrypted"
-                }
-                else {
-                    "$FileToOutput$i.decrypted"
-                }
-
-                try {
-                    $EncryptedBytes2 = [System.Convert]::FromBase64String($ArrayOfEncryptedStrings[$i])
-                    if ($PrivateKeyInfo) {
-                        #$DecryptedBytes2 = $PrivateKeyInfo.Decrypt($EncryptedBytes2, $true)
-                        $DecryptedBytes2 = $PrivateKeyInfo.Decrypt($EncryptedBytes2, [System.Security.Cryptography.RSAEncryptionPadding]::OaepSHA256)
-                    }
-                    else {
-                        #$DecryptedBytes2 = $Cert1.PrivateKey.Decrypt($EncryptedBytes2, $true)
-                        $DecryptedBytes2 = $Cert1.PrivateKey.Decrypt($EncryptedBytes2, [System.Security.Cryptography.RSAEncryptionPadding]::OaepSHA256)
-                    }
-                    $DecryptedContent2 = [system.text.encoding]::UTF8.GetString($DecryptedBytes2)
-                    $DecryptedContent2 = $DecryptedContent2.Trim()
-                    # Need to write $DecryptedContent2 using [System.IO.File]::WriteAllLines() to strip BOM if present
-                    $null = [System.IO.File]::WriteAllLines("$OutputFile", $DecryptedContent2)
-
-                    $null = $DecryptedFiles.Add($OutputFile)
-                }
-                catch {
-                    try {
-                        $EncryptedBytes2 = [System.Convert]::FromBase64String($EncryptedString2)
-                        if ($PrivateKeyInfo) {
-                            #$DecryptedBytes2 = $PrivateKeyInfo.Decrypt($EncryptedBytes2, $true)
-                            $DecryptedBytes2 = $PrivateKeyInfo.Decrypt($EncryptedBytes2, [System.Security.Cryptography.RSAEncryptionPadding]::Pkcs1)
-                        }
-                        else {
-                            #$DecryptedBytes2 = $Cert1.PrivateKey.Decrypt($EncryptedBytes2, $true)
-                            $DecryptedBytes2 = $Cert1.PrivateKey.Decrypt($EncryptedBytes2, [System.Security.Cryptography.RSAEncryptionPadding]::Pkcs1)
-                        }
-                        $DecryptedContent2 = [system.text.encoding]::UTF8.GetString($DecryptedBytes2)
-                        $DecryptedContent2 = $DecryptedContent2.Trim()
-                        # Need to write $DecryptedContent2 using [System.IO.File]::WriteAllLines() to strip BOM if present
-                        $null = [System.IO.File]::WriteAllLines("$OutputFile", $DecryptedContent2)
-    
-                        $null = $DecryptedFiles.Add($OutputFile)
-                    }
-                    catch {
-                        #Write-Error $_
-                        $null = $FailedToDecryptFiles.Add($OutputFile)
-                    }
-                }
-            }
-        }
-        if ($SourceType -eq "Directory") {
-            if ($Recurse) {
-                $DecryptionCandidates = $(Get-ChildItem -Path $ContentToDecrypt -Recurse -File | Where-Object {
-                    $_.FullName -notmatch [regex]::Escape($(Get-Item $PathToPfxFile).BaseName) -and
-                    $_.FullName -notmatch "\.aeskey" -and
-                    $_.FullName -notmatch "\.decrypted$"
-                }).FullName
-            }
-            if (!$Recurse) {
-                $DecryptionCandidates = $(Get-ChildItem -Path $ContentToDecrypt -File | Where-Object {
-                    $_.FullName -notmatch [regex]::Escape($(Get-Item $PathToPfxFile).BaseName) -and
-                    $_.FullName -notmatch "\.aeskey" -and
-                    $_.FullName -notmatch "\.decrypted$"
-                }).FullName
-            }
-
-            foreach ($file in $DecryptionCandidates) {
-                try {
-                    $FileExtenstion = $(Get-Item $file -ErrorAction Stop).Extension
-                }
-                catch {
-                    continue
-                }
-
-                try {
-                    $GetDecryptSplatParams = @{
-                        SourceType          = "File"
-                        ContentToDecrypt    = $file
-                        PathToPfxFile       = $PathToPfxFile
-                        TryRSADecryption    = $True
-                        ErrorAction         = "Stop"
-                    }
-                    $DecryptInfo = Get-DecryptedContent @GetDecryptSplatParams
-                    $OutputFile = $DecryptInfo.DecryptedFiles
-
-                    if ($OutputFile) {
-                        $null = $DecryptedFiles.Add($OutputFile)
-                        $null = Remove-Item -Path $file -Force -ErrorAction SilentlyContinue
-                    }
-                }
-                catch {
-                    #Write-Error $_
-                    $null = $FailedToDecryptFiles.Add($file)
-                }
-            }
-        }
-    }
-
-    # Do AES Decryption on $ContentToDecrypt
-    if ($TypeOfEncryptionUsed -eq "AES" -or $NeedAES) {
-        #Write-Host "Doing AES Decryption"
-        if ($SourceType -eq "String" -or $SourceType -eq "File") {
-            if ($SourceType -eq "String") {
-                # Temporarily write the string to a file
-                $tmpFile = [IO.Path]::GetTempFileName()
-                $tmpFileRenamed = "$tmpFile.aesencrypted"
-                $null = [System.IO.File]::WriteAllLines($tmpfileRenamed, $ContentToDecrypt)
-
-                try {
-                    $FileDecryptionInfo = DecryptFile $tmpFileRenamed -Key $AESKey -ErrorAction Stop
-                    # Now we're left with a file $tmpFile containing decrypted info. Move it to $FileToOutput
-                    $null = Move-Item -Path $tmpFile -Destination $FileToOutput
-
-                    $null = $DecryptedFiles.Add($FileToOutput)
-                }
-                catch {
-                    #Write-Error $_
-                    $null = $FailedToDecryptFiles.Add($FileToOutput)
-                }
-            }
-            if ($SourceType -eq "File") {
-                try {
-                    $FileDecryptionInfo = DecryptFile $ContentToDecrypt -Key $AESKey -ErrorAction Stop
-                    $null = $DecryptedFiles.Add("$ContentToDecrypt.decrypted")
-                }
-                catch {
-                    #Write-Error $_
-                    $null = $FailedToDecryptFiles.Add($ContentToDecrypt)
-                }
-                
-            }
-        }
-        if ($SourceType -eq "ArrayOfStrings") {
-            $ArrayOfEncryptedStrings = $ContentToDecrypt
-
-            for ($i=0; $i -lt $ArrayOfEncryptedStrings.Count; $i++) {
-                $OutputFile = "$FileToOutput$i"
-
-                # Temporarily write the string to a file
-                $tmpFile = [IO.Path]::GetTempFileName()
-                $tmpFileRenamed = "$tmpFile.aesencrypted"
-                $null = [System.IO.File]::WriteAllLines($tmpfileRenamed, $ArrayOfEncryptedStrings[$i])
-
-                try {
-                    $FileDecryptionInfo = DecryptFile $tmpFileRenamed -Key $AESKey -ErrorAction Stop
-                    # Now we're left with a file $tmpFile containing decrypted info. Copy it to $FileToOutput
-                    Move-Item -Path $tmpFile -Destination $OutputFile
-
-                    $null = $DecryptedFiles.Add($OutputFile)
-                }
-                catch {
-                    #Write-Error $_
-                    $null = $FailedToDecryptFiles.Add($OutputFile)
-                }
-            }
-        }
-        if ($SourceType -eq "Directory") {
-            if ($Recurse) {
-                $DecryptionCandidates = $(Get-ChildItem -Path $ContentToDecrypt -Recurse -File | Where-Object {
-                    $_.FullName -notmatch [regex]::Escape($(Get-Item $PathToPfxFile).BaseName) -and
-                    $_.FullName -notmatch "\.aeskey" -and
-                    $_.FullName -notmatch "\.decrypted$"
-
-                }).FullName
-            }
-            if (!$Recurse) {
-                $DecryptionCandidates = $(Get-ChildItem -Path $ContentToDecrypt -File | Where-Object {
-                    $_.FullName -notmatch [regex]::Escape($(Get-Item $PathToPfxFile).BaseName) -and
-                    $_.FullName -notmatch "\.aeskey" -and
-                    $_.FullName -notmatch "\.decrypted$"
-                }).FullName
-            }
-
-            foreach ($file in $DecryptionCandidates) {
-                try {
-                    $FileExtenstion = $(Get-Item $file -ErrorAction Stop).Extension
-                }
-                catch {
-                    continue
-                }
-                
-                try {
-                    $GetDecryptSplatParams = @{
-                        SourceType          = "File"
-                        ContentToDecrypt    = $file
-                        PathToPfxFile       = $PathToPfxFile
-                        AESKey              = $AESKey
-                        TryRSADecryption    = $True
-                        ErrorAction         = "Stop"
-                    }
-                    $DecryptInfo = Get-DecryptedContent @GetDecryptSplatParams
-                    $OutputFile = $DecryptInfo.DecryptedFiles
-
-                    if ($OutputFile) {
-                        $null = $DecryptedFiles.Add($OutputFile)
-                    }
-                }
-                catch {
-                    #Write-Error $_
-                    $null = $FailedToDecryptFiles.Add($OutputFile)
-                }
-            }
-        }
-    }
-
-    # Output
-    if ($PrivateKeyInfo) {
-        $CertName = $($Cert1.Subject | Select-String -Pattern "^CN=[\w]+").Matches.Value -replace "CN=",""
-        $PFXCertUsedForPrivateKeyExtraction = "$TempOutputDir\$CertName.pfx"
-    }
-
-    $AllFileOutputsPrep = $DecryptedFiles,$PFXCertUsedForPrivateKeyExtraction
-    $AllFileOutputs = foreach ($element in $AllFileOutputsPrep) {if ($element -ne $null) {$element}}
-
-    $FinalFailedToDecryptFiles = foreach ($FullPath in $FailedToDecryptFiles) {
-        if ($DecryptedFiles -notcontains "$FullPath.decrypted") {
-            $FullPath
-        }
-    }
-
-    [pscustomobject]@{
-        DecryptedFiles                          = $(if ($NoFileOutput) {$null} else {$DecryptedFiles})
-        FailedToDecryptFiles                    = $FinalFailedToDecryptFiles
-        CertUsedDuringDecryption                = $Cert1
-        PFXCertUsedForPrivateKeyExtraction      = $PFXCertUsedForPrivateKeyExtraction
-        LocationOfCertUsedDuringDecryption      = $(if ($PathToPfxFile) {$PathToPfxFile} else {"Cert:\LocalMachine\My"})
-        UnprotectedAESKey                       = $AESKey
-        LocationOfAESKey                        = $AESKeyLocation
-        AllFileOutputs                          = $(if ($NoFileOutput) {$null} else {$AllFileOutputs})
-        DecryptedContent                        = $(foreach ($file in $DecryptedFiles) {Get-Content $file})
-    }
-
-    # Cleanup
-    if ($NoFileOutput) {
-        foreach ($item in $DecryptedFiles) {
-            $null = Remove-Item $item -Force
-        }
-        if ($TempOutputDir) {
-            $null = Remove-Item -Recurse $TempOutputDir -Force
-        }
-    }
-
-    ##### END Main Body #####
-    $global:FunctionResult = "0"
-}
-
-
-<#
-    .SYNOPSIS
-        This function creates a New Self-Signed Certificate meant to be used for DSC secret encryption and exports it to the
-        specified directory.
+        This function is meant to make it easy to configure both the SSH Client and SSHD Server for Public
+        Certificate Authentication. It can (and should) be run on BOTH the SSH Client and the SSHD Server.
+
+        This function does the following:
+            - Uses the Vault Server's SSH Host Signing Certificate Authority (CA) to sign the local host's
+            ssh host key (i.e. 'C:\ProgramData\ssh\ssh_host_rsa_key.pub', resulting in
+            C:\ProgramData\ssh\ssh_host_rsa_key-cert.pub)
+            - Gets the Public Key of the CA used to sign User/Client SSH Keys from the Vault Server and adds it to:
+                1) The file C:\ProgramData\ssh\authorized_keys as a string;
+                2) The file C:\ProgramData\ssh\ssh_known_hosts as a string; and
+                3) The dedicated file C:\ProgramData\ssh\ca_pub_key_of_client_signer.pub
+            - Gets the Public Key of the CA used to sign Host/Machine SSH Keys from the Vault Server and adds it to:
+                1) The file C:\ProgramData\ssh\authorized_keys as a string;
+                2) The file C:\ProgramData\ssh\ssh_known_hosts as a string; and
+                3) The dedicated file C:\ProgramData\ssh\ca_pub_key_of_host_signer.pub
+            - Adds references to user accounts that you would like to grant ssh access to the local machine
+            to C:\ProgramData\ssh\authorized_principals (includes both Local and Domain users)
+            - Ensures NTFS filesystem permissions are set appropriately for the aforementioned files
+            - Adds references to 'TrustedUserCAKeys' and 'AuthorizedPrincipalsFile' to
+            C:\ProgramData\ssh\sshd_config
+
+        IMPORTANT NOTE: Just in case any breaking/undesireable changes are made to the host's ssh configuration,
+        all files that could potentially be changed are backed up to C:\ProgramData\ssh\Archive before any
+        changes are actually made.
 
     .DESCRIPTION
         See .SYNOPSIS
 
     .NOTES
 
-    .PARAMETER CommonName
-        This parameter is MANDATORY.
+    .PARAMETER PublicKeyOfCAUsedToSignUserKeysFilePath
+        This parameter is OPTIONAL, however, either -PublicKeyOfCAUsedToSignUserKeysFilePath,
+        -PublicKeyOfCAUsedToSignUserKeysAsString, or -PublicKeyOfCAUsedToSignUserKeysVaultUrl is REQUIRED.
 
-        This parameter takes a string that represents the desired Common Name for the Self-Signed Certificate.
+        This parameter takes a string that represents a path to a file that is the Public Key of the CA
+        used to sign SSH User/Client Keys.
 
-    .PARAMETER ExportDirectory
-        This parameter is MANDATORY.
+    .PARAMETER PublicKeyOfCAUsedToSignUserKeysAsString
+        This parameter is OPTIONAL, however, either -PublicKeyOfCAUsedToSignUserKeysFilePath,
+        -PublicKeyOfCAUsedToSignUserKeysAsString, or -PublicKeyOfCAUsedToSignUserKeysVaultUrl is REQUIRED.
 
-        This parameter takes a string that represents the full path to a directory that will contain the new Self-Signed Certificate.
+        This parameter takes a string that represents the Public Key of the CA used to sign SSH User/Client
+        Keys. The string must start with "ssh-rsa".
+
+    .PARAMETER PublicKeyOfCAUsedToSignUserKeysVaultUrl
+        This parameter is OPTIONAL, however, either -PublicKeyOfCAUsedToSignUserKeysFilePath,
+        -PublicKeyOfCAUsedToSignUserKeysAsString, or -PublicKeyOfCAUsedToSignUserKeysVaultUrl is REQUIRED.
+
+        This parameter takes a string that represents the URL of the Vault Server Rest API Endpoint that
+        advertises the Public Key of the CA used to sign SSH User/Client Keys. The URL should be something like:
+            https://<FQDNOfVaultServer>:8200/v1/ssh-client-signer/public_key
+
+    .PARAMETER PublicKeyOfCAUsedToSignHostKeysFilePath
+        This parameter is OPTIONAL, however, either -PublicKeyOfCAUsedToSignHostKeysFilePath,
+        -PublicKeyOfCAUsedToSignhostKeysAsString, or -PublicKeyOfCAUsedToSignHostKeysVaultUrl is REQUIRED.
+
+        This parameter takes a string that represents a path to a file that is the Public Key of the CA
+        used to sign SSH Host/Machine Keys.
+
+    .PARAMETER PublicKeyOfCAUsedToSignHostKeysAsString
+        This parameter is OPTIONAL, however, either -PublicKeyOfCAUsedToSignHostKeysFilePath,
+        -PublicKeyOfCAUsedToSignhostKeysAsString, or -PublicKeyOfCAUsedToSignHostKeysVaultUrl is REQUIRED.
+
+        This parameter takes a string that represents the Public Key of the CA used to sign SSH Host/Machine
+        Keys. The string must start with "ssh-rsa".
+
+    .PARAMETER PublicKeyOfCAUsedToSignHostKeysVaultUrl
+        This parameter is OPTIONAL, however, either -PublicKeyOfCAUsedToSignHostKeysFilePath,
+        -PublicKeyOfCAUsedToSignhostKeysAsString, or -PublicKeyOfCAUsedToSignHostKeysVaultUrl is REQUIRED.
+
+        This parameter takes a string that represents the URL of the Vault Server REST API Endpoint that
+        advertises the Public Key of the CA used to sign SSH User/Client Keys. The URL should be something like:
+            https://<FQDNOfVaultServer>:8200/v1/ssh-host-signer/public_key
+
+    .PARAMETER AuthorizedUserPrincipals
+        This parameter is OPTIONAL, but highly recommended.
+
+        This parameter takes an array of strings, each of which represents either a Local User Account
+        or a Domain User Account. Local User Accounts MUST be in the format <UserName>@<LocalHostComputerName> and
+        Domain User Accounts MUST be in the format <UserName>@<DomainPrefix>. (To clarify DomainPrefix: if your
+        domain is, for example, 'zero.lab', your DomainPrefix would be 'zero').
+
+        These strings will be added to the file C:\ProgramData\ssh\authorized_principals, and these User Accounts
+        will be permitted to SSH into the machine that this function is run on.
+
+        You CAN use this parameter in conjunction with the -AuthorizedPrincipalsUserGroup parameter, and this function
+        DOES check for repeats, so don't worry about overlap.
+
+    .PARAMETER AuthorizedPrincipalsUserGroup
+        This parameter is OPTIONAL.
+
+        This parameter takes an array of strings that can be any combination of the following values:
+            - AllUsers
+            - LocalAdmins
+            - LocalUsers
+            - DomainAdmins
+            - DomainUsers
+        
+        The value 'AllUsers' is the equivalent of specifying 'LocalAdmins','LocalUsers','DomainAdmins', and
+        'DomainUsers'.
+
+        Each User Account that is a member of the specified groups will be added to the file
+        C:\ProgramData\ssh\authorized_principals, and these User Accounts will be permitted to SSH into the machine
+        that this function is run on.
+
+        You CAN use this parameter in conjunction with the -AuthorizedUserPrincipals parameter, and this function
+        DOES check for repeats, so don't worry about overlap.
+
+    .PARAMETER VaultSSHHostSigningUrl
+        This parameter is OPTIONAL, but highly recommended.
+
+        This parameter takes a string that represents the URL of the Vault Server REST API endpoint that is
+        responsible for signing the Local Host's Host/Machine SSH Key. The URL should be something like:
+            http://<FQDNOfVaultServer>:8200/v1/ssh-host-signer/sign/hostrole
+
+        Using this parameter outputs the signed SSH Host/Machine Key file C:\ProgramData\ssh\ssh_host_rsa_key-cert.pub
+
+    .PARAMETER VaultAuthToken
+        This parameter is OPTIONAL, but becomes MANDATORY if you use the -VaultSSHHostSigningUrl parameter.
+        It should only be used if you use the -VaultSSHHostSigningUrl parameter.
+
+        This parameter takes a string that represents a Vault Authentiction token with permission to
+        request that the Vault Server sign the Local Host's SSH Host/Machine Key.
 
     .EXAMPLE
-        # Import the MiniLab Module and -
-
-        PS C:\Users\zeroadmin> Get-EncryptionCert -CommonName "EncryptionCert" -ExportDirectory "$HOME\EncryptionCerts"
-
+        # Open an elevated PowerShell Session, import the module, and -
+        
+        PS C:\Users\zeroadmin> $AddCAPubKeyToSSHAndSSHDConfigSplatParams = @{
+            PublicKeyOfCAUsedToSignUserKeysVaultUrl     = "$VaultServerBaseUri/ssh-client-signer/public_key"
+            PublicKeyOfCAUsedToSignHostKeysVaultUrl     = "$VaultServerBaseUri/ssh-host-signer/public_key"
+            AuthorizedPrincipalsUserGroup               = @("LocalAdmins","DomainAdmins")
+            VaultSSHHostSigningUrl                      = "$VaultServerBaseUri/ssh-host-signer/sign/hostrole"
+            VaultAuthToken                              = $ZeroAdminToken
+        }
+        PS C:\Users\zeroadmin> $AddCAPubKeysResult = Add-CAPubKeyToSSHAndSSHDConfig @AddCAPubKeyToSSHAndSSHDConfigSplatParams
 #>
-function Get-EncryptionCert {
+function Add-CAPubKeyToSSHAndSSHDConfig {
+    [CmdletBinding(DefaultParameterSetName='VaultUrl')]
+    Param(
+        # NOTE: When reading 'PathToPublicKeyOfCAUsedToSign', please note that it is actually the CA's
+        # **private key** that is used to do the signing. We just require the CA's public key to verify
+        # that presented user keys signed by the CA's private key were, in fact, signed by the CA's private key
+        [Parameter(Mandatory=$False)]
+        [string]$PublicKeyOfCAUsedToSignUserKeysFilePath,
+
+        [Parameter(Mandatory=$False)]
+        [string]$PublicKeyOfCAUsedToSignUserKeysAsString,
+
+        [Parameter(Mandatory=$False)]
+        [string]$PublicKeyOfCAUsedToSignUserKeysVaultUrl, # Should be something like: http://192.168.2.12:8200/v1/ssh-client-signer/public_key
+
+        [Parameter(Mandatory=$False)]
+        [string]$PublicKeyOfCAUsedToSignHostKeysFilePath,
+
+        [Parameter(Mandatory=$False)]
+        [string]$PublicKeyOfCAUsedToSignHostKeysAsString,
+
+        [Parameter(Mandatory=$False)]
+        [string]$PublicKeyOfCAUsedToSignHostKeysVaultUrl, # Should be something like: http://192.168.2.12:8200/v1/ssh-host-signer/public_key
+
+        [Parameter(Mandatory=$False)]
+        [ValidatePattern("[\w]+@[\w]+")]
+        [string[]]$AuthorizedUserPrincipals,
+
+        [Parameter(Mandatory=$False)]
+        [ValidateSet("AllUsers","LocalAdmins","LocalUsers","DomainAdmins","DomainUsers")]
+        [string[]]$AuthorizedPrincipalsUserGroup,
+
+        # Use the below $VaultSSHHostSigningUrl and $VaultAuthToken parameters if you want
+        # C:\ProgramData\ssh\ssh_host_rsa_key.pub signed by the Vault Host Signing CA. This is highly recommended.
+        [Parameter(Mandatory=$False)]
+        [string]$VaultSSHHostSigningUrl, # Should be something like http://192.168.2.12:8200/v1/ssh-host-signer/sign/hostrole"
+
+        [Parameter(Mandatory=$False)]
+        [string]$VaultAuthToken
+    )
+
+    if ($($PSBoundParameters.Keys -match "UserKeys").Count -gt 1) {
+        $ErrMsg = "The $($MyInvocation.MyCommand.Name) only takes one of the following parameters: " +
+        "-PublicKeyOfCAUsedToSignUserKeysFilePath, -PublicKeyOfCAUsedToSignUserKeysAsString, -PublicKeyOfCAUsedToSignUserKeysVaultUrl"
+        Write-Error $ErrMsg
+    }
+    if ($($PSBoundParameters.Keys -match "UserKeys").Count -eq 0) {
+        $ErrMsg = "The $($MyInvocation.MyCommand.Name) MUST use one of the following parameters: " +
+        "-PublicKeyOfCAUsedToSignUserKeysFilePath, -PublicKeyOfCAUsedToSignUserKeysAsString, -PublicKeyOfCAUsedToSignUserKeysVaultUrl"
+        Write-Error $ErrMsg
+    }
+
+    if ($($PSBoundParameters.Keys -match "HostKeys").Count -gt 1) {
+        $ErrMsg = "The $($MyInvocation.MyCommand.Name) only takes one of the following parameters: " +
+        "-PublicKeyOfCAUsedToSignHostKeysFilePath, -PublicKeyOfCAUsedToSignHostKeysAsString, -PublicKeyOfCAUsedToSignHostKeysVaultUrl"
+        Write-Error $ErrMsg
+    }
+    if ($($PSBoundParameters.Keys -match "HostKeys").Count -eq 0) {
+        $ErrMsg = "The $($MyInvocation.MyCommand.Name) MUST use one of the following parameters: " +
+        "-PublicKeyOfCAUsedToSignHostKeysFilePath, -PublicKeyOfCAUsedToSignHostKeysAsString, -PublicKeyOfCAUsedToSignHostKeysVaultUrl"
+        Write-Error $ErrMsg
+    }
+
+    if (!$AuthorizedUserPrincipals -and !$AuthorizedPrincipalsUserGroup) {
+        $AuthPrincErrMsg = "The $($MyInvocation.MyCommand.Name) function requires one of the following parameters: " +
+        "-AuthorizedUserPrincipals, -AuthorizedPrincipalsUserGroup"
+        Write-Error $AuthPrincErrMsg
+        $global:FunctionResult = "1"
+        return
+    }
+
+    if ($($VaultSSHHostSigningUrl -and !$VaultAuthToken) -or $(!$VaultSSHHostSigningUrl -and $VaultAuthToken)) {
+        $ErrMsg = "If you would like this function to facilitate signing $env:ComputerName's ssh_host_rsa_key.pub, " +
+        "both -VaultSSHHostSigningUrl and -VaultAuthToken parameters are required! Halting!"
+        Write-Error $ErrMsg
+        $global:FunctionResult = "1"
+        return
+    }
+
+    # Setup our $Output Hashtable which we will add to as necessary as we go
+    [System.Collections.ArrayList]$FilesUpdated = @()
+    $Output = @{
+        FilesUpdated = $FilesUpdated
+    }
+
+
+    # Make sure sshd service is installed and running. If it is, we shouldn't need to use
+    # the New-SSHD server function
+    if (![bool]$(Get-Service sshd -ErrorAction SilentlyContinue)) {
+        if (![bool]$(Get-Service ssh-agent -ErrorAction SilentlyContinue)) {
+            $InstallWinSSHSplatParams = @{
+                GiveWinSSHBinariesPathPriority  = $True
+                ConfigureSSHDOnLocalHost        = $True
+                DefaultShell                    = "powershell"
+                GitHubInstall                   = $True
+                ErrorAction                     = "SilentlyContinue"
+                ErrorVariable                   = "IWSErr"
+            }
+
+            try {
+                $InstallWinSSHResults = Install-WinSSH @InstallWinSSHSplatParams -ErrorAction Stop
+                if (!$InstallWinSSHResults) {throw "There was a problem with the Install-WinSSH function! Halting!"}
+
+                $Output.Add("InstallWinSSHResults",$InstallWinSSHResults)
+            }
+            catch {
+                Write-Error $_
+                Write-Host "Errors for the Install-WinSSH function are as follows:"
+                Write-Error $($IWSErr | Out-String)
+                $global:FunctionResult = "1"
+                return
+            }
+        }
+        else {
+            $NewSSHDServerSplatParams = @{
+                ErrorAction         = "SilentlyContinue"
+                ErrorVariable       = "SSHDErr"
+                DefaultShell        = "powershell"
+            }
+            
+            try {
+                $NewSSHDServerResult = New-SSHDServer @NewSSHDServerSplatParams
+                if (!$NewSSHDServerResult) {throw "There was a problem with the New-SSHDServer function! Halting!"}
+            }
+            catch {
+                Write-Error $_
+                Write-Host "Errors for the New-SSHDServer function are as follows:"
+                Write-Error $($SSHDErr | Out-String)
+                $global:FunctionResult = "1"
+                return
+            }
+        }
+    }
+
+    if (Test-Path "$env:ProgramData\ssh\sshd_config") {
+        $sshdir = "$env:ProgramData\ssh"
+        $sshdConfigPath = "$sshdir\sshd_config"
+    }
+    elseif (Test-Path "$env:ProgramFiles\OpenSSH-Win64\sshd_config") {
+        $sshdir = "$env:ProgramFiles\OpenSSH-Win64"
+        $sshdConfigPath = "$env:ProgramFiles\OpenSSH-Win64\sshd_config"
+    }
+    if (!$sshdConfigPath) {
+        Write-Error "Unable to find file 'sshd_config'! Halting!"
+        $global:FunctionResult = "1"
+        if ($Output.Count -gt 0) {[pscustomobject]$Output}
+        return
+    }
+
+    if ($VaultSSHHostSigningUrl) {
+        # Make sure $VaultSSHHostSigningUrl is a valid Url
+        try {
+            $UriObject = [uri]$VaultSSHHostSigningUrl
+        }
+        catch {
+            Write-Error $_
+            $global:FunctionResult = "1"
+            if ($Output.Count -gt 0) {[pscustomobject]$Output}
+            return
+        }
+
+        if (![bool]$($UriObject.Scheme -match "http")) {
+            Write-Error "'$PublicKeyOfCAUsedToSignUserKeysVaultUrl' does not appear to be a URL! Halting!"
+            $global:FunctionResult = "1"
+            if ($Output.Count -gt 0) {[pscustomobject]$Output}
+            return
+        }
+
+        # Try to sign this machine's host key (i.e. C:\ProgramData\ssh\ssh_host_rsa_key.pub)
+        try {
+            # The below 'Sign-SSHHostPublicKey' function outputs a PSCustomObject detailing what was done
+            # to the sshd config (if anything). It also writes out C:\ProgramData\ssh\ssh_host_rsa_key-cert.pub
+            $SignSSHHostKeySplatParams = @{
+                VaultSSHHostSigningUrl      = $VaultSSHHostSigningUrl
+                VaultAuthToken              = $VaultAuthToken
+                ErrorAction                 = "Stop"
+            }
+            $SignSSHHostKeyResult = Sign-SSHHostPublicKey @SignSSHHostKeySplatParams
+            if (!$SignSSHHostKeyResult) {throw "There was a problem with the Sign-SSHHostPublicKey function!"}
+            $Output.Add("SignSSHHostKeyResult",$SignSSHHostKeyResult)
+        }
+        catch {
+            Write-Error $_
+            $global:FunctionResult = "1"
+            if ($Output.Count -gt 0) {[pscustomobject]$Output}
+            return
+        }
+    }
+
+    # We need to get $PublicKeyOfCAUsedToSignUserKeysAsString and $PublicKeyOfCAUsedToSignHostKeysAsString
+    if ($PublicKeyOfCAUsedToSignUserKeysVaultUrl) {
+        # Make sure $SiteUrl is a valid Url
+        try {
+            $UriObject = [uri]$PublicKeyOfCAUsedToSignUserKeysVaultUrl
+        }
+        catch {
+            Write-Error $_
+            $global:FunctionResult = "1"
+            if ($Output.Count -gt 0) {[pscustomobject]$Output}
+            return
+        }
+
+        if (![bool]$($UriObject.Scheme -match "http")) {
+            Write-Error "'$PublicKeyOfCAUsedToSignUserKeysVaultUrl' does not appear to be a URL! Halting!"
+            $global:FunctionResult = "1"
+            if ($Output.Count -gt 0) {[pscustomobject]$Output}
+            return
+        }
+
+        try {
+            $PublicKeyOfCAUsedToSignUserKeysAsString = $(Invoke-WebRequest -Uri $PublicKeyOfCAUsedToSignUserKeysVaultUrl).Content.Trim()
+            if (!$PublicKeyOfCAUsedToSignUserKeysAsString) {throw "Invoke-WebRequest failed to get the CA's Public Key from Vault! Halting!"}
+        }
+        catch {
+            Write-Error $_
+            $global:FunctionResult = "1"
+            if ($Output.Count -gt 0) {[pscustomobject]$Output}
+            return
+        }
+    }
+    if ($PublicKeyOfCAUsedToSignHostKeysVaultUrl) {
+        # Make sure $SiteUrl is a valid Url
+        try {
+            $UriObject = [uri]$PublicKeyOfCAUsedToSignHostKeysVaultUrl
+        }
+        catch {
+            Write-Error $_
+            $global:FunctionResult = "1"
+            if ($Output.Count -gt 0) {[pscustomobject]$Output}
+            return
+        }
+
+        if (![bool]$($UriObject.Scheme -match "http")) {
+            Write-Error "'$PublicKeyOfCAUsedToSignHostKeysVaultUrl' does not appear to be a URL! Halting!"
+            $global:FunctionResult = "1"
+            if ($Output.Count -gt 0) {[pscustomobject]$Output}
+            return
+        }
+
+        try {
+            $PublicKeyOfCAUsedToSignHostKeysAsString = $(Invoke-WebRequest -Uri $PublicKeyOfCAUsedToSignHostKeysVaultUrl).Content.Trim()
+            if (!$PublicKeyOfCAUsedToSignHostKeysAsString) {throw "Invoke-WebRequest failed to get the CA's Public Key from Vault! Halting!"}
+        }
+        catch {
+            Write-Error $_
+            $global:FunctionResult = "1"
+            if ($Output.Count -gt 0) {[pscustomobject]$Output}
+            return
+        }
+    }
+    if ($PublicKeyOfCAUsedToSignUserKeysFilePath) {
+        if (! $(Test-Path $PublicKeyOfCAUsedToSignUserKeysFilePath)) {
+            Write-Error "The path '$PublicKeyOfCAUsedToSignUserKeysFilePath' was not found! Halting!"
+            $global:FunctionResult = "1"
+            if ($Output.Count -gt 0) {[pscustomobject]$Output}
+            return
+        }
+        
+        $PublicKeyOfCAUsedToSignUserKeysAsString = Get-Content $PublicKeyOfCAUsedToSignUserKeysFilePath
+    }
+    if ($PublicKeyOfCAUsedToSignHostKeysFilePath) {
+        if (! $(Test-Path $PublicKeyOfCAUsedToSignHostKeysFilePath)) {
+            Write-Error "The path '$PublicKeyOfCAUsedToSignHostKeysFilePath' was not found! Halting!"
+            $global:FunctionResult = "1"
+            if ($Output.Count -gt 0) {[pscustomobject]$Output}
+            return
+        }
+        
+        $PublicKeyOfCAUsedToSignHostKeysAsString = Get-Content $PublicKeyOfCAUsedToSignHostKeysFilePath
+    }
+
+    # Now we have $PublicKeyOfCAUsedToSignUserKeysAsString and $PublicKeyOfCAUsedToSignHostKeysAsString
+    # Need to make sure these strings exist in dedicated files under $sshdir as well as in 
+    # $sshdir/authorized_keys and $sshdir/ssh_known_hosts
+
+    # Before adding these CA Public Keys to $sshdir/authorized_keys, if there's already an existing
+    # $sshdir/authorized_keys, archive it in a folder called $sshdir/Archive so that we can revert if necessary
+    if (Test-Path "$sshdir/authorized_keys") {
+        if (!$(Test-Path "$sshdir/Archive")) {
+            $null = New-Item -ItemType Directory -Path "$sshdir/Archive" -Force
+        }
+        Move-Item -Path "$sshdir/authorized_keys" -Destination "$sshdir/Archive" -Force
+    }
+    # Before adding these CA Public Keys to $sshdir/ssh_known_hosts, if there's already an existing
+    # $sshdir/ssh_known_hosts, archive it in a folder called $sshdir/Archive so that we can revert if necessary
+    if (Test-Path "$sshdir/ssh_known_hosts") {
+        if (!$(Test-Path "$sshdir/Archive")) {
+            $null = New-Item -ItemType Directory -Path "$sshdir/Archive" -Force
+        }
+        Move-Item -Path "$sshdir/ssh_known_hosts" -Destination "$sshdir/Archive" -Force
+    }
+
+    # Add the CA Public Certs to $sshdir/authorized_keys in their appropriate formats
+    $ContentToAddToAuthKeys = @(
+        "ssh-rsa-cert-v01@openssh.com " + $PublicKeyOfCAUsedToSignUserKeysAsString
+        "ssh-rsa-cert-v01@openssh.com " + $PublicKeyOfCAUsedToSignHostKeysAsString
+    )
+    $ContentToAddToAuthKeysString = $ContentToAddToAuthKeys -join "`n"
+    Add-Content -Path "$sshdir/authorized_keys" -Value $ContentToAddToAuthKeysString
+    $null = $FilesUpdated.Add($(Get-Item "$sshdir/authorized_keys"))
+
+    # Add the CA Public Certs to $sshdir/ssh_known_hosts in their appropriate formats
+    $ContentToAddToKnownHosts = @(
+        "@cert-authority * " + $PublicKeyOfCAUsedToSignUserKeysAsString
+        "@cert-authority * " + $PublicKeyOfCAUsedToSignHostKeysAsString
+    )
+    $ContentToAddToKnownHostsString = $ContentToAddToKnownHosts -join "`n"
+    Add-Content -Path $sshdir/ssh_known_hosts -Value $ContentToAddToKnownHostsString
+    $null = $FilesUpdated.Add($(Get-Item "$sshdir/ssh_known_hosts"))
+
+    # Make sure $PublicKeyOfCAUsedToSignUserKeysAsString and $PublicKeyOfCAUsedToSignHostKeysAsString are written
+    # to their own dedicated files under $sshdir
+    
+    # If $PublicKeyOfCAUsedToSignUserKeysFilePath or $PublicKeyOfCAUsedToSignHostKeysFilePath were actually provided
+    # maintain the same file name when writing to $sshdir
+    if ($PSBoundParameters.ContainsKey('PublicKeyOfCAUsedToSignUserKeysFilePath')) {
+        $UserCAPubKeyFileName = $PublicKeyOfCAUsedToSignUserKeysFilePath | Split-Path -Leaf
+    }
+    else {
+        $UserCAPubKeyFileName = "ca_pub_key_of_client_signer.pub"
+    }
+    if ($PSBoundParameters.ContainsKey('PublicKeyOfCAUsedToSignHostKeysFilePath')) {
+        $HostCAPubKeyFileName = $PublicKeyOfCAUsedToSignHostKeysFilePath | Split-Path -Leaf
+    }
+    else {
+        $HostCAPubKeyFileName = "ca_pub_key_of_host_signer.pub"
+    }
+
+    if (Test-Path "$sshdir/$UserCAPubKeyFileName") {
+        if (!$(Test-Path "$sshdir/Archive")) {
+            $null = New-Item -ItemType Directory -Path "$sshdir/Archive" -Force
+        }
+        Move-Item -Path "$sshdir/$UserCAPubKeyFileName" -Destination "$sshdir/Archive" -Force
+    }
+    if (Test-Path "$sshdir/$HostCAPubKeyFileName") {
+        if (!$(Test-Path "$sshdir/Archive")) {
+            $null = New-Item -ItemType Directory -Path "$sshdir/Archive" -Force
+        }
+        Move-Item -Path "$sshdir/$HostCAPubKeyFileName" -Destination "$sshdir/Archive" -Force
+    }
+
+    Set-Content -Path "$sshdir/$UserCAPubKeyFileName" -Value $PublicKeyOfCAUsedToSignUserKeysAsString
+    Set-Content -Path "$sshdir/$HostCAPubKeyFileName" -Value $PublicKeyOfCAUsedToSignHostKeysAsString
+    $null = $FilesUpdated.Add($(Get-Item "$sshdir/$UserCAPubKeyFileName"))
+    $null = $FilesUpdated.Add($(Get-Item "$sshdir/$HostCAPubKeyFileName"))
+    
+
+    # Next, we need to generate some content for $sshdir/authorized_principals
+
+    # IMPORTANT NOTE: The Generate-AuthorizedPrincipalsFile will only ADD users to the $sshdir/authorized_principals
+    # file (if they're not already in there). It WILL NOT delete or otherwise overwrite existing users in
+    # $sshdir/authorized_principals
+    $AuthPrincSplatParams = @{
+        ErrorAction     = "Stop"
+    }
+    if ($(!$AuthorizedPrincipalsUserGroup -and !$AuthorizedUserPrincipals) -or
+    $AuthorizedPrincipalsUserGroup -contains "AllUsers" -or
+    $($AuthorizedPrincipalsUserGroup -contains "LocalAdmins" -and $AuthorizedPrincipalsUserGroup -contains "LocalUsers" -and
+    $AuthorizedPrincipalsUserGroup -contains "DomainAdmins" -and $AuthorizedPrincipalsUserGroup -contains "DomainAdmins")
+    ) {
+        $AuthPrincSplatParams.Add("UserGroupToAdd",@("AllUsers"))
+    }
+    else {
+        if ($AuthorizedPrincipalsUserGroup) {
+            $AuthPrincSplatParams.Add("UserGroupToAdd",$AuthorizedPrincipalsUserGroup)
+        }
+        if ($AuthorizedUserPrincipals) {
+            $AuthPrincSplatParams.Add("UsersToAdd",$AuthorizedUserPrincipals)
+        }
+    }
+
+    try {
+        $AuthorizedPrincipalsFile = Generate-AuthorizedPrincipalsFile @AuthPrincSplatParams
+        if (!$AuthorizedPrincipalsFile) {throw "There was a problem with the Generate-AuthorizedPrincipalsFile function! Halting!"}
+
+        $null = $FilesUpdated.Add($(Get-Item "$sshdir/authorized_principals"))        
+    }
+    catch {
+        Write-Error $_
+        $global:FunctionResult = "1"
+        if ($Output.Count -gt 0) {[pscustomobject]$Output}
+        return
+    }
+
+    # Now we need to fix permissions for $sshdir/authroized_principals...
+    if ($PSVersionTable.PSEdition -eq "Core") {
+        Invoke-WinCommand -ComputerName localhost -ScriptBlock {
+            $SecurityDescriptor = Get-NTFSSecurityDescriptor -Path "$($args[0])/authorized_principals"
+            $SecurityDescriptor | Disable-NTFSAccessInheritance -RemoveInheritedAccessRules
+            $SecurityDescriptor | Clear-NTFSAccess
+            $SecurityDescriptor | Add-NTFSAccess -Account "NT AUTHORITY\SYSTEM" -AccessRights "FullControl" -AppliesTo ThisFolderSubfoldersAndFiles
+            $SecurityDescriptor | Add-NTFSAccess -Account "Administrators" -AccessRights "FullControl" -AppliesTo ThisFolderSubfoldersAndFiles
+            $SecurityDescriptor | Set-NTFSSecurityDescriptor
+        } -ArgumentList $sshdir
+    }
+    else {
+        $SecurityDescriptor = Get-NTFSSecurityDescriptor -Path "$sshdir/authorized_principals"
+        $SecurityDescriptor | Disable-NTFSAccessInheritance -RemoveInheritedAccessRules
+        $SecurityDescriptor | Clear-NTFSAccess
+        $SecurityDescriptor | Add-NTFSAccess -Account "NT AUTHORITY\SYSTEM" -AccessRights "FullControl" -AppliesTo ThisFolderSubfoldersAndFiles
+        $SecurityDescriptor | Add-NTFSAccess -Account "Administrators" -AccessRights "FullControl" -AppliesTo ThisFolderSubfoldersAndFiles
+        $SecurityDescriptor | Set-NTFSSecurityDescriptor
+    }
+
+    # Now that we have set content for $PublicKeyOfCAUsedToSignUserKeysFilePath, $sshdir/authorized_principals, and
+    # $sshdir/authorized_keys, we need to update sshd_config to reference these files
+
+    $PubKeyOfCAUserKeysFilePathForwardSlashes = "$sshdir\$UserCAPubKeyFileName" -replace '\\','/'
+    $TrustedUserCAKeysOptionLine = "TrustedUserCAKeys $PubKeyOfCAUserKeysFilePathForwardSlashes"
+    # For more information about authorized_principals content (specifically about setting specific commands and roles
+    # for certain users), see: https://framkant.org/2017/07/scalable-access-control-using-openssh-certificates/
+    $AuthPrincFilePathForwardSlashes = "$sshdir\authorized_principals" -replace '\\','/'
+    $AuthorizedPrincipalsOptionLine = "AuthorizedPrincipalsFile $AuthPrincFilePathForwardSlashes"
+    $AuthKeysFilePathForwardSlashes = "$sshdir\authorized_keys" -replace '\\','/'
+    $AuthorizedKeysFileOptionLine = "AuthorizedKeysFile $AuthKeysFilePathForwardSlashes"
+
+    [System.Collections.ArrayList]$sshdContent = Get-Content $sshdConfigPath
+
+    # Determine if sshd_config already has the 'TrustedUserCAKeys' option active
+    $ExistingTrustedUserCAKeysOption = $sshdContent -match "TrustedUserCAKeys" | Where-Object {$_ -notmatch "#"}
+
+    # Determine if sshd_config already has 'AuthorizedPrincipals' option active
+    $ExistingAuthorizedPrincipalsFileOption = $sshdContent -match "AuthorizedPrincipalsFile" | Where-Object {$_ -notmatch "#"}
+
+    # Determine if sshd_config already has 'AuthorizedKeysFile' option active
+    $ExistingAuthorizedKeysFileOption = $sshdContent -match "AuthorizedKeysFile" | Where-Object {$_ -notmatch "#"}
+    
+    if (!$ExistingTrustedUserCAKeysOption) {
+        # If sshd_config already has the 'Match User' option available, don't touch it, else add it with ForceCommand
+        try {
+            Add-Content -Value $TrustedUserCAKeysOptionLine -Path $sshdConfigPath
+            $SSHDConfigContentChanged = $True
+            [System.Collections.ArrayList]$sshdContent = Get-Content $sshdConfigPath
+        }
+        catch {
+            Write-Error $_
+            $global:FunctionResult = "1"
+            if ($Output.Count -gt 0) {[pscustomobject]$Output}
+            return
+        }
+    }
+    else {
+        if ($ExistingTrustedUserCAKeysOption -ne $TrustedUserCAKeysOptionLine) {
+            $UpdatedSSHDConfig = $sshdContent -replace [regex]::Escape($ExistingTrustedUserCAKeysOption),"$TrustedUserCAKeysOptionLine"
+
+            try {
+                Set-Content -Value $UpdatedSSHDConfig -Path $sshdConfigPath
+                $SSHDConfigContentChanged = $True
+                [System.Collections.ArrayList]$sshdContent = Get-Content $sshdConfigPath
+            }
+            catch {
+                Write-Error $_
+                $global:FunctionResult = "1"
+                if ($Output.Count -gt 0) {[pscustomobject]$Output}
+                return
+            }
+        }
+        else {
+            Write-Warning "The specified 'TrustedUserCAKeys' option is already active in the the sshd_config file. No changes made."
+        }
+    }
+
+    if (!$ExistingAuthorizedPrincipalsFileOption) {
+        try {
+            Add-Content -Value $AuthorizedPrincipalsOptionLine -Path $sshdConfigPath
+            $SSHDConfigContentChanged = $True
+            [System.Collections.ArrayList]$sshdContent = Get-Content $sshdConfigPath
+        }
+        catch {
+            Write-Error $_
+            $global:FunctionResult = "1"
+            if ($Output.Count -gt 0) {[pscustomobject]$Output}
+            return
+        }
+    }
+    else {
+        if ($ExistingAuthorizedPrincipalsFileOption -ne $AuthorizedPrincipalsOptionLine) {
+            $UpdatedSSHDConfig = $sshdContent -replace [regex]::Escape($ExistingAuthorizedPrincipalsFileOption),"$AuthorizedPrincipalsOptionLine"
+
+            try {
+                Set-Content -Value $UpdatedSSHDConfig -Path $sshdConfigPath
+                $SSHDConfigContentChanged = $True
+                [System.Collections.ArrayList]$sshdContent = Get-Content $sshdConfigPath
+            }
+            catch {
+                Write-Error $_
+                $global:FunctionResult = "1"
+                if ($Output.Count -gt 0) {[pscustomobject]$Output}
+                return
+            }
+        }
+        else {
+            Write-Warning "The specified 'AuthorizedPrincipalsFile' option is already active in the the sshd_config file. No changes made."
+        }
+    }
+
+    if (!$ExistingAuthorizedKeysFileOption) {
+        try {
+            Add-Content -Value $AuthorizedKeysFileOptionLine -Path $sshdConfigPath
+            $SSHDConfigContentChanged = $True
+            [System.Collections.ArrayList]$sshdContent = Get-Content $sshdConfigPath
+        }
+        catch {
+            Write-Error $_
+            $global:FunctionResult = "1"
+            if ($Output.Count -gt 0) {[pscustomobject]$Output}
+            return
+        }
+    }
+    else {
+        if ($ExistingAuthorizedKeysFileOption -ne $AuthorizedKeysFileOptionLine) {
+            $UpdatedSSHDConfig = $sshdContent -replace [regex]::Escape($ExistingAuthorizedKeysFileOption),"$AuthorizedKeysFileOptionLine"
+
+            try {
+                Set-Content -Value $UpdatedSSHDConfig -Path $sshdConfigPath
+                $SSHDConfigContentChanged = $True
+                [System.Collections.ArrayList]$sshdContent = Get-Content $sshdConfigPath
+            }
+            catch {
+                Write-Error $_
+                $global:FunctionResult = "1"
+                if ($Output.Count -gt 0) {[pscustomobject]$Output}
+                return
+            }
+        }
+        else {
+            Write-Warning "The specified 'AuthorizedKeysFile' option is already active in the the sshd_config file. No changes made."
+        }
+    }
+
+    if ($SSHDConfigContentChanged) {
+        $null = $FilesUpdated.Add($(Get-Item $sshdConfigPath))
+        
+        try {
+            Restart-Service sshd -ErrorAction Stop
+        }
+        catch {
+            Write-Error $_
+            $global:FunctionResult = "1"
+            if ($Output.Count -gt 0) {[pscustomobject]$Output}
+            return
+        }
+    }
+
+    [pscustomobject]$Output
+}
+
+
+<#
+    .SYNOPSIS
+        This function uses the HashiCorp Vault Server's REST API to configure the Vault Server for
+        LDAP Authrntication.
+
+    .DESCRIPTION
+        See .SYNOPSIS
+
+    .NOTES
+
+    .PARAMETER VaultServerNetworkLocation
+        This parameter is MANDATORY.
+
+        This parameter takes a string that represents the network location (IP Address or DNS-Resolvable)
+        of the Vault Server.
+
+    .PARAMETER VaultServerPort
+        This parameter is MANDATORY.
+
+        This parameter takes an integer that represents a Port Number (8200, etc). The Vault Server
+        typically uses port 8200.
+
+    .PARAMETER EncrytNetworkTraffic
+        This parameter is OPTIONAL, but is set by default to be $True.
+
+        This parameter is a switch. If used, the Vault Server will be configured to encrypt network
+        traffic via TLS.
+
+        IMPORTANT NOTE: NEVER set this parameter to $False unless you are simply testing the Vault Server
+        in Development Mode. In production, you MUST encrypt network traffic to/from the Vault Server,
+        and therefore, this parameter must be $True.
+
+    .PARAMETER VaultAuthToken
+        This parameter is MANDATORY.
+
+        This parameter takes a string that represents a Vault Authentiction token with permission to
+        configure teh Vault Server for LDAP Authentication.
+
+    .PARAMETER VaultLogFileName
+        This parameter is OPTIONAL, but is set to 'vault_audit.log' by default.
+
+        This parameter takes a string that represents the name of the log file on the Vault Server that
+        logs all activity (i.e. Vault Operator Command Line as well as REST API calls).
+
+    .PARAMETER VaultLogEndPointName
+        This parameter is OPTIONAL, but is set to 'default-audit'.
+
+        This parameter takes a string that represents the name of the Vault Server REST API Endpoint
+        used to enable and configure the Vault Server activity log. For context, this value is used
+        with a REST API URL similar to:
+            "$VaultServerBaseUri/sys/audit/$VaultLogEndPointName"
+
+    .PARAMETER PerformOptionalSteps
+        This parameter is OPTIONAL, but highly recommended.
+
+        This parameter is a switch. If used, the following additional configuration operations will
+        be performed on the Vault Server:
+            - A backup root token with username 'backupadmin' will be created.
+            - A 'custom-root' policy will be created and applied to the "VaultAdmins" Group (which must already exist
+            in LDAP). This policy effectively grants all users in the "VaultAdmins" Group root access to the Vault Server.
+            - A 'vaultusers' policy will be created and applied to the "VaultUsers" Group (which must already exist
+            in LDAP). Users in the "VaultUsers" Group will have all permissions except 'delete' and 'sudo'.
+
+    .PARAMETER LDAPServerHostNameOrIP
+        This parameter is MANDATORY.
+
+        This parameter takes a string that represents either the IP Address or DNS-Resolvable name of
+        the LDAP Server. In a Windows environment, this would be a Domain Controller.
+
+    .PARAMETER LDAPServicePort
+        This parameter is MANDATORY.
+
+        This parameter takes an integer with possible values: 389, 636, 3268, or 3269. Depending
+        on how you have LDAP configured, use the appropriate port number. If you are not sure,
+        use the TestLDAP function to determine which ports are in use.
+
+    .PARAMETER BindUserDN
+        This parameter is MANDATORY.
+
+        This parameter takes a string that represents an LDAP Path to a User Account Object - somthing like:
+            cn=vault,ou=OrgUsers,dc=zero,dc=lab
+
+        This User Account will be used by the Vault Server to search the LDAP database and confirm
+        credentials for the user trying to login to the Vault Server against the LDAP database. This
+        LDAP account should be dedicated for use by the Vault Server and should not have any other purpose.
+
+    .PARAMETER LDAPBindCredentials
+        This parameter is MANDATORY.
+
+        This parameter takes a PSCredential. Th e UserName should corredpound to the UserName provided to the
+        -BindUserDN parameter, but should be in format <DomainPrefix>\<UserName>. So, to be consistent with
+        the example provided in the -BindUserDN comment-based-help, you could create the value for
+        -LDAPBindCredentials via:
+            $Creds = [pscredential]::new("zero\vault",$(Read-Host "Please Enter the Password for 'zero\vault'" -AsSecureString))
+
+    .PARAMETER LDAPUserOUDN
+        This parameter is MANDATORY.
+
+        This parameter takes a string tht represents an LDAP Path to an Organizational Unit (OU) that Vault
+        will search in order to find User Accounts. To stay consistent with the example provided in the
+        comment-based-help for the -BindUserDN parameter, this would be:
+            ou=OrgUsers,dc=zero,dc=lab
+
+    .PARAMETER LDAPGroupOUDN
+        This parameter is MANDATORY.
+
+        This parameter takes a string that represents an LDAP Path to the Organizational Unit (OU) that
+        contains the Security Groups "VaultAdmins" and "VaultUsers". This could be something like:
+            ou=Groups,dc=zero,dc=lab
+
+    .PARAMETER LDAPVaultUsersSecurityGroupDN
+        This parameter is OPTIONAL, however, it becomes MANDATORY when the -PerformOptionalSteps parameter is used.
+
+        This parameter takes a string that represents the LDAP Path to the "VaultUsers" Security Group. To be
+        consistent with the example provided in teh comment-based-help for the -LDAPGroupOUDN parameter, this
+        should be something like:
+            cn=VaultUsers,ou=Groups,dc=zero,dc=lab
+
+        IMPORTANT NOTE: The Common Name (CN) for this LDAP Path MUST be 'VaultUsers'
+
+    .PARAMETER LDAPVaultAdminsSecurityGroupDN
+        This parameter is OPTIONAL, however, it becomes MANDATORY when the -PerformOptionalSteps parameter is used.
+
+        This parameter takes a string that represents the LDAP Path to the "VaultAdmins" Security Group. To be
+        consistent with the example provided in teh comment-based-help for the -LDAPGroupOUDN parameter, this
+        should be something like:
+            cn=VaultAdmins,ou=Groups,dc=zero,dc=lab
+
+        IMPORTANT NOTE: The Common Name (CN) for this LDAP Path MUST be 'VaultAdmins'
+
+    .EXAMPLE
+        # Open an elevated PowerShell Session, import the module, and -
+
+        PS C:\Users\zeroadmin> $ConfigureVaultLDAPSplatParams = @{
+            VaultServerNetworkLocation      = "vaultserver.zero.lab"
+            VaultServerPort                 = 8200
+            VaultAuthToken                  = $VaultAuthToken
+            LDAPServerHostNameOrIP          = "ZeroDC01.zero.lab"
+            LDAPServicePort                 = 636
+            LDAPBindCredentials             = $LDAPBindCredentials
+            BindUserDN                      = "cn=vault,ou=OrgUsers,dc=zero,dc=lab"
+            LDAPUserOUDN                    = "ou=OrgUsers,dc=zero,dc=lab"
+            LDAPGroupOUDN                   = "ou=Groups,dc=zero,dc=lab"
+            PerformOptionalSteps            = $True
+            LDAPVaultUsersSecurityGroupDN   = "cn=VaultUsers,ou=Groups,dc=zero,dc=lab"
+            LDAPVaultAdminsSecurityGroupDN  = "cn=VaultAdmins,ou=Groups,dc=zero,dc=lab"
+        }
+        PS C:\Users\zeroadmin> $ConfigureVaultLDAPResult = Configure-VaultServerForLDAPAuth @ConfigureVaultLDAPSplatParams
+        
+#>
+function Configure-VaultServerForLDAPAuth {
+    [CmdletBinding()]
+    Param (
+        [Parameter(Mandatory=$True)]
+        [string]$VaultServerNetworkLocation, # Should be an IP Address of DNS-Resolvable HostName/FQDN
+
+        [Parameter(Mandatory=$True)]
+        [int]$VaultServerPort, # Typically 8200
+
+        [Parameter(Mandatory=$False)]
+        [switch]$EncryptNetworkTraffic = $True, # Impacts using http/https, Vault Config, Generating TLS Certificates
+
+        [Parameter(Mandatory=$True)]
+        [string]$VaultAuthToken, # Get this via manual step preceeding this function using Vault CmdLine - 'vault operator init' 
+
+        [Parameter(Mandatory=$False)]
+        [string]$VaultLogFileName = "vault_audit.log",
+
+        [Parameter(Mandatory=$False)]
+        [string]$VaultLogEndPointName = "default-audit",
+
+        # Creates backup root token with username 'backupadmin',
+        # Creates 'custom-root' policy applied to "VaultAdmins" group (all permissions)
+        # Creates 'vaultusers' policy applied to "VaultUsers" group (all permissions except 'delete' and 'sudo')
+        [Parameter(Mandatory=$False)]
+        [switch]$PerformOptionalSteps,
+
+        [Parameter(Mandatory=$True)]
+        [string]$LDAPServerHostNameOrIP,
+
+        [Parameter(Mandatory=$True)]
+        [ValidateSet(389,636,3268,3269)]
+        [int]$LDAPServicePort,
+
+        [Parameter(Mandatory=$True)]
+        [string]$BindUserDN, # Should be a path to a User Account LDAP object, like cn=vault,ou=OrgUsers,dc=zero,dc=lab
+
+        # Should be a non-privileged LDAP/AD account whose sole purpose is allowing Vault to read the LDAP Database
+        [Parameter(Mandatory=$True)]
+        [pscredential]$LDAPBindCredentials,
+        
+        [Parameter(Mandatory=$True)]
+        [string]$LDAPUserOUDN, # Something like ou=OrgUsers,dc=zero,dc=lab
+    
+        [Parameter(Mandatory=$True)]
+        [string]$LDAPGroupOUDN, # Something like ou=Groups,dc=zero,dc=lab
+
+        [Parameter(Mandatory=$False)]
+        [ValidatePattern("^cn=VaultUsers")]
+        [string]$LDAPVaultUsersSecurityGroupDN, # Something like cn=VaultUsers,ou=Groups,dc=zero,dc=lab
+
+        [Parameter(Mandatory=$False)]
+        [ValidatePattern("^cn=VaultAdmins")]
+        [string]$LDAPVaultAdminsSecurityGroupDN # Something like cn=VaultAdmins,ou=Groups,dc=zero,dc=lab
+    )
+
+    #region >> Variable/Parameter Transforms and PreRun Prep
+
+    [Net.ServicePointManager]::SecurityProtocol = "tls12, tls11, tls"
+
+    # Create $Ouput Hashtable so we can add to it as we go and return whatever was done in case of error
+    $Output = [ordered]@{}
+
+    if ($EncryptNetworkTraffic) {
+        $VaultServerBaseUri = "https://$VaultServerNetworkLocation" + ":$VaultServerPort/v1"
+    }
+    else {
+        $VaultServerBaseUri = "http://$VaultServerNetworkLocation" + ":$VaultServerPort/v1"
+    }
+
+    if ($PerformOptionalSteps) {
+        if (!$LDAPVaultUsersSecurityGroupDN -or !$LDAPVaultAdminsSecurityGroupDN) {
+            Write-Error "When using the -PerformOptionalSteps switch, you must also supply values for -LDAPVaultUsersSecurityGroupDN and -LDAPVaultAdminsSecurityGroupDN! Halting!"
+            $global:FunctionResult = "1"
+            return
+        }
+    }
+
+    # Make sure we can reach the LDAP Server
+    try {
+        $LDAPServerNetworkInfo = ResolveHost -HostNameOrIP $LDAPServerHostNameOrIP
+        if (!$LDAPServerNetworkInfo) {throw "Unable to resolve $LDAPServerHostNameOrIP! Halting!"}
+    }
+    catch {
+        Write-Error $_
+        $global:FunctionResult = "1"
+        return
+    }
+
+    # Make sure $LDAPBindCredentials work
+    $CurrentlyLoadedAssemblies = [System.AppDomain]::CurrentDomain.GetAssemblies()
+
+    if (![bool]$($CurrentlyLoadedAssemblies -match "System.DirectoryServices.AccountManagement")) {
+        Add-Type -AssemblyName System.DirectoryServices.AccountManagement
+    }
+    $SimpleDomain = $LDAPServerNetworkInfo.Domain
+    $SimpleDomainWLDAPPort = $SimpleDomain + ":$LDAPServicePort"
+    [System.Collections.ArrayList]$DomainLDAPContainersPrep = @()
+    foreach ($Section in $($SimpleDomain -split "\.")) {
+        $null = $DomainLDAPContainersPrep.Add($Section)
+    }
+    $DomainLDAPContainers = $($DomainLDAPContainersPrep | foreach {"DC=$_"}) -join ", "
+
+    try {
+        $SimpleUserName = $($LDAPBindCredentials.UserName -split "\\")[1]
+        $PasswordInPlainText = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($LDAPBindCredentials.Password))
+        $PrincipleContext = [System.DirectoryServices.AccountManagement.PrincipalContext]::new(
+            [System.DirectoryServices.AccountManagement.ContextType]::Domain,
+            "$SimpleDomainWLDAPPort",
+            "$DomainLDAPContainers",
+            [System.DirectoryServices.AccountManagement.ContextOptions]::SimpleBind,
+            "$($LDAPBindCredentials.UserName)",
+            "$PasswordInPlainText"
+        )
+
+        try {
+            $UserPrincipal = [System.DirectoryServices.AccountManagement.UserPrincipal]::FindByIdentity($PrincipleContext, [System.DirectoryServices.AccountManagement.IdentityType]::SamAccountName, "$SimpleUserName")
+            $LDAPBindCredentialsAreValid = $True
+        }
+        catch {
+            throw "The credentials provided to the -LDAPBindCredentials parameter are not valid for the domain $SimpleDomain! Halting!"
+        }
+
+        if ($LDAPBindCredentialsAreValid) {
+            # Determine if the User Account is locked
+            $AccountLocked = $UserPrincipal.IsAccountLockedOut()
+
+            if ($AccountLocked -eq $True) {
+                throw "The provided UserName $($LDAPBindCredentials.Username) is locked! Please unlock it before additional attempts at getting working credentials!"
+            }
+        }
+    }
+    catch {
+        Write-Error $_
+        $global:FunctionResult = "1"
+        return
+    }
+
+
+    # NOTE: With .Net, LDAP URIs always start with 'LDAP' - never lowercase and never with an 's|S' (i.e. never LDAPS|ldaps),
+    # regardless of port
+    $LDAPUri = "LDAP://$($LDAPServerNetworkInfo.FQDN):$LDAPServicePort"
+
+    # Make sure $LDAPUserOUDN exists
+    try {
+        $LDAPUserOUDNDirectoryEntry = [System.DirectoryServices.DirectoryEntry]("$LDAPUri/$LDAPUserOUDN")
+        $LDAPUserOUDNDirectoryEntry.Close()
+    }
+    catch {
+        Write-Error "The LDAP Object $LDAPUserOUDN cannot be found! Halting!"
+        $global:FunctionResult = "1"
+        return
+    }
+
+    # Make sure $LDAPGroupOUDN exists
+    try {
+        $LDAPGroupOUDNDirectoryEntry = [System.DirectoryServices.DirectoryEntry]("$LDAPUri/$LDAPGroupOUDN")
+        $LDAPGroupOUDNDirectoryEntry.Close()
+    }
+    catch {
+        Write-Error "The LDAP Object $LDAPGroupOUDN cannot be found! Halting!"
+        $global:FunctionResult = "1"
+        return
+    }
+
+    $HeadersParameters = @{
+        "X-Vault-Token" = $VaultAuthToken
+    }
+
+    #endregion >> Variable/Parameter Transforms and PreRun Prep
+
+
+    #region >> Main Body
+    
+    # Turn on Vault Audit Log
+    # Vault CmdLine Equivalent:
+    #   vault audit enable file file_path=/vault/logs/vault_audit.log
+    $jsonRequest = @"
+{
+    "type": "file",
+    "options": {
+        "path": "/vault/logs/$VaultLogFileName"
+    }
+}
+"@
+    try {
+        # Validate JSON
+        $JsonRequestAsSingleLineString = $jsonRequest | ConvertFrom-Json -EA Stop | ConvertTo-Json -Compress -EA Stop
+    }
+    catch {
+        Write-Error "There was a problem with the JSON for Turning on the Audit Log! Halting!"
+        if ($Output.Count -gt 0) {[pscustomobject]$Output}
+        $global:FunctionResult = "1"
+        return
+    }
+    $IWRSplatParams = @{
+        Uri         = "$VaultServerBaseUri/sys/audit/$VaultLogEndPointName"
+        Headers     = $HeadersParameters
+        Body        = $JsonRequestAsSingleLineString
+        Method      = "Put"
+    }
+    $TurnOnAuditLog = Invoke-RestMethod @IWRSplatParams
+    $ConfirmAuditLogIsOn = $(Invoke-RestMethod -Uri "$VaultServerBaseUri/sys/audit" -Headers $HeadersParameters -Method Get).data
+    if (!$ConfirmAuditLogIsOn) {
+        Write-Error "Cannot confirm that the Vault Audit Log is turned on! Halting!"
+        if ($Output.Count -gt 0) {[pscustomobject]$Output}
+        $global:FunctionResult = "1"
+        return
+    }
+    $Output.Add("EnableAuditLog",$ConfirmAuditLogIsOn)
+
+    # Create a new policy that effectively has root access to Vault, and call it 'custom-root'. This policy will be applied
+    # to Vault Administrators later on
+    $jsonRequest = @"
+{
+    "policy": "path \"*\" {\n    capabilities = [\"create\", \"read\", \"update\", \"delete\", \"list\", \"sudo\"]\n}"
+}
+"@
+    try {
+        # Validate JSON
+        $JsonRequestAsSingleLineString = $jsonRequest | ConvertFrom-Json -EA Stop | ConvertTo-Json -Compress -EA Stop
+    }
+    catch {
+        Write-Error "There was a problem with the JSON for creating the 'custom-root' policy! Halting!"
+        if ($Output.Count -gt 0) {[pscustomobject]$Output}
+        $global:FunctionResult = "1"
+        return
+    }
+    $IWRSplatParams = @{
+        Uri         = "$VaultServerBaseUri/sys/policy/custom-root"
+        Headers     = $HeadersParameters
+        Body        = $JsonRequestAsSingleLineString
+        Method      = "Put"
+    }
+    $RootPolicyResponse = Invoke-RestMethod @IWRSplatParams
+    $ConfirmRootPolicy = Invoke-RestMethod -Uri "$VaultServerBaseUri/sys/policy/custom-root" -Headers $HeadersParameters -Method Get
+    if (!$ConfirmRootPolicy) {
+        Write-Error "Cannot confirm that the Vault policy 'custom-root' has been enabled! Halting!"
+        if ($Output.Count -gt 0) {[pscustomobject]$Output}
+        $global:FunctionResult = "1"
+        return
+    }
+    $Output.Add("CreateCustomRootPolicy",$ConfirmRootPolicy)
+
+    # Create a policy that is for typical Vault Users (i.e. not Vault Admins), that allows for everything except
+    # delete and sudo. Change according to your preferences.
+    $jsonRequest = @"
+{
+    "policy": "path \"*\" {\n    capabilities = [\"create\", \"read\", \"update\", \"list\"]\n}"
+}
+"@
+    try {
+        # Validate JSON
+        $JsonRequestAsSingleLineString = $jsonRequest | ConvertFrom-Json -EA Stop | ConvertTo-Json -Compress -EA Stop
+    }
+    catch {
+        Write-Error "There was a problem with the JSON for creating the 'vaultusers' policy! Halting!"
+        if ($Output.Count -gt 0) {[pscustomobject]$Output}
+        $global:FunctionResult = "1"
+        return
+    }
+    $IWRSplatParams = @{
+        Uri         = "$VaultServerBaseUri/sys/policy/vaultusers"
+        Headers     = $HeadersParameters
+        Body        = $JsonRequestAsSingleLineString
+        Method      = "Put"
+    }
+    $VaultUsersPolicyResponse = Invoke-RestMethod @IWRSplatParams
+    $ConfirmVaultUsersPolicy = Invoke-RestMethod -Uri "$VaultServerBaseUri/sys/policy/vaultusers" -Headers $HeadersParameters -Method Get
+    if (!$ConfirmVaultUsersPolicy) {
+        Write-Error "Cannot confirm that the Vault policy 'vaultusers' has been enabled! Halting!"
+        if ($Output.Count -gt 0) {[pscustomobject]$Output}
+        $global:FunctionResult = "1"
+        return
+    }
+    $Output.Add("CreateVaultUsersPolicy",$ConfirmVaultUsersPolicy)
+
+    if ($PerformOptionalSteps) {
+        # Create a user other than the initial root (i.e. the token $VaultAuthToken that we've been using thus far) that has root privileges
+        # via the 'custom-root' policy. This is just for a backup root account for emergencies
+        # Vault CmdLine Equivalent:
+        #   vault token create -policy=custom-root -display-name="backupadmin" -ttl="8760h" -renewable=true -metadata=user=backupadmin
+        $jsonRequest = @"
+{
+    "policies": [
+        "custom-root"
+    ],
+    "meta": {
+        "user": "backupadmin"
+    },
+    "ttl": "8760h",
+    "renewable": true
+}
+"@
+        try {
+            # Validate JSON
+            $JsonRequestAsSingleLineString = $jsonRequest | ConvertFrom-Json -EA Stop | ConvertTo-Json -Compress -EA Stop
+        }
+        catch {
+            Write-Error "There was a problem with the JSON for creating the 'backupadmin' Vault Token! Halting!"
+            if ($Output.Count -gt 0) {[pscustomobject]$Output}
+            $global:FunctionResult = "1"
+            return
+        }
+        $IWRSplatParams = @{
+            Uri         = "$VaultServerBaseUri/auth/token/create"
+            Headers     = $HeadersParameters
+            Body        = $JsonRequestAsSingleLineString
+            Method      = "Post"
+        }
+        $NewUserTokenResponse = Invoke-RestMethod @IWRSplatParams
+        if (!$NewUserTokenResponse) {
+            Write-Error "There was a problem creating the 'backupadmin' Vault Token! Halting!"
+            $global:FunctionResult = "1"
+            return
+        }
+        $Output.Add("BackupRootToken",$NewUserTokenResponse)
+    }
+
+    # Enable LDAP Authentication
+    #   vault auth enable ldap -description="Login with LDAP"
+    $jsonRequest = @"
+{
+    "type": "ldap",
+    "description": "Login with LDAP"
+}
+"@
+    try {
+        # Validate JSON
+        $JsonRequestAsSingleLineString = $jsonRequest | ConvertFrom-Json -EA Stop | ConvertTo-Json -Compress -EA Stop
+    }
+    catch {
+        Write-Error "There was a problem with the JSON for enabling the Vault LDAP Authentication Method! Halting!"
+        if ($Output.Count -gt 0) {[pscustomobject]$Output}
+        $global:FunctionResult = "1"
+        return
+    }
+    $IWRSplatParams = @{
+        Uri         = "$VaultServerBaseUri/sys/auth/ldap"
+        Headers     = $HeadersParameters
+        Body        = $JsonRequestAsSingleLineString
+        Method      = "Post"
+    }
+    $EnableLDAPResponse = Invoke-RestMethod @IWRSplatParams
+    $ConfirmLDAPEnabled = Invoke-RestMethod -Uri "$VaultServerBaseUri/sys/auth" -Headers $HeadersParameters -Method Get
+    if (!$ConfirmLDAPEnabled) {
+        Write-Error "There was a problem enabling the LDAP Authentication Method for the Vault Server! Halting!"
+    }
+    $Output.Add("LDAPAuthEngineEnabled",$ConfirmLDAPEnabled)
+
+    # Next, we need the LDAP Server's Root CA Public Certificate
+    try {
+        $GetLDAPCertSplatParams = @{
+            LDAPServerHostNameOrIP      = $LDAPServerNetworkInfo.FQDN
+            Port                        = $LDAPServicePort
+            ErrorAction                 = "Stop"
+        }
+        if ($LDAPServicePort -eq 389 -or $LDAPServicePort -eq 3268) {
+            $GetLDAPCertSplatParams.Add("UseOpenSSL",$True)
+        }
+
+        $GetLDAPCertResult = Get-LDAPCert @GetLDAPCertSplatParams
+        if (!$GetLDAPCertResult) {throw "The Get-LDAPCert function failed! Is your LDAP implementation using TLS? Halting!"}
+        $RootCertificateInPemFormat = $GetLDAPCertResult.RootCACertificateInfo.PemFormat -join "`n"
+        if (!$RootCertificateInPemFormat) {throw "The Get-LDAPCert function failed to get the Root CA Certificate in the LDAP Endpoint's Certificate Chain! Halting!"}
+    }
+    catch {
+        Write-Error $_
+        if ($Output.Count -gt 0) {[pscustomobject]$Output}
+        $global:FunctionResult = "1"
+        return
+    }
+
+    # The Vault Server handles LDAP Uris as expected (as opposed to .Net counterpart in above
+    # 'Variable/Parameter Transforms and PreRun Prep' region) 
+    if ($LDAPServicePort -eq 389 -or $LDAPServicePort -eq 3268) {
+        $LDAPUriForVault = "ldap://$($LDAPServerNetworkInfo.FQDN):$LDAPServicePort"
+    }
+    if ($LDAPServicePort -eq 636 -or $LDAPServicePort -eq 3269) {
+        $LDAPUriForVault = "ldaps://$($LDAPServerNetworkInfo.FQDN):$LDAPServicePort"
+    }
+
+    $jsonRequest = @"
+{
+    "url": "$LDAPUriForVault",
+    "userattr": "samaccountname",
+    "userdn": "$LDAPUserOUDN",
+    "discoverdn": "true",
+    "groupdn": "$LDAPGroupOUDN",
+    "groupfilter": "(&(objectClass=group)(member:1.2.840.113556.1.4.1941:={{.UserDN}}))",
+    "groupattr": "cn",
+    "certificate": "$RootCertificateInPemFormat",
+    "insecure_tls": "false",
+    "starttls": "true",
+    "binddn": "$BindUserDN",
+    "bindpass": "$PasswordInPlainText",
+    "deny_null_bind": "true",
+    "tls_max_version": "tls12",
+    "tls_min_version": "tls12"
+}
+"@
+    try {
+        # Validate JSON
+        $JsonRequestAsSingleLineString = $jsonRequest | ConvertFrom-Json -EA Stop | ConvertTo-Json -Compress -EA Stop
+    }
+    catch {
+        Write-Error "There was a problem with the JSON for establishing Vault's LDAP configuration! Halting!"
+        if ($Output.Count -gt 0) {[pscustomobject]$Output}
+        $global:FunctionResult = "1"
+        return
+    }
+    $IWRSplatParams = @{
+        Uri         = "$VaultServerBaseUri/auth/ldap/config"
+        Headers     = $HeadersParameters
+        Body        = $JsonRequestAsSingleLineString
+        Method      = "Post"
+    }
+    $LDAPAuthConfigResponse = Invoke-RestMethod @IWRSplatParams
+    $ConfirmLDAPAuthConfig = Invoke-RestMethod -Uri "$VaultServerBaseUri/auth/ldap/config" -Headers $HeadersParameters -Method Get
+    if (!$ConfirmLDAPAuthConfig) {
+        Write-Error "There was a problem setting the Vault LDAP Authentication configuration! Halting!"
+        if ($Output.Count -gt 0) {[pscustomobject]$Output}
+        $global:FunctionResult = "1"
+        return
+    }
+    $Output.Add("LDAPAuthConfiguration",$ConfirmLDAPAuthConfig)
+    # Remove $PasswordInPlainText from Memory as best we can
+    $PasswordInPlainText = $null
+    $PrincipleContext = $null
+    $jsonRequest = $null
+    $JsonRequestAsSingleLineString = $null
+
+
+    if ($PerformOptionalSteps) {
+        # Apply the 'custom-root' policy to the AD User Group 'VaultAdmins'
+        # Vault Cmdline equivalent is:
+        #   vault write auth/ldap/groups/VaultAdmins policies=custom-root
+
+        # Make sure $LDAPVaultAdminsSecurityGroupDN exists
+        try {
+            $LDAPVaultAdminsSecurityGroupDNDirectoryEntry = [System.DirectoryServices.DirectoryEntry]("$LDAPUri/$LDAPVaultAdminsSecurityGroupDN")
+            $LDAPVaultAdminsSecurityGroupDNDirectoryEntry.Close()
+        }
+        catch {
+            Write-Error "The LDAP Object $LDAPVaultAdminsSecurityGroupDN cannot be found! Halting!"
+            $global:FunctionResult = "1"
+            if ($Output.Count -gt 0) {[pscustomobject]$Output}
+            return
+        }
+
+        $jsonRequest = @"
+{
+    "policies": "custom-root"
+}
+"@
+        try {
+            # Validate JSON
+            $JsonRequestAsSingleLineString = $jsonRequest | ConvertFrom-Json -EA Stop | ConvertTo-Json -Compress -EA Stop
+        }
+        catch {
+            Write-Error "There was a problem with the JSON for applying the 'custom-root' policy to the VaultAdmins Security Group! Halting!"
+            $global:FunctionResult = "1"
+            return
+        }
+        $IWRSplatParams = @{
+            Uri         = "$VaultServerBaseUri/auth/ldap/groups/VaultAdmins"
+            Headers     = $HeadersParameters
+            Body        = $JsonRequestAsSingleLineString
+            Method      = "Post"
+        }
+        $ApplyPolicyToVaultAdminsGroup = Invoke-WebRequest @IWRSplatParams
+        $ConfirmPolicyOnVaultAdmins = Invoke-RestMethod -Uri "$VaultServerBaseUri/auth/ldap/groups/VaultAdmins" -Headers $HeadersParameters -Method Get
+        if (!$ConfirmPolicyOnVaultAdmins) {
+            Write-Error "Unable to confirm that the 'custom-root' Vault Policy was applied to the LDAP Security Group 'VaultAdmins'! Halting!"
+            if ($Output.Count -gt 0) {[pscustomobject]$Output}
+            $global:FunctionResult = "1"
+            return
+        }
+        $Output.Add("AppliedVaultAdminsPolicy",$ConfirmPolicyOnVaultAdmins)
+
+        # Apply the 'vaultusers' policy to the AD User Group 'VaultUsers'
+        # Vault Cmdline equivalent is:
+        #   vault write auth/ldap/groups/VaultUsers policies=vaultusers
+
+        # Make sure $LDAPVaultUsersSecurityGroupDN exists
+        try {
+            $LDAPVaultUsersSecurityGroupDNDirectoryEntry = [System.DirectoryServices.DirectoryEntry]("$LDAPUri/$LDAPVaultUsersSecurityGroupDN")
+            $LDAPVaultUsersSecurityGroupDNDirectoryEntry.Close()
+        }
+        catch {
+            Write-Error "The LDAP Object $LDAPVaultUsersSecurityGroupDN cannot be found! Halting!"
+            if ($Output.Count -gt 0) {[pscustomobject]$Output}
+            $global:FunctionResult = "1"
+            return
+        }
+
+        $jsonRequest = @"
+{
+    "policies": "vaultusers"
+}
+"@
+        try {
+            $JsonRequestAsSingleLineString = $jsonRequest | ConvertFrom-Json -EA Stop | ConvertTo-Json -Compress -EA Stop
+        }
+        catch {
+            Write-Error "There was a problem with the JSON for applying the 'vaultusers' policy to the VaulUsers Security Group! Halting!"
+            if ($Output.Count -gt 0) {[pscustomobject]$Output}
+            $global:FunctionResult = "1"
+            return
+        }
+        $IWRSplatParams = @{
+            Uri         = "$VaultServerBaseUri/auth/ldap/groups/VaultUsers"
+            Headers     = $HeadersParameters
+            Body        = $JsonRequestAsSingleLineString
+            Method      = "Post"
+        }
+        $ApplyPolicyToVaultUsersGroup = Invoke-WebRequest @IWRSplatParams
+        $ConfirmPolicyOnVaultUsers = Invoke-RestMethod -Uri "$VaultServerBaseUri/auth/ldap/groups/VaultUsers" -Headers $HeadersParameters -Method Get
+        if (!$ConfirmPolicyOnVaultUsers) {
+            Write-Error "Unable to confirm that the 'vaultusers' Vault Policy was applied to the LDAP Security Group 'VaultUsers'! Halting!"
+            if ($Output.Count -gt 0) {[pscustomobject]$Output}
+            $global:FunctionResult = "1"
+            return
+        }
+        $Output.Add("AppliedVaultUsersPolicy",$ConfirmPolicyOnVaultUsers)
+    }
+
+[pscustomobject]$Output
+
+    #endregion >> Main Body
+
+}
+
+
+<#
+    .SYNOPSIS
+        This function uses the Hashicorp Vault Server's REST API to configure the Vault Server for
+        SSH Public Key Authentication and Management.
+
+        The following actions are performed on teh Vault Server (via the REST API):
+            - The Vault SSH User/Client Key Signer is enabled
+            - A Certificate Authority (CA) for the SSH User/Client Key Signer is created
+            - The Vault SSH Host/Machine Key Signer is enabled
+            - A Certificate Authority (CA) for the SSH Host/Machine Key Signer is created
+            - The Vault the SSH User/Client Signer Role Endpoint is configured
+            - The Vault the SSH Host/Machine Signer Role Endpoint is configured
+
+    .DESCRIPTION
+        See .SYNOPSIS
+
+    .NOTES
+
+    .PARAMETER VaultServerBaseUri
+        This parameter is MANDATORY.
+
+        This parameter takes a string that represents Base Uri for the Vault Server REST API. It should be
+        something like:
+            "https://vaultserver.zero.lab:8200/v1"
+
+    .PARAMETER DomainCredentialsWithAdminAccessToVault
+        This parameter is OPTIONAL. However, either this parameter or the -VaultAuthToken parameter is REQUIRED.
+
+        This parameter takes a PSCredential. Assuming that LDAP Authenitcation is already enabled and configured
+        onthe Vault Server, create a PSCredential that is a member of the "VaultAdmins" Security Group (or
+        equivalent) in LDAP.
+            $Creds = [pscredential]::new("zero\zeroadmin",$(Read-Host "Please Enter the Password for 'zero\zeroadmin'" -AsSecureString))
+
+    .PARAMETER VaultAuthToken
+        This parameter is OPTIONAL. However, either this parameter or the -DomainCredentialsWithAdminAccessToVault
+        parameter is REQUIRED.
+
+        This parameter takes a string that represents a Vault Authentication Token that has privileges to make
+        configuration changes to the Vault Server.
+
+    .EXAMPLE
+        # Open an elevated PowerShell Session, import the module, and -
+
+        PS C:\Users\zeroadmin> $ConfigureVaultSSHMgmt = Configure-VaultServerForSSHManagement -VaultServerBaseUri $VaultServerBaseUri -VaultAuthToken $ZeroAdminToken
+        
+#>
+function Configure-VaultServerForSSHManagement {
+    [CmdletBinding()]
+    Param (
+        [Parameter(Mandatory=$True)]
+        [ValidatePattern("\/v1$")]
+        [string]$VaultServerBaseUri,
+
+        [Parameter(Mandatory=$False)]
+        [pscredential]$DomainCredentialsWithAdminAccessToVault,
+
+        [Parameter(Mandatory=$False)]
+        [string]$VaultAuthToken
+    )
+
+    if ($(!$VaultAuthToken -and !$DomainCredentialsWithAccessToVault) -or $($VaultAuthToken -and $DomainCredentialsWithAdminAccessToVault)) {
+        Write-Error "The $($MyInvocation.MyCommand.Name) function requires one (no more, no less) of the following parameters: [-DomainCredentialsWithAdminAccessToVault, -VaultAuthToken] Halting!"
+        $global:FunctionResult = "1"
+        return
+    }
+
+    if ($DomainCredentialsWithAdminAccessToVault) {
+        $GetVaultLoginSplatParams = @{
+            VaultServerBaseUri                          = $VaultServerBaseUri
+            DomainCredentialsWithAdminAccessToVault     = $DomainCredentialsWithAdminAccessToVault
+            ErrorAction                                 = "Stop"
+        }
+
+        try {
+            $VaultAuthToken = Get-VaultLogin @GetVaultLoginSplatParams
+            if (!$VaultAuthToken) {throw "The Get-VaultLogin function failed! Halting!"}
+        }
+        catch {
+            Write-Error $_
+            $global:FunctionResult = "1"
+            return
+        }
+    }
+
+    $HeadersParameters = @{
+        "X-Vault-Token" = $VaultAuthToken
+    }
+
+    # Create $Output HashTable to add results as we go...
+    $Output = [ordered]@{}
+
+    # We'll be configuring a Certificate Authority for ssh client key signing, and a Certificate Authority for
+    # ssh machine host key signing
+    
+    ##### ENABLE SSH CLIENT CERT SIGNING #####
+
+    # Vault CmdLine equivalent of below HTTP Request -
+    #     vault secrets enable -path=ssh-client-signer ssh
+    $jsonRequest = @"
+{
+    "type": "ssh",
+    "description": "SSH Client Signer"
+}
+"@
+    try {
+        # Validate JSON
+        $JsonRequestAsSingleLineString = $jsonRequest | ConvertFrom-Json -EA Stop | ConvertTo-Json -Compress -EA Stop
+    }
+    catch {
+        Write-Error "There was a problem with the JSON for enabling the Vault SSH Client Signer! Halting!"
+        if ($Output.Count -gt 0) {[pscustomobject]$Output}
+        $global:FunctionResult = "1"
+        return
+    }
+    $IWRSplatParams = @{
+        Uri         = "$VaultServerBaseUri/sys/mounts/ssh-client-signer"
+        Headers     = $HeadersParameters
+        Body        = $JsonRequestAsSingleLineString
+        Method      = "Post"
+    }
+    $EnableSSHClientSigner = Invoke-RestMethod @IWRSplatParams
+    $ConfirmSSHClientSignerEnabledPrep = Invoke-RestMethod -Uri "$VaultServerBaseUri/sys/mounts" -Headers $HeadersParameters -Method Get
+    if (!$ConfirmSSHClientSignerEnabledPrep) {
+        Write-Error "There was a problem confirming that the Vault SSH Client Signer was enabled! Halting!"
+        if ($Output.Count -gt 0) {[pscustomobject]$Output}
+        $global:FunctionResult = "1"
+        return
+    }
+    $ConfirmSSHClientSignerEnabled = $($ConfirmSSHClientSignerEnabledPrep.data | Get-Member -MemberType Properties).Name -contains "ssh-client-signer/"
+    $Output.Add("SSHClientSignerEnabled",$ConfirmSSHClientSignerEnabled)
+
+    # Create A Certificate Authority dedicated to SSH Client Certs and Generate a Public/Private Key Pair for the CA
+    # Vault CmdLine equivalent of below HTTP Request -
+    #     vault write ssh-client-signer/config/ca generate_signing_key=true
+    $jsonRequest = @"
+{
+    "generate_signing_key": true
+}
+"@
+    try {
+        # Validate JSON
+        $JsonRequestAsSingleLineString = $jsonRequest | ConvertFrom-Json -EA Stop | ConvertTo-Json -Compress -EA Stop
+    }
+    catch {
+        Write-Error "There was a problem with the JSON for creating the SSH Client Signer Certificate Authority! Halting!"
+        if ($Output.Count -gt 0) {[pscustomobject]$Output}
+        $global:FunctionResult = "1"
+        return
+    }
+    $IWRSplatParams = @{
+        Uri         = "$VaultServerBaseUri/ssh-client-signer/config/ca"
+        Headers     = $HeadersParameters
+        Body        = $JsonRequestAsSingleLineString
+        Method      = "Post"
+    }
+    $CreateSSHClientCA = Invoke-RestMethod @IWRSplatParams
+    $SSHClientCAPublicKey = Invoke-RestMethod -Uri "$VaultServerBaseUri/ssh-client-signer/public_key" -Method Get
+    if (!$SSHClientCAPublicKey) {
+        Write-Error "There was a problem getting the Public Key of the SSH Client Signer Certificate Authority! Halting!"
+        if ($Output.Count -gt 0) {[pscustomobject]$Output}
+        $global:FunctionResult = "1"
+        return
+    }
+    $Output.Add("SSHClientSignerCAPublicKey",$SSHClientCAPublicKey)
+
+
+    ##### ENABLE SSH HOST CERT SIGNING #####
+
+    # Vault CmdLine equivalent of below HTTP Request -
+    # vault secrets enable -path=ssh-host-signer ssh
+    $jsonRequest = @"
+{
+    "type": "ssh",
+    "description": "SSH Host Signer"
+}
+"@
+    try {
+        # Validate JSON
+        $JsonRequestAsSingleLineString = $jsonRequest | ConvertFrom-Json -EA Stop | ConvertTo-Json -Compress -EA Stop
+    }
+    catch {
+        Write-Error "There was a problem with the JSON for enabling the Vault SSH Host Signer! Halting!"
+        if ($Output.Count -gt 0) {[pscustomobject]$Output}
+        $global:FunctionResult = "1"
+        return
+    }
+    $IWRSplatParams = @{
+        Uri         = "$VaultServerBaseUri/sys/mounts/ssh-host-signer"
+        Headers     = $HeadersParameters
+        Body        = $JsonRequestAsSingleLineString
+        Method      = "Post"
+    }
+    $EnableSSHHostSigner = Invoke-WebRequest @IWRSplatParams
+    $ConfirmSSHHostSignerEnabledPrep = Invoke-RestMethod -Uri "$VaultServerBaseUri/sys/mounts" -Headers $HeadersParameters -Method Get
+    if (!$ConfirmSSHHostSignerEnabledPrep) {
+        Write-Error "There was a problem confirming that the Vault SSH Host Signer was enabled! Halting!"
+        if ($Output.Count -gt 0) {[pscustomobject]$Output}
+        $global:FunctionResult = "1"
+        return
+    }
+    $ConfirmSSHHostSignerEnabled = $($ConfirmSSHHostSignerEnabledPrep.data | Get-Member -MemberType Properties).Name -contains "ssh-host-signer/"
+    $Output.Add("SSHHostSignerEnabled",$ConfirmSSHHostSignerEnabled)
+
+    # Create A Certificate Authority dedicated to SSH Host Certs and Generate a Public/Private Key Pair for the CA
+    #     vault write ssh-host-signer/config/ca generate_signing_key=true
+    $jsonRequest = @"
+{
+    "generate_signing_key": true
+}
+"@
+    try {
+        # Validate JSON
+        $JsonRequestAsSingleLineString = $jsonRequest | ConvertFrom-Json -EA Stop | ConvertTo-Json -Compress -EA Stop
+    }
+    catch {
+        Write-Error "There was a problem with the JSON for creating the SSH Host Signer Certificate Authority! Halting!"
+        if ($Output.Count -gt 0) {[pscustomobject]$Output}
+        $global:FunctionResult = "1"
+        return
+    }
+    $IWRSplatParams = @{
+        Uri         = "$VaultServerBaseUri/ssh-host-signer/config/ca"
+        Headers     = $HeadersParameters
+        Body        = $JsonRequestAsSingleLineString
+        Method      = "Post"
+    }
+    $CreateSSHHostCA = Invoke-RestMethod @IWRSplatParams
+    $SSHHostCAPublicKey = Invoke-RestMethod -Uri "$VaultServerBaseUri/ssh-host-signer/public_key" -Method Get
+    if (!$SSHHostCAPublicKey) {
+        Write-Error "There was a problem getting the Public Key of the SSH Host Signer Certificate Authority! Halting!"
+        if ($Output.Count -gt 0) {[pscustomobject]$Output}
+        $global:FunctionResult = "1"
+        return
+    }
+    $Output.Add("SSHHostSignerCAPublicKey",$SSHHostCAPublicKey)
+
+    # Extend Host Cert TTL to 10 years
+    #     vault secrets tune -max-lease-ttl=87600h ssh-host-signer
+    $jsonRequest = @"
+{
+    "max_lease_ttl": "87600h"
+}
+"@
+    try {
+        # Validate JSON
+        $JsonRequestAsSingleLineString = $jsonRequest | ConvertFrom-Json -EA Stop | ConvertTo-Json -Compress -EA Stop
+    }
+    catch {
+        Write-Error "There was a problem with the JSON for Tuning the SSH Host Signer! Halting!"
+        if ($Output.Count -gt 0) {[pscustomobject]$Output}
+        $global:FunctionResult = "1"
+        return
+    }
+    $IWRSplatParams = @{
+        Uri         = "$VaultServerBaseUri/sys/mounts/ssh-host-signer/tune"
+        Headers     = $HeadersParameters
+        Body        = $JsonRequestAsSingleLineString
+        Method      = "Post"
+    }
+    $TuneHostSSHCertValidityPeriod = Invoke-RestMethod @IWRSplatParams
+    $ConfirmSSHHostSignerTune = $(Invoke-RestMethod -Uri "$VaultServerBaseUri/sys/mounts" -Headers $HeadersParameters -Method Get).'ssh-host-signer/'.config
+    if ($ConfirmSSHHostSignerTune.max_lease_ttl -ne 315360000) {
+        Write-Error "There was a problem tuning the Vault Server to set max_lease_ttl for signed host ssh keys for 10 years. Halting!"
+        if ($Output.Count -gt 0) {[pscustomobject]$Output}
+        $global:FunctionResult = "1"
+        return
+    }
+    $Output.Add("SSHHostSignerTuning",$ConfirmSSHHostSignerTune)
+
+
+    ##### Configure the SSH Client Signer Role #####
+    $DefaultUser = $($(whoami) -split "\\")[-1]
+    
+    $jsonRequest = @"
+{
+    "key_type": "ca",
+    "default_user": "$DefaultUser",
+    "allow_user_certificates": true,
+    "allowed_users": "*",
+    "ttl": "24h",
+    "default_extensions": {
+        "permit-pty": "",
+        "permit-agent-forwarding": ""
+    }
+}
+"@
+    try {
+        # Validate JSON
+        $JsonRequestAsSingleLineString = $jsonRequest | ConvertFrom-Json -EA Stop | ConvertTo-Json -Compress -EA Stop
+    }
+    catch {
+        Write-Error "There was a problem with the JSON for configuring the SSH Client Signer Role! Halting!"
+        if ($Output.Count -gt 0) {[pscustomobject]$Output}
+        $global:FunctionResult = "1"
+        return
+    }
+    $IWRSplatParams = @{
+        Uri         = "$VaultServerBaseUri/ssh-client-signer/roles/clientrole"
+        Headers     = $HeadersParameters
+        Body        = $JsonRequestAsSingleLineString
+        Method      = "Post"
+    }
+    $SetSSHClientRole = Invoke-RestMethod @IWRSplatParams
+    $ConfirmSSHClientRole = Invoke-RestMethod -Uri "$VaultServerBaseUri/ssh-client-signer/roles/clientrole" -Headers $HeadersParameters -Method Get
+    if (!$ConfirmSSHClientRole.data) {
+        Write-Error "There was a problem creating the the ssh-client-signer Role 'clientrole'! Halting!"
+        if ($Output.Count -gt 0) {[pscustomobject]$Output}
+        $global:FunctionResult = "1"
+        return
+    }
+    $Output.Add("SSHClientSignerRole",$ConfirmSSHClientRole)
+
+    ##### Configure the SSH Host Signer Role #####
+    $jsonRequest = @"
+{
+    "key_type": "ca",
+    "cert_type": "host",
+    "allow_host_certificates": "true",
+    "allowed_domains": "*",
+    "allow_subdomains": "true",
+    "ttl": "87600h",
+    "default_extensions": {
+        "permit-pty": "",
+        "permit-agent-forwarding": ""
+    }
+}
+"@
+    try {
+        # Validate JSON
+        $JsonRequestAsSingleLineString = $jsonRequest | ConvertFrom-Json -EA Stop | ConvertTo-Json -Compress -EA Stop
+    }
+    catch {
+        Write-Error "There was a problem with the JSON for configuring the SSH Host Signer Role! Halting!"
+        if ($Output.Count -gt 0) {[pscustomobject]$Output}
+        $global:FunctionResult = "1"
+        return
+    }
+    $IWRSplatParams = @{
+        Uri         = "$VaultServerBaseUri/ssh-host-signer/roles/hostrole"
+        Headers     = $HeadersParameters
+        Body        = $JsonRequestAsSingleLineString
+        Method      = "Post"
+    }
+    $SetSSHHostRole = Invoke-RestMethod @IWRSplatParams
+    $ConfirmSSHHostRole = Invoke-RestMethod -Uri "$VaultServerBaseUri/ssh-host-signer/roles/hostrole" -Headers $HeadersParameters -Method Get
+    if (!$ConfirmSSHHostRole.data) {
+        Write-Error "There was a problem creating the the ssh-host-signer Role 'hostrole'! Halting!"
+        if ($Output.Count -gt 0) {[pscustomobject]$Output}
+        $global:FunctionResult = "1"
+        return
+    }
+    $Output.Add("SSHHostSignerRole",$ConfirmSSHHostRole)
+
+    [pscustomobject]$Output
+}
+
+
+<#
+    .SYNOPSIS
+        This function gets the TLS certificate used by the LDAP server on the specified Port.
+
+        The function outputs a PSCustomObject with the following properties:
+            - LDAPEndpointCertificateInfo
+            - RootCACertificateInfo
+            - CertChainInfo
+        
+        The 'LDAPEndpointCertificateInfo' property is itself a PSCustomObject with teh following content:
+            X509CertFormat      = $X509Cert2Obj
+            PemFormat           = $PublicCertInPemFormat
+
+        The 'RootCACertificateInfo' property is itself a PSCustomObject with teh following content:
+            X509CertFormat      = $RootCAX509Cert2Obj
+            PemFormat           = $RootCACertInPemFormat
+
+        The 'CertChainInfo' property is itself a PSCustomObject with the following content:
+            X509ChainFormat     = $CertificateChain
+            PemFormat           = $CertChainInPemFormat
+        ...where $CertificateChain is a System.Security.Cryptography.X509Certificates.X509Chain object.
+
+    .DESCRIPTION
+        See .SYNOPSIS
+
+    .NOTES
+
+    .PARAMETER LDAPServerHostNameOrIP
+        This parameter is MANDATORY.
+
+        This parameter takes a string that represents either the IP Address or DNS-Resolvable Name of the
+        LDAP Server. If you're in a Windows environment, this is a Domain Controller's network location.
+
+    .PARAMETER Port
+        This parameter is MANDATORY.
+
+        This parameter takes an integer that represents a port number that the LDAP Server is using that
+        provides a TLS Certificate. Valid values are: 389, 636, 3268, 3269
+
+    .PARAMETER UseOpenSSL
+        This parameter is OPTIONAL. However, if $Port is 389 or 3268, then this parameter is MANDATORY.
+
+        This parameter is a switch. If used, the latest OpenSSL available from
+        http://wiki.overbyte.eu/wiki/index.php/ICS_Download will be downloaded and made available
+        in the current PowerShell Session's $env:Path.
+
+
+    .EXAMPLE
+        # Open an elevated PowerShell Session, import the module, and -
+
+        PS C:\Users\zeroadmin> Fix-SSHPermissions
+        
+#>
+function Get-LDAPCert {
     [CmdletBinding()]
     param (
         [Parameter(Mandatory=$True)]
-        [string]$CommonName,
+        [string]$LDAPServerHostNameOrIP,
 
         [Parameter(Mandatory=$True)]
-        [string]$ExportDirectory
+        [ValidateSet(389,636,3268,3269)]
+        [int]$Port,
+
+        [Parameter(Mandatory=$False)]
+        [switch]$UseOpenSSL
     )
 
-    if (!$(Test-Path $ExportDirectory)) {
-        Write-Error "The path '$ExportDirectory' was not found! Halting!"
+    #region >> Pre-Run Check
+
+    try {
+        $LDAPServerNetworkInfo = ResolveHost -HostNameOrIP $LDAPServerHostNameOrIP
+        if (!$LDAPServerNetworkInfo) {throw "Unable to resolve $LDAPServerHostNameOrIP! Halting!"}
+    }
+    catch {
+        Write-Error $_
         $global:FunctionResult = "1"
         return
     }
 
-    $CertificateFriendlyName = $CommonName
-    $Cert = Get-ChildItem -Path "Cert:\LocalMachine\My" | Where-Object {
-        $_.FriendlyName -eq $CertificateFriendlyName
-    } | Select-Object -First 1
+    #endregion >> Pre-Run Check
+    
 
-    if (!$Cert) {
-        $NewSelfSignedCertExSplatParams = @{
-            Subject             = "CN=$CommonName"
-            EKU                 = @('1.3.6.1.4.1.311.80.1','1.3.6.1.5.5.7.3.1','1.3.6.1.5.5.7.3.2')
-            KeyUsage            = 'DigitalSignature, KeyEncipherment, DataEncipherment'
-            SAN                 = $CommonName
-            FriendlyName        = $CertificateFriendlyName
-            Exportable          = $True
-            StoreLocation       = 'LocalMachine'
-            StoreName           = 'My'
-            KeyLength           = 2048
-            ProviderName        = 'Microsoft Enhanced Cryptographic Provider v1.0'
-            AlgorithmName       = "RSA"
-            SignatureAlgorithm  = "SHA256"
+    #region >> Main Body
+
+    if ($UseOpenSSL) {
+        # Check is openssl.exe is already available
+        if ([bool]$(Get-Command openssl -ErrorAction SilentlyContinue)) {
+            # Check to make sure the version is at least 1.1.0
+            $OpenSSLExeInfo = Get-Item $(Get-Command openssl).Source
+            $OpenSSLExeVersion = [version]$($OpenSSLExeInfo.VersionInfo.ProductVersion -split '-')[0]
         }
 
-        New-SelfsignedCertificateEx @NewSelfSignedCertExSplatParams
+        # We need at least vertion 1.1.0 of OpenSSL
+        if ($OpenSSLExeVersion.Major -lt 1 -or 
+        $($OpenSSLExeVersion.Major -eq 1 -and $OpenSSLExeVersion.Minor -lt 1)
+        ) {
+            [Net.ServicePointManager]::SecurityProtocol = "tls12, tls11, tls"
+            $OpenSSLWinBinariesUrl = "http://wiki.overbyte.eu/wiki/index.php/ICS_Download"
+            $IWRResult = Invoke-WebRequest -Uri $OpenSSLWinBinariesUrl
+            $LatestOpenSSLWinBinaryLinkObj = $($IWRResult.Links | Where-Object {$_.innerText -match "OpenSSL Binaries" -and $_.href -match "\.zip"})[0]
+            $LatestOpenSSLWinBinaryUrl = $LatestOpenSSLWinBinaryLinkObj.href
+            $OutputFileName = $($LatestOpenSSLWinBinaryUrl -split '/')[-1]
+            $OutputFilePath = "$HOME\Downloads\$OutputFileName"
+            Invoke-WebRequest -Uri $LatestOpenSSLWinBinaryUrl -OutFile $OutputFilePath
 
-        # There is a slight delay before new cert shows up in Cert:
-        # So wait for it to show.
-        while (!$Cert) {
-            $Cert = Get-ChildItem -Path "Cert:\LocalMachine\My" | Where-Object {$_.FriendlyName -eq $CertificateFriendlyName}
+            if (!$(Test-Path "$HOME\Downloads\$OutputFileName")) {
+                Write-Error "Problem downloading the latest OpenSSL Windows Binary from $LatestOpenSSLWinBinaryUrl ! Halting!"
+                $global:FunctionResult = "1"
+                return
+            }
+
+            $OutputFileItem = Get-Item $OutputFilePath
+            $ExpansionDirectory = $OutputFileItem.Directory.FullName + "\" + $OutputFileItem.BaseName
+            if (!$(Test-Path $ExpansionDirectory)) {
+                $null = New-Item -ItemType Directory -Path $ExpansionDirectory -Force
+            }
+            else {
+                Remove-Item "$ExpansionDirectory\*" -Recurse -Force
+            }
+
+            $null = Expand-Archive -Path "$HOME\Downloads\$OutputFileName" -DestinationPath $ExpansionDirectory -Force
+
+            # Add $ExpansionDirectory to $env:Path
+            $CurrentEnvPathArray = $env:Path -split ";"
+            if ($CurrentEnvPathArray -notcontains $ExpansionDirectory) {
+                # Place $ExpansionDirectory at start so latest openssl.exe get priority
+                $env:Path = "$ExpansionDirectory;$env:Path"
+            }
+        }
+
+        if (![bool]$(Get-Command openssl -ErrorAction SilentlyContinue)) {
+            Write-Error "Problem setting openssl.exe to `$env:Path! Halting!"
+            $global:FunctionResult = "1"
+            return
         }
     }
 
-    #$null = Export-Certificate -Type CERT -Cert $Cert -FilePath "$ExportDirectory\$CommonName.cer"
-    [System.IO.File]::WriteAllBytes("$ExportDirectory\$CommonName.cer", $Cert.Export([System.Security.Cryptography.X509Certificates.X509ContentType]::Cert))
+    if ($Port -eq 389 -or $Port -eq 3268) {
+        if (!$UseOpenSSL) {
+            Write-Error "Unable to get LDAP Certificate on port $Port using StartTLS without openssl.exe! Try the -UseOpenSSL switch. Halting!"
+            $global:FunctionResult = "1"
+            return
+        }
+
+        $ProcessInfo = New-Object System.Diagnostics.ProcessStartInfo
+        #$ProcessInfo.WorkingDirectory = $BinaryPath | Split-Path -Parent
+        $ProcessInfo.FileName = $(Get-Command openssl).Source
+        $ProcessInfo.RedirectStandardError = $true
+        $ProcessInfo.RedirectStandardOutput = $true
+        #$ProcessInfo.StandardOutputEncoding = [System.Text.Encoding]::Unicode
+        #$ProcessInfo.StandardErrorEncoding = [System.Text.Encoding]::Unicode
+        $ProcessInfo.UseShellExecute = $false
+        $ProcessInfo.Arguments = "s_client -connect $($LDAPServerNetworkInfo.FQDN):$Port -starttls ldap -showcerts"
+        $Process = New-Object System.Diagnostics.Process
+        $Process.StartInfo = $ProcessInfo
+        $Process.Start() | Out-Null
+        # Sometimes openssl.exe hangs, so, we'll give it 5 seconds before killing
+        # Below $FinishedInAlottedTime returns boolean true/false
+        $FinishedInAlottedTime = $Process.WaitForExit(5000)
+        if (!$FinishedInAlottedTime) {
+            $Process.Kill()
+        }
+        $stdout = $Process.StandardOutput.ReadToEnd()
+        $stderr = $Process.StandardError.ReadToEnd()
+        $OpenSSLResult = $stdout + $stderr
+
+        # Parse the output of openssl
+        $OpenSSLResultLineBreaks = $OpenSSLResult -split "`n"
+        $IndexOfBeginCert = $OpenSSLResultLineBreaks.IndexOf($($OpenSSLResultLineBreaks -match "BEGIN CERTIFICATE"))
+        $IndexOfEndCert = $OpenSSLResultLineBreaks.IndexOf($($OpenSSLResultLineBreaks -match "End CERTIFICATE"))
+
+        if ($IndexOfBeginCert -eq "-1" -or $IndexOfEndCert -eq "-1") {
+            Write-Error "Unable to find Certificate in openssl output! Halting!"
+            $global:FunctionResult = "1"
+            return
+        }
+        
+        $PublicCertInPemFormat = $OpenSSLResultLineBreaks[$IndexOfBeginCert..$IndexOfEndCert]
+
+        # Get $X509Cert2Obj
+        $PemString = $($PublicCertInPemFormat | Where-Object {$_ -notmatch "CERTIFICATE"}) -join "`n"
+        $byteArray = [System.Convert]::FromBase64String($PemString)
+        $X509Cert2Obj = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new($byteArray)
+    }
+
+    if ($Port -eq 636 -or $Port -eq 3269) {
+        if ($UseOpenSSL) {
+            $ProcessInfo = New-Object System.Diagnostics.ProcessStartInfo
+            #$ProcessInfo.WorkingDirectory = $BinaryPath | Split-Path -Parent
+            $ProcessInfo.FileName = $(Get-Command openssl).Source
+            $ProcessInfo.RedirectStandardError = $true
+            $ProcessInfo.RedirectStandardOutput = $true
+            #$ProcessInfo.StandardOutputEncoding = [System.Text.Encoding]::Unicode
+            #$ProcessInfo.StandardErrorEncoding = [System.Text.Encoding]::Unicode
+            $ProcessInfo.UseShellExecute = $false
+            $ProcessInfo.Arguments = "s_client -connect $($LDAPServerNetworkInfo.FQDN):$Port"
+            $Process = New-Object System.Diagnostics.Process
+            $Process.StartInfo = $ProcessInfo
+            $Process.Start() | Out-Null
+            # Sometimes openssl.exe hangs, so, we'll give it 5 seconds before killing
+            # Below $FinishedInAlottedTime returns boolean true/false
+            $FinishedInAlottedTime = $Process.WaitForExit(5000)
+            if (!$FinishedInAlottedTime) {
+                $Process.Kill()
+            }
+            $stdout = $Process.StandardOutput.ReadToEnd()
+            $stderr = $Process.StandardError.ReadToEnd()
+            $OpenSSLResult = $stdout + $stderr
+
+            # Parse the output of openssl
+            $OpenSSLResultLineBreaks = $OpenSSLResult -split "`n"
+            $IndexOfBeginCert = $OpenSSLResultLineBreaks.IndexOf($($OpenSSLResultLineBreaks -match "BEGIN CERTIFICATE"))
+            $IndexOfEndCert = $OpenSSLResultLineBreaks.IndexOf($($OpenSSLResultLineBreaks -match "End CERTIFICATE"))
+            
+            if ($IndexOfBeginCert -eq "-1" -or $IndexOfEndCert -eq "-1") {
+                Write-Error "Unable to find Certificate in openssl output! Halting!"
+                $global:FunctionResult = "1"
+                return
+            }
+
+            $PublicCertInPemFormat = $OpenSSLResultLineBreaks[$IndexOfBeginCert..$IndexOfEndCert]
+
+            # Get $X509Cert2Obj
+            $PemString = $($PublicCertInPemFormat | Where-Object {$_ -notmatch "CERTIFICATE"}) -join "`n"
+            $byteArray = [System.Convert]::FromBase64String($PemString)
+            $X509Cert2Obj = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new($byteArray)
+        }
+        else {
+            $X509Cert2Obj = Check-Cert -IPAddress $LDAPServerNetworkInfo.IPAddressList[0] -Port $Port
+            $PublicCertInPemFormatPrep = "-----BEGIN CERTIFICATE-----`n" + 
+                [System.Convert]::ToBase64String($X509Cert2Obj.RawData, [System.Base64FormattingOptions]::InsertLineBreaks) + 
+                "`n-----END CERTIFICATE-----"
+            $PublicCertInPemFormat = $PublicCertInPemFormatPrep -split "`n"
+        }
+    }
+
+    $CertificateChain = [System.Security.Cryptography.X509Certificates.X509Chain]::new()
+    $null = $CertificateChain.Build($X509Cert2Obj)
+    [System.Collections.ArrayList]$CertsInPemFormat = @()
+    foreach ($Cert in $CertificateChain.ChainElements.Certificate) {
+        $CertInPemFormatPrep = "-----BEGIN CERTIFICATE-----`n" + 
+        [System.Convert]::ToBase64String($Cert.RawData, [System.Base64FormattingOptions]::InsertLineBreaks) + 
+        "`n-----END CERTIFICATE-----"
+        $CertInPemFormat = $CertInPemFormatPrep -split "`n"
+        
+        $null = $CertsInPemFormat.Add($CertInPemFormat)
+    }
+    $CertChainInPemFormat = $($CertsInPemFormat | Out-String).Trim()
+
+    $RootCAX509Cert2Obj = $CertificateChain.ChainElements.Certificate | Where-Object {$_.Issuer -eq $_.Subject}
+    $RootCAPublicCertInPemFormatPrep = "-----BEGIN CERTIFICATE-----`n" + 
+        [System.Convert]::ToBase64String($RootCAX509Cert2Obj.RawData, [System.Base64FormattingOptions]::InsertLineBreaks) + 
+        "`n-----END CERTIFICATE-----"
+    $RootCACertInPemFormat = $RootCAPublicCertInPemFormatPrep -split "`n"
+
+    # Create Output
+
+    $LDAPEndpointCertificateInfo = [pscustomobject]@{
+        X509CertFormat      = $X509Cert2Obj
+        PemFormat           = $PublicCertInPemFormat
+    }
+
+    $RootCACertificateInfo = [pscustomobject]@{
+        X509CertFormat      = $RootCAX509Cert2Obj
+        PemFormat           = $RootCACertInPemFormat
+    }
+
+    $CertChainInfo = [pscustomobject]@{
+        X509ChainFormat     = $CertificateChain
+        PemFormat           = $CertChainInPemFormat
+    }
 
     [pscustomobject]@{
-        CertFile        = Get-Item "$ExportDirectory\$CommonName.cer"
-        CertInfo        = $Cert
+        LDAPEndpointCertificateInfo  = $LDAPEndpointCertificateInfo
+        RootCACertificateInfo        = $RootCACertificateInfo
+        CertChainInfo                = $CertChainInfo
     }
+    
+    #endregion >> Main Body
 }
 
 
 <#
     .SYNOPSIS
-        Adds -Password parameter to the existing Get-PFXCertificate cmdlet in order to avoid prompt in the event
-        that a password is needed.
+        This function uses the Vault Server REST API to return a list of Vault Token Accessors and associated
+        information. (This function differes from the Get-VaultTokenAccessors function in that it provides
+        additional information besides a simple list of Accessors).
 
     .DESCRIPTION
         See .SYNOPSIS
 
     .NOTES
 
-    .PARAMETER FilePath
+    .PARAMETER VaultServerBaseUri
         This parameter is MANDATORY.
 
-    .PARAMETER LiteralPath
+        This parameter takes a string that represents a Uri referencing the location of the Vault Server
+        on your network. Example: "https://vaultserver.zero.lab:8200/v1"
+
+    .PARAMETER VaultAuthToken
         This parameter is MANDATORY.
 
-    .PARAMETER Password
-        This parameter is OPTIONAL.
-
-    .PARAMETER x509KeyStorageFlag
-        This parameter is OPTIONAL (however, it has a default value of 'DefaultKeySet')
+        This parameter takes a string that represents a Token for a Vault User that has permission to
+        lookup Token Accessors using the Vault Server REST API.
 
     .EXAMPLE
-        # Import the MiniLab Module and -
+        # Open an elevated PowerShell Session, import the module, and -
 
-        PS C:\Users\zeroadmin> Get-PfxCertificateBetter -Password "PlainTextPwd" -FilePath "$HOME\test.pfx"
-
-#>
-function Get-PfxCertificateBetter {
-    [CmdletBinding(DefaultParameterSetName='ByPath')]
-    param(
-        [Parameter(Position=0, Mandatory=$true, ParameterSetName='ByPath')]
-        [string[]]$FilePath,
-
-        [Parameter(Mandatory=$true, ParameterSetName='ByLiteralPath')]
-        [string[]]$LiteralPath,
-
-        [Parameter(Position=1, ParameterSetName='ByPath')] 
-        [Parameter(Position=1, ParameterSetName='ByLiteralPath')]
-        [string]$Password,
-
-        [Parameter(Position=2, ParameterSetName='ByPath')]
-        [Parameter(Position=2, ParameterSetName='ByLiteralPath')] 
-        [ValidateSet('DefaultKeySet','Exportable','MachineKeySet','PersistKeySet','UserKeySet','UserProtected')]
-        [string]$x509KeyStorageFlag = 'DefaultKeySet'
-    )
-
-    if($PsCmdlet.ParameterSetName -eq 'ByPath'){
-        $literalPath = Resolve-Path $filePath 
-    }
-
-    if(!$Password){
-        # if the password parameter isn't present, just use the original cmdlet
-        $cert = Get-PfxCertificate -LiteralPath $literalPath
-    } else {
-        # otherwise use the .NET implementation
-        $cert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2
-        $cert.Import($literalPath, $Password, $X509KeyStorageFlag)
-    }
-
-    return $cert
-}
-
-
-<#
-    .SYNOPSIS
-        If a System.Security.Cryptography.X509Certificates.X509Certificate2 object has properties...
-            HasPrivateKey        : True
-            PrivateKey           :
-        ...and you would like to get the System.Security.Cryptography.RSACryptoServiceProvider object that should be in
-        the PrivateKey property, use this function.
-
-    .DESCRIPTION
-        See SYNOPSIS
-
-    .NOTES
-        Depends on Extract-PfxCerts and therefore depends on openssl.exe.
-
-        NOTE: Nothing needs to be installed in order to use openssl.exe.
-
-        IMPORTANT NOTE REGARDING -CertObject PARAMETER:
-        If you are getting the value for the -CertObject parameter from an already existing .pfx file (as opposed to the Cert Store),
-        *DO NOT* use the Get-PFXCertificate cmdlet. The cmdlet does something strange that causes a misleading/incorrect error if the
-        private key in the .pfx is password protected.
-
-        Instead, use the following:
-            $CertPwd = ConvertTo-SecureString -String 'RaNDompaSSwd123' -Force -AsPlainText
-            $CertObj = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new("$HOME\Desktop\testcert7.pfx", $CertPwd, [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::Exportable)
+        PS C:\Users\zeroadmin> Get-VaultAccessorLookup -VaultServerBaseUri "https://vaultserver.zero.lab:8200/v1" -VaultAuthToken '434f37ca-89ae-9073-8783-087c268fd46f'
         
-        If you are getting the value for the -CertObject parameter from the Certificate Store, either of the following should be fine
-            $CertObj = Get-ChildItem Cert:\LocalMachine\My\<Thumbprint>
-            $CertObj = Get-ChildItem Cert:\CurrentUser\My\<Thumbprint>
-
-        WARNING: This function defaults to temporarily writing the unprotected private key to its own file in -TempOutputDirectory.
-        The parameter -CleanupOpenSSLOutputs is set to $true by default, so the unprotected private key will only exist on the file
-        system for a couple seconds.  If you would like to keep the unprotected private key on the file system, set the
-        -CleanupOpenSSLOutputs parameter to $false.
-
-    .PARAMETER CertObject
-        Mandatory.
-
-        Must be a System.Security.Cryptography.X509Certificates.X509Certificate2 object.
-
-        If you are getting the value for the -CertObject parameter from an already existing .pfx file (as opposed to the Cert Store),
-        *DO NOT* use the Get-PFXCertificate cmdlet. The cmdlet does something strange that causes a misleading/incorrect error if the
-        private key in the .pfx is password protected.
-
-        Instead, use the following:
-            $CertPwd = ConvertTo-SecureString -String 'RaNDompaSSwd123' -Force -AsPlainText
-            $CertObj = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new("$HOME\Desktop\testcert7.pfx", $CertPwd, [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::Exportable)
-        
-        If you are getting the value for the -CertObject parameter from the Certificate Store, either of the following should be fine
-            $CertObj = Get-ChildItem Cert:\LocalMachine\My\<Thumbprint>
-            $CertObj = Get-ChildItem Cert:\CurrentUser\My\<Thumbprint>
-
-    .PARAMETER TempOutputDirectory
-        Mandatory.
-
-        Must be a full path to a directory. Punlic certificates and the private key within the -CertObject will *temporarily*
-        be written to this directory as a result of the helper function Extract-PfxCerts.
-
-    .PARAMETER CertPwd
-        Optional.
-
-        This parameter must be a System.Security.SecureString.
-
-        This parameter is Mandatory if the private key in the .pfx is password protected.
-
-    .PARAMETER CleanupOpenSSLOutputs
-        Optional.
-
-        Must be Boolean.
-
-        During this function, openssl.exe is used to extract all public certs and the private key from the -CertObject. Each of these
-        certs and the key are written to separate files in -TempOutputDirectory. This parameter removes these file outputs at the
-        conclusion of the function. This parameter is set to $true by default.
-
-    .PARAMETER DownloadAndAddOpenSSLToPath
-        Optional.
-
-        If openssl.exe is not already on your localhost and part of your $env:Path, use this parameter to download
-        openssl.exe / add it to your $env:Path
-
-    .EXAMPLE
-        # If the private key in the .pfx is password protected...
-        PS C:\Users\zeroadmin> $CertPwd = Read-Host -Prompt "Please enter the Certificate's Private Key password" -AsSecureString
-        Please enter the Certificate's Private Key password: ***************
-        PS C:\Users\zeroadmin> $CertObj = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new("$HOME\Desktop\testcert7.pfx", $CertPwd, [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::Exportable)
-        PS C:\Users\zeroadmin> Get-PrivateKeyProperty -CertObject $CertObj -TempOutputDirectory "$HOME\tempout" -CertPwd $CertPwd
-
-    .EXAMPLE
-        # If the private key in the .pfx is NOT password protected...
-        PS C:\Users\zeroadmin> $CertObj = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new("$HOME\Desktop\testcert7.pfx", $null, [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::Exportable)
-        PS C:\Users\zeroadmin> Get-PrivateKeyProperty -CertObject $CertObj -TempOutputDirectory "$HOME\tempout"
-
-    .EXAMPLE
-        # Getting -CertObject from the Certificate Store where private key is password protected...
-        PS C:\Users\zeroadmin> $CertPwd = Read-Host -Prompt "Please enter the Certificate's Private Key password" -AsSecureString
-        Please enter the Certificate's Private Key password: ***************
-        PS C:\Users\zeroadmin> $CertObj = Get-ChildItem "Cert:\LocalMachine\My\5359DDD9CB88873DF86617EC28FAFADA17112AE6"
-        PS C:\Users\zeroadmin> Get-PrivateKeyProperty -CertObject $CertObj -TempOutputDirectory "$HOME\tempout" -CertPwd $CertPwd
-
-    .EXAMPLE
-        # Getting -CertObject from the Certificate Store where private key is NOT password protected...
-        PS C:\Users\zeroadmin> $CertObj = Get-ChildItem "Cert:\LocalMachine\My\5359DDD9CB88873DF86617EC28FAFADA17112AE6"
-        PS C:\Users\zeroadmin> Get-PrivateKeyProperty -CertObject $CertObj -TempOutputDirectory "$HOME\tempout"
 #>
-function Get-PrivateKeyProperty {
-    [CmdletBinding()]
-    Param( 
-        [Parameter(Mandatory=$True)]
-        [System.Security.Cryptography.X509Certificates.X509Certificate2]$CertObject,
-
-        [Parameter(Mandatory=$True)]
-        $TempOutputDirectory = $(Read-Host -Prompt "Please enter the full path to the directory where all output files will be written"),
-
-        [Parameter(Mandatory=$False)]
-        [securestring]$CertPwd,
-
-        [Parameter(Mandatory=$False)]
-        [bool]$CleanupOpenSSLOutputs = $true,
-
-        [Parameter(Mandatory=$False)]
-        [switch]$DownloadAndAddOpenSSLToPath
-
-    )
-
-    ##### BEGIN Variable/Parameter Transforms and PreRun Prep #####
-
-    if ($CertObject.PrivateKey -eq $null -and $CertObject.HasPrivateKey -eq $false -or $CertObject.HasPrivateKey -ne $true) {
-        Write-Error "There is no Private Key associated with this X509Certificate2 object! Halting!"
-        $global:FunctionResult = "1"
-        return
-    }
-
-    if (!$(Get-Command openssl.exe -ErrorAction SilentlyContinue)) {
-        if (!$DownloadAndAddOpenSSLToPath) {
-            Write-Error "The Helper Function Extract-PFXCerts requires openssl.exe. Openssl.exe cannot be found on this machine. Use the -DownloadAndAddOpenSSLToPath parameter to download openssl.exe and add it to `$env:Path. NOTE: Openssl.exe does NOT require installation. Halting!"
-            $global:FunctionResult = "1"
-            return
-        }
-    }
-
-    $CertName = $($CertObject.Subject | Select-String -Pattern "^CN=[\w]+").Matches.Value -replace "CN=",""
-    try {
-        $pfxbytes = $CertObject.Export([System.Security.Cryptography.X509Certificates.X509ContentType]::Pfx)
-        [System.IO.File]::WriteAllBytes("$TempOutputDirectory\$CertName.pfx", $pfxbytes)
-    }
-    catch {
-        Write-Warning "Either the Private Key is Password Protected or it is marked as Unexportable...Trying to import `$CertObject to Cert:\LocalMachine\My Store..."
-        # NOTE: The $CertObject.Export() method in the above try block has a second argument for PlainTextPassword, but it doesn't seem to work consistently
-        
-        # Check to see if it's already in the Cert:\LocalMachine\My Store
-        if ($(Get-Childitem "Cert:\LocalMachine\My").Thumbprint -contains $CertObject.Thumbprint) {
-            Write-Host "The certificate $CertName is already in the Cert:\LocalMachine\My Store."
-        }
-        else {
-            Write-Host "Importing $CertName to Cert:\LocalMachine\My Store..."
-            $X509Store = [System.Security.Cryptography.X509Certificates.X509Store]::new([System.Security.Cryptography.X509Certificates.StoreName]::My, [System.Security.Cryptography.X509Certificates.StoreLocation]::LocalMachine)
-            $X509Store.Open([System.Security.Cryptography.X509Certificates.OpenFlags]::ReadWrite)
-            $X509Store.Add($CertObject)
-        }
-
-        Write-Host "Attempting to export `$CertObject from Cert:\LocalMachine\My Store to .pfx file..."
-
-        if (!$CertPwd) {
-            $CertPwd = Read-Host -Prompt "Please enter the password for the private key in the certificate $CertName" -AsSecureString
-        }
-
-        $CertItem = Get-Item "Cert:\LocalMachine\My\$($CertObject.Thumbprint)"
-        [System.IO.File]::WriteAllBytes("$TempOutputDirectory\$CertName.pfx", $CertItem.Export([System.Security.Cryptography.X509Certificates.X509ContentType]::Pkcs12, $CertPwd))
-        #Export-PfxCertificate -FilePath "$TempOutputDirectory\$CertName.pfx" -Cert "Cert:\LocalMachine\My\$($CertObject.Thumbprint)" -Password $CertPwd
-
-    }
-
-    # NOTE: If openssl.exe isn't already available, the Extract-PFXCerts function downloads it and adds it to $env:Path
-    if ($CertPwd) {
-        $global:PubCertAndPrivKeyInfo = Extract-PFXCerts -PFXFilePath "$TempOutputDirectory\$CertName.pfx" -PFXFilePwd $CertPwd -OutputDirectory "$TempOutputDirectory" -DownloadAndAddOpenSSLToPath
-    }
-    else {
-        $global:PubCertAndPrivKeyInfo = Extract-PFXCerts -PFXFilePath "$TempOutputDirectory\$CertName.pfx" -OutputDirectory "$TempOutputDirectory" -DownloadAndAddOpenSSLToPath
-    }
-
-    ##### END Variable/Parameter Transforms and PreRun Prep #####
-
-
-    ##### BEGIN Main Body #####
-
-    if ($global:PubCertAndPrivKeyInfo.PrivateKeyInfo.UnProtectedPrivateKeyFilePath -eq $null) {
-        # Strip Private Key of Password
-        $UnProtectedPrivateKeyOut = "$($(Get-ChildItem $PathToCertFile).BaseName)"+"_unprotected_private_key"+".pem"
-        & openssl.exe rsa -in $global:PubCertAndPrivKeyInfo.PrivateKeyInfo.ProtectedPrivateKeyFilePath -out "$HOME\$UnProtectedPrivateKeyOut" 2>&1 | Out-Null
-        $global:PubCertAndPrivKeyInfo.PrivateKeyInfo.UnProtectedPrivateKeyFilePath = "$HOME\$UnProtectedPrivateKeyOut"
-    }
-
-    #Write-Host "Loading opensslkey.cs from https://github.com/sushihangover/SushiHangover-PowerShell/blob/master/modules/SushiHangover-RSACrypto/opensslkey.cs"
-    #$opensslkeysource = $(Invoke-WebRequest -Uri "https://raw.githubusercontent.com/sushihangover/SushiHangover-PowerShell/master/modules/SushiHangover-RSACrypto/opensslkey.cs").Content
-    try {
-        Add-Type -TypeDefinition $opensslkeysource
-    }
-    catch {
-        if ($_.Exception -match "already exists") {
-            Write-Verbose "The JavaScience.Win32 assembly (i.e. opensslkey.cs) is already loaded. Continuing..."
-        }
-    }
-    $PemText = [System.IO.File]::ReadAllText($global:PubCertAndPrivKeyInfo.PrivateKeyInfo.UnProtectedPrivateKeyFilePath)
-    $PemPrivateKey = [javascience.opensslkey]::DecodeOpenSSLPrivateKey($PemText)
-    [System.Security.Cryptography.RSACryptoServiceProvider]$RSA = [javascience.opensslkey]::DecodeRSAPrivateKey($PemPrivateKey)
-    $RSA
-
-    # Cleanup
-    if ($CleanupOpenSSLOutputs) {
-        $ItemsToRemove = @(
-            $global:PubCertAndPrivKeyInfo.PrivateKeyInfo.ProtectedPrivateKeyFilePath
-            $global:PubCertAndPrivKeyInfo.PrivateKeyInfo.UnProtectedPrivateKeyFilePath
-        ) + $global:PubCertAndPrivKeyInfo.PublicKeysInfo.FileLocation
-
-        foreach ($item in $ItemsToRemove) {
-            Remove-Item $item
-        }
-    }
-
-    ##### END Main Body #####
-
-}
-
-
-<#
-    .SYNOPSIS
-        This function can encrypt a String, Array of Strings, File, or Files in a Directory. Strings and Arrays of Strings passed
-        to the -ContentToEncrypt parameter are written to their own separate encrypted files on the file system. Encrypting one or
-        more Files creates a NEW encrypted version of the original File(s). It DOES NOT TOUCH the original unencrypted File(s).
-
-    .DESCRIPTION
-        See SYNOPSIS.
-
-    .NOTES
-        Please use this function responsibly.
-
-        IMPORTANT NOTE #1:
-        The Certificate used for RSA Encryption is written out (in .pfx format) to the same directory as the encrypted
-        file outputs. If AES encryption is needed for larger Files, the RSA-encrypted AES Key is written to the same directory
-        as the encrypted file outputs.
-
-        You will ALWAYS need a private key from your Certificate's public/private pair in order to decrypt content
-        encrypted via this function. You will be able to get this private key from the .pfx file that you provide
-        to the -PathToPfxFile parameter, or from the Certificate in the Cert:\LocalMachine\My store that you provide
-        to the -CNofCertInStore parameter of this function.
-
-        You will SOMETIMES need the AES Key to decrypt larger files that were encrypted using AES encryption.
-
-        IMPORTANT NOTE #2:
-        It is up to you to store the public/private key pair and the RSA-encrypted AES Key appropriately.
-
-        Note that the public/private key pair will be found EITHER in a .pfx file in the same directory as encrypted
-        file outputs OR in Cert:\LocalMachine\My OR in BOTH locations. Note that the RSA-encrypted AES Key will be
-        found in a file in the same directory as encrypted file outputs.
-
-    .PARAMETER SourceType
-        Optional, but HIGHLY recommended.
-
-        This parameter takes a string with one of the following values:
-            String
-            ArrayOfStrings
-            File
-            Directory
-
-        If -ContentToEncrypt is a string, -SourceType should be "String".
-        If -ContentToEncrypt is an array of strings, -SourceType should be "ArrayOfStrings".
-        If -ContentToEncrypt is a string that represents a full path to a file, -SourceType should be "File".
-        If -ContentToEncrypt is a string that represents a full path to a directory, -SourceType should be "Directory".
-
-    .PARAMETER ContentToEncrypt
-        Mandatory.
-
-        This parameter takes a string that is either:
-            - A string
-            - An array of strings
-            - A string that represents a full path to a file
-            - A string that represents a full path to a directory
-
-    .PARAMETER Recurse
-        Optional.
-
-        This parameter is a switch. It should only be used if -SourceType is "Directory". The function will fail
-        immediately if this parameter is used and -SourceType is NOT "Directory".
-
-        If this switch is NOT used, only files immediately under the directory specified by -ContentToEncrypt are
-        encrypted.
-
-        If this switch IS used, all files immediately under the directory specified by -ContentToEncrypt AS WELL AS
-        all files within subdirectories under the directory specified by -ContentToEncrypt are encrypted.
-
-    .PARAMETER FileToOutput
-        Optional.
-
-        This parameter specifies a full path to a NEW file that will contain encrypted information. This parameter should
-        ONLY be used if -SourceType is "String" or "ArrayOfStrings". If this parameter is used and -SourceType is NOT
-        "String" or "ArrayOfStrings", the function will immediately fail.
-
-    .PARAMETER PathToPfxFile
-        Optional.
-
-        This parameter takes a string that represents the full path to a .pfx file. The public certificate in
-        the .pfx file will be used for RSA encryption.
-
-        NOTE: RSA encryption is ALWAYS used by this function, either to encrypt the information directly or to encrypt the
-        AES Key that was used to encrypt the information.
-
-    .PARAMETER CNOfCertInStore
-        Optional.
-
-        This parameter takes a string that represents the Common Name (CN) of the public certificate used for RSA
-        encryption. This certificate must already exist in the Local Machine Store (i.e. Cert:\LocalMachine\My).
-
-        NOTE: RSA encryption is ALWAYS used by this function, either to encrypt the information directly or to encrypt the
-        AES Key that was used to encrypt the information.
-
-    .PARAMETER CNOfNewCert
-        Optional.
-
-        This parameter takes a string that represents the desired Common Name (CN) for the new Self-Signed
-        Certificate.
-
-        NOTE: RSA encryption is ALWAYS used by this function, either to encrypt the information directly or to encrypt the
-        AES Key that was used to encrypt the information.
-
-    .PARAMETER CertPwd
-        Optional. (However, this parameter is mandatory if the certificate is password protected).
-
-        This parameter takes a System.Security.SecureString that represents the password for the certificate.
-
-        Use this parameter if the certificate is password protected.
-
-    .PARAMETER RemoveOriginalFile
-        Optional.
-
-        This parameter is a switch. By default, original unencrypted files are not touched. Use this switch to remove
-        the original unencrypted files.
-
-    .EXAMPLE
-        # String Encryption Example
-        # NOTE: If neither -PathToPfxFile nor -CNOfCertInStore parameters are used, a NEW Self-Signed Certificate is
-        # created and added to Cert:\LocalMachine\My
-
-        PS C:\Users\zeroadmin> New-EncryptedFile -SourceType String -ContentToEncrypt "MyPLaInTeXTPwd321!" -FileToOutput $HOME\MyPwd.txt
-
-        FileEncryptedViaRSA                : C:\Users\zeroadmin\MyPwd.txt.rsaencrypted
-        FileEncryptedViaAES                :
-        OriginalFile                       :
-        CertficateUsedForRSAEncryption     : [Subject]
-                                            CN=MyPwd
-
-                                            [Issuer]
-                                            CN=MyPwd
-
-                                            [Serial Number]
-                                            6BD1BF9FACE6F0BB4EFFC31597E9B970
-
-                                            [Not Before]
-                                            6/2/2017 10:39:31 AM
-
-                                            [Not After]
-                                            6/2/2018 10:59:31 AM
-
-                                            [Thumbprint]
-                                            34F3526E85C04CEDC79F26C2B086E52CF75F91C3
-
-        LocationOfCertUsedForRSAEncryption : Cert:\LocalMachine\My\34F3526E85C04CEDC79F26C2B086E52CF75F91C3
-        UnprotectedAESKey                  :
-        RSAEncryptedAESKey                 :
-        RSAEncryptedAESKeyLocation         :
-        AllFileOutputs                     : C:\Users\zeroadmin\MyPwd.txt.rsaencrypted 
-
-    .EXAMPLE
-        # ArrayOfStrings Encryption Example
-        PS C:\Users\zeroadmin> $foodarray = @("fruit","vegetables","meat")
-        PS C:\Users\zeroadmin> New-EncryptedFile -SourceType ArrayOfStrings -ContentToEncrypt $foodarray -PathToPfxFile C:\Users\zeroadmin\other\ArrayOfStrings.pfx -FileToOutput $HOME\Food.txt
-
-        FilesEncryptedViaRSA               : {C:\Users\zeroadmin\Food.txt0.rsaencrypted, C:\Users\zeroadmin\Food.txt1.rsaencrypted,
-                                            C:\Users\zeroadmin\Food.txt2.rsaencrypted}
-        FilesEncryptedViaAES               :
-        OriginalFiles                      :
-        CertficateUsedForRSAEncryption     : [Subject]
-                                            CN=ArrayOfStrings
-
-                                            [Issuer]
-                                            CN=ArrayOfStrings
-
-                                            [Serial Number]
-                                            32E38D18591854874EC467B73332EA76
-
-                                            [Not Before]
-                                            6/1/2017 4:13:36 PM
-
-                                            [Not After]
-                                            6/1/2018 4:33:36 PM
-
-                                            [Thumbprint]
-                                            C8CC2B8B03E33821A69B35F10B04D74E40A557B2
-
-        LocationOfCertUsedForRSAEncryption : C:\Users\zeroadmin\other\ArrayOfStrings.pfx
-        UnprotectedAESKey                  :
-        RSAEncryptedAESKey                 :
-        RSAEncryptedAESKeyLocation         :
-        AllFileOutputs                     : {C:\Users\zeroadmin\Food.txt0.rsaencrypted, C:\Users\zeroadmin\Food.txt1.rsaencrypted,
-                                            C:\Users\zeroadmin\Food.txt2.rsaencrypted}
-
-    .EXAMPLE
-        # File Encryption Example
-        PS C:\Users\zeroadmin> $ZeroTestPwd = Read-Host -Prompt "Enter password for ZeroTest Cert" -AsSecureString
-        Enter password for ZeroTest Cert: ***********************
-        PS C:\Users\zeroadmin> New-EncryptedFile -SourceType File -ContentToEncrypt C:\Users\zeroadmin\tempdir\lorumipsum.txt -CNofCertInStore "ZeroTest" -CertPwd $ZeroTestPwd
-
-        FileEncryptedViaRSA                :
-        FileEncryptedViaAES                : C:\Users\zeroadmin\tempdir\lorumipsum.txt.aesencrypted
-        OriginalFile                       : C:\Users\zeroadmin\tempdir\lorumipsum.txt.original
-        CertficateUsedForRSAEncryption     : [Subject]
-                                            CN=ZeroTesting.zero.lab
-
-                                            [Issuer]
-                                            <redacted>
-
-                                            [Serial Number]
-                                            <redacted>
-
-                                            [Not Before]
-                                            <redacted>
-
-                                            [Not After]
-                                            <redacted>
-
-                                            [Thumbprint]
-                                            34F3526E85C04CEDC79F26C2B086E52CF75F91C3
-
-        LocationOfCertUsedForRSAEncryption : Cert:\LocalMachine\My\34F3526E85C04CEDC79F26C2B086E52CF75F91C3
-        UnprotectedAESKey                  : E0588dE3siWEOAyM7A5+6LKqC5tG1egxXTfsUUE5sNM=
-        RSAEncryptedAESKey                 : NkKjOwd8T45u1Hpn0CL9m5zD/97PG9GNnJCShh0vOUTn+m+E2nLFxuW7ChKiHCVtP1vD2z+ckW3kk1va3PAfjw3/hfm9zi2qn4Xu7kPdWL1owDdQyvBuUPTc35
-                                            FSqaIJxxdsqWLnUHo1PINY+2usIPT5tf57TbTKbAg5q/RXOzCeUS+QQ+nOKMgQGnadlUVyyIYo2JRdzzKaTSHRwK4QFdDk/PUy39ei2FVOIlwitiAkWTyjFAb6
-                                            x+kMCgOVDuALGOyVVBdNe+BDrrWgqnfRSCHSZoQKfnkA0dj0tuE2coYNwGQ6SVUmiDrdklBrnKl69cIFf8lkTSsUqGdq9bbaag==
-        RSAEncryptedAESKeyLocation         : C:\Users\zeroadmin\tempdir\lorumipsum.aeskey.rsaencrypted
-        AllFileOutputs                     : {C:\Users\zeroadmin\tempdir\lorumipsum.txt.aesencrypted, C:\Users\zeroadmin\tempdir\lorumipsum.txt.original,
-                                            C:\Users\zeroadmin\tempdir\lorumipsum.aeskey.rsaencrypted}
-
-    .EXAMPLE
-        # Directory Encryption Example
-        # NOTE: If neither -PathToPfxFile nor -CNOfCertInStore parameters are used, a NEW Self-Signed Certificate is
-        # created and added to Cert:\LocalMachine\My
-
-        PS C:\Users\zeroadmin> New-EncryptedFile -SourceType Directory -ContentToEncrypt C:\Users\zeroadmin\tempdir
-        Please enter the desired CN for the new Self-Signed Certificate: TempDirEncryption
-
-
-        FilesEncryptedViaRSA               :
-        FilesEncryptedViaAES               : {C:\Users\zeroadmin\tempdir\agricola.txt.aesencrypted, C:\Users\zeroadmin\tempdir\dolor.txt.aesencrypted,
-                                            C:\Users\zeroadmin\tempdir\lorumipsum.txt.aesencrypted}
-        OriginalFiles                      : {C:\Users\zeroadmin\tempdir\agricola.txt.original, C:\Users\zeroadmin\tempdir\dolor.txt.original,
-                                            C:\Users\zeroadmin\tempdir\lorumipsum.txt.original}
-        CertficateUsedForRSAEncryption     : [Subject]
-                                            CN=TempDirEncryption
-
-                                            [Issuer]
-                                            CN=TempDirEncryption
-
-                                            [Serial Number]
-                                            52711274E381F592437E8C18C7A3241C
-
-                                            [Not Before]
-                                            6/2/2017 10:57:26 AM
-
-                                            [Not After]
-                                            6/2/2018 11:17:26 AM
-
-                                            [Thumbprint]
-                                            F2EFEBB37C37844A230961447C7C91C1DE13F1A5
-
-        LocationOfCertUsedForRSAEncryption : Cert:\LocalMachine\My\F2EFEBB37C37844A230961447C7C91C1DE13F1A5
-        UnprotectedAESKey                  : BKcLSwqZjSq/D1RuqBGBxZ0dng+B3JwrWJVlhqgxrmo=
-        RSAEncryptedAESKey                 : sUshzhMfrbO5FgOGw1Nsx9g5hrnsdUHsJdx8SltK8UeNcCWq8Rsk6dxC12NjrxUSHTSrPYdn5UycBqXB+PNltMebAj80I3Zsh5xRsSbVRSS+fzgGJTUw7ya98J
-                                            7vKISUaurBTK4C4Czh1D2bgT7LNADO7qAUgbnv+xdqxgIexlOeNsEkzG10Tl+DxkUVgcpJYbznoTXPUVnj9AZkcczRd2EWPcV/WZnTZwmtH+Ill7wbXSG3R95d
-                                            dbQLZfO0eOoBB/DAYWcPkifxJf+20s25xA8MKl7pNpDUbVhGhp61VCaaEqr6QlgihtluqWZeRgHEY3xSzz/UVHhzjCc6Rs9aPw==
-        RSAEncryptedAESKeyLocation         : C:\Users\zeroadmin\tempdir\tempdir.aeskey.rsaencrypted
-        AllFileOutputs                     : {C:\Users\zeroadmin\tempdir\agricola.txt.aesencrypted, C:\Users\zeroadmin\tempdir\dolor.txt.aesencrypted,
-                                            C:\Users\zeroadmin\tempdir\lorumipsum.txt.aesencrypted, C:\Users\zeroadmin\tempdir\agricola.txt.original...}
-#>
-function New-EncryptedFile {
+function Get-VaultAccessorLookup {
     [CmdletBinding()]
     Param(
         [Parameter(Mandatory=$True)]
-        [ValidateSet("String","ArrayOfStrings","File","Directory")]
-        [string]$SourceType,
+        [string]$VaultServerBaseUri, # Should be something like "http://192.168.2.12:8200/v1"
 
         [Parameter(Mandatory=$True)]
-        [string[]]$ContentToEncrypt,
-
-        [Parameter(Mandatory=$False)]
-        [switch]$Recurse,
-
-        [Parameter(Mandatory=$False)]
-        [string]$FileToOutput,
-
-        [Parameter(Mandatory=$False)]
-        [ValidatePattern("\.pfx$")]
-        [string]$PathToPfxFile,
-
-        [Parameter(Mandatory=$False)]
-        [string]$CNofCertInStore,
-
-        [Parameter(Mandatory=$False)]
-        [string]$CNOfNewCert,
-
-        [Parameter(Mandatory=$False)]
-        [securestring]$CertPwd,
-
-        [Parameter(Mandatory=$False)]
-        [switch]$RemoveOriginalFile
+        [string]$VaultAuthToken # Should be something like 'myroot' or '434f37ca-89ae-9073-8783-087c268fd46f'
     )
 
-    ##### BEGIN Parameter Validation #####
-
-    if ($SourceType -match "String|ArrayOfStrings" -and !$FileToOutput) {
-        $FileToOutput = Read-Host -Prompt "Please enter the full path to the new Encrypted File you would like to generate."
+    # Make sure $VaultServerBaseUri is a valid Url
+    try {
+        $UriObject = [uri]$VaultServerBaseUri
     }
-    if ($SourceType -eq "File" -or $SourceType -eq "Directory" -and $FileToOutput) {
-        $ErrMsg = "The -FileToOutput should NOT be used when -SourceType is 'File' or 'Directory'. " +
-        "Simply use '-SourceType File' or '-SourceType Directory' and output naming convention will be " +
-        "handled automatically by the New-EncryptedFile function. Halting!"
-        Write-Error $ErrMsg
+    catch {
+        Write-Error $_
         $global:FunctionResult = "1"
         return
     }
-    if ($Recurse -and $SourceType -ne "Directory") {
-        Write-Verbose "The -Recurse switch should only be used when -SourceType is 'Directory'! Halting!"
-        Write-Error "The -Recurse switch should only be used when -SourceType is 'Directory'! Halting!"
-        $global:FunctionResult = "1"
-        return
-    }
-    if ($RemoveOriginalFile -and $SourceType -notmatch "File|Directory") {
-        Write-Error "The -RemoveOriginalFile parameter should only be used when -SourceType is 'File' or 'Directory'! Halting!"
+    if (![bool]$($UriObject.Scheme -match "http")) {
+        Write-Error "'$VaultServerBaseUri' does not appear to be a URL! Halting!"
         $global:FunctionResult = "1"
         return
     }
 
-    $RegexDirectoryPath = '^(([a-zA-Z]:\\)|(\\\\))((?![.<>:"\/\\|?*]).)+((?![.<>:"\/|?*]).)+$'
-    $RegexFilePath = '^(([a-zA-Z]:\\)|(\\\\))((?![.<>:"\/\\|?*]).)+((?![<>:"\/|?*]).)+((.*?\.)|(.*?\.[\w]+))+$'
-    # NOTE: The below Linux Regex representations are simply commonly used naming conventions - they are not
-    # strict definitions of Linux File or Directory Path formats
-    $LinuxRegexFilePath = '^((~)|(\/[\w^ ]+))+\/?([\w.])+[^.]$'
-    $LinuxRegexDirectoryPath = '^((~)|(\/[\w^ ]+))+\/?$'
-    if ($SourceType -eq "File" -and $ContentToEncrypt -notmatch $RegexFilePath -and
-    $ContentToDecrypt -notmatch $LinuxRegexFilePath
-    ) {
-        $ErrMsg = "The -SourceType specified was 'File' but '$ContentToEncrypt' does not appear to " +
-        "be a valid file path. This is either because a full path was not provided or because the file does " +
-        "not have a file extenstion. Please correct and try again. Halting!"
-        Write-Error $ErrMsg
-        $global:FunctionResult = "1"
-        return
+    try {
+        $VaultAuthTokenAccessors = Get-VaultTokenAccessors -VaultBaseUri $VaultServerBaseUri -VaultAuthToken $VaultAuthToken -ErrorAction Stop
+        if (!$VaultAuthTokenAccessors) {throw "The Get-VaultTokenAccessors function failed! Halting!"}
     }
-    if ($SourceType -eq "Directory" -and $ContentToEncrypt -notmatch $RegexDirectoryPath -and
-    $ContentToDecrypt -notmatch $LinuxRegexDirectoryPath
-    ) {
-        $ErrMsg = "The -SourceType specified was 'Directory' but '$ContentToEncrypt' does not appear to be " +
-        "a valid directory path. This is either because a full path was not provided or because the directory " +
-        "name ends with something that appears to be a file extension. Please correct and try again. Halting!"
-        Write-Error $ErrMsg
+    catch {
+        Write-Error $_
         $global:FunctionResult = "1"
         return
     }
     
-    if ($SourceType -eq "File" -and !$(Test-Path $ContentToEncrypt)) {
-        Write-Error "The path '$ContentToEncrypt' was not found! Halting!"
+    foreach ($accessor in $VaultAuthTokenAccessors) {
+
+        $jsonRequest = @"
+{
+    "accessor": "$accessor"
+}
+"@
+        try {
+            # Validate JSON
+            $JsonRequestAsSingleLineString = $jsonRequest | ConvertFrom-Json -EA Stop | ConvertTo-Json -Compress -EA Stop
+        }
+        catch {
+            Write-Error "There was a problem with the JSON! Halting!"
+        }
+        $IWRSplatParams = @{
+            Uri         = "$VaultServerBaseUri/auth/token/lookup-accessor"
+            Headers     = @{"X-Vault-Token" = "$VaultAuthToken"}
+            Body        = $JsonRequestAsSingleLineString
+            Method      = "Post"
+        }
+        
+        $(Invoke-RestMethod @IWRSplatParams).data
+
+    }
+}
+
+
+<#
+    .SYNOPSIS
+        This function outputs a Vault Authentication Token granted to the Domain User specified
+        in the -DomainCredentialsWithAccessToVault parameter.
+
+    .DESCRIPTION
+        See .SYNOPSIS
+
+    .NOTES
+
+    .PARAMETER VaultServerBaseUri
+        This parameter is MANDATORY.
+
+        This parameter takes a string that represents a Uri referencing the location of the Vault Server
+        on your network. Example: "https://vaultserver.zero.lab:8200/v1"
+
+    .PARAMETER DomainCredentialsWithAccessToVault
+        This parameter is MANDATORY.
+
+        This parameter takes a PSCredential. Example:
+        $Creds = [pscredential]::new("zero\zeroadmin",$(Read-Host "Please enter the password for 'zero\zeroadmin'" -AsSecureString))
+
+    .EXAMPLE
+        # Open an elevated PowerShell Session, import the module, and -
+
+        PS C:\Users\zeroadmin> Get-VaultLogin -VaultServerBaseUri "https://vaultserver.zero.lab:8200/v1" -DomainCredentialsWithAccessToVault $Creds
+        
+#>
+function Get-VaultLogin {
+    [CmdletBinding()]
+    Param (
+        [Parameter(Mandatory=$True)]
+        [ValidatePattern("\/v1$")]
+        [string]$VaultServerBaseUri,
+
+        [Parameter(Mandatory=$True)]
+        [pscredential]$DomainCredentialsWithAccessToVault
+    )
+
+    [Net.ServicePointManager]::SecurityProtocol = "tls12, tls11, tls"
+
+    # Make sure we can reach the Vault Server and that is in a state where we can actually use it.
+    try {
+        $VaultServerUpAndUnsealedCheck = Invoke-RestMethod "$VaultServerBaseUri/sys/health"
+        if (!$VaultServerUpAndUnsealedCheck -or $VaultServerUpAndUnsealedCheck.initialized -ne $True -or
+        $VaultServerUpAndUnsealedCheck.sealed -ne $False -or $VaultServerUpAndUnsealedCheck.standby -ne $False) {
+            throw "The Vault Server is either not reachable or in a state where it cannot be used! Halting!"
+        }
+    }
+    catch {
+        Write-Error $_
+        Write-Host "Use 'Invoke-RestMethod '$VaultServerBaseUri/sys/health' to investigate" -ForegroundColor Yellow
         $global:FunctionResult = "1"
         return
     }
-    if ($SourceType -eq "Directory" -and !$(Test-Path $ContentToEncrypt)) {
-        Write-Error "The path '$ContentToEncrypt' was not found! Halting!"
+
+    # Get the Domain User's Vault Token so that we can interact with Vault
+    $UserName = $($DomainCredentialsWithAccessToVault.UserName -split "\\")[1]
+    $PlainTextPwd = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($DomainCredentialsWithAccessToVault.Password))
+
+    $jsonRequest = @"
+{
+    "password": "$PlainTextPwd"
+}
+"@
+    try {
+        $JsonRequestAsSingleLineString = $jsonRequest | ConvertFrom-Json -EA Stop | ConvertTo-Json -Compress -EA Stop
+    }
+    catch {
+        Write-Error "There was a problem with the JSON for Turning on the Audit Log! Halting!"
         $global:FunctionResult = "1"
         return
     }
-    if ($SourceType -eq "Directory") {
-        if ($Recurse) {
-            $PossibleFilesToEncrypt = Get-ChildItem -Path $ContentToEncrypt -File -Recurse
-        }
-        if (!$Recurse) {
-            $PossibleFilesToEncrypt = Get-ChildItem -Path $ContentToEncrypt -File
-        }
-        if ($PossibleFilesToEncrypt.Count -lt 1) {
-            Write-Error "No files were found in the directory '$ContentToEncrypt'. Halting!"
-            $global:FunctionResult = "1"
-            return
-        }
+    $IWRSplatParams = @{
+        Uri         = "$VaultServerBaseUri/auth/ldap/login/$UserName "
+        Body        = $JsonRequestAsSingleLineString
+        Method      = "Post"
     }
+    $LDAPLoginResult = Invoke-RestMethod @IWRSplatParams
+    $VaultAuthToken = $LDAPLoginResult.auth.client_token
 
-    if ($FileToOutput) {
-        $FileToOutputDirectory = $FileToOutput | Split-Path -Parent
-        $FileToOutputFile = $FileToOutput | Split-Path -Leaf
-        $FileToOutputFileSansExt = $($FileToOutputFile.Split("."))[0]
-        if (! $(Test-Path $FileToOutputDirectory)) {
-            Write-Error "The directory '$FileToOutputDirectory' does not exist. Please check the path. Halting!"
-            $global:FunctionResult = "1"
-            return
-        }
+    # Get rid of PlainText Password from Memory as best we can (this really doesn't do enough...)
+    # https://get-powershellblog.blogspot.com/2017/06/how-safe-are-your-strings.html
+    $jsonRequest = $null
+    $PlainTextPwd = $null
+
+    if (!$VaultAuthToken) {
+        Write-Error "There was a problem getting the Vault Token for Domain User $UserName! Halting!"
+        $global:FunctionResult = "1"
+        return
     }
+    else {
+        $VaultAuthToken
+    }
+}
 
-    if ($PathToPfxFile -and $CNofCertInStore) {
-        $ErrMsg = "Please use *either* -PathToPfxFile *or* -CNOfCertInStore. Halting!"
-        Write-Error $ErrMsg
+
+<#
+    .SYNOPSIS
+        This function uses the Vault Server REST API to return a list of Vault Token Accessors.
+
+    .DESCRIPTION
+        See .SYNOPSIS
+
+    .NOTES
+
+    .PARAMETER VaultServerBaseUri
+        This parameter is MANDATORY.
+
+        This parameter takes a string that represents a Uri referencing the location of the Vault Server
+        on your network. Example: "https://vaultserver.zero.lab:8200/v1"
+
+    .PARAMETER VaultAuthToken
+        This parameter is MANDATORY.
+
+        This parameter takes a string that represents a Token for a Vault User that has permission to
+        lookup Token Accessors using the Vault Server REST API.
+
+    .EXAMPLE
+        # Open an elevated PowerShell Session, import the module, and -
+
+        PS C:\Users\zeroadmin> Get-VaultTokenAccessors -VaultServerBaseUri "https://vaultserver.zero.lab:8200/v1" -VaultAuthToken '434f37ca-89ae-9073-8783-087c268fd46f'
+        
+#>
+function Get-VaultTokenAccessors {
+    [CmdletBinding()]
+    Param(
+        [Parameter(Mandatory=$True)]
+        [string]$VaultServerBaseUri, # Should be something like "http://192.168.2.12:8200/v1"
+
+        [Parameter(Mandatory=$True)]
+        [string]$VaultAuthToken # Should be something like 'myroot' or '434f37ca-89ae-9073-8783-087c268fd46f'
+    )
+
+    # Make sure $VaultServerBaseUri is a valid Url
+    try {
+        $UriObject = [uri]$VaultServerBaseUri
+    }
+    catch {
+        Write-Error $_
+        $global:FunctionResult = "1"
+        return
+    }
+    if (![bool]$($UriObject.Scheme -match "http")) {
+        Write-Error "'$VaultServerBaseUri' does not appear to be a URL! Halting!"
         $global:FunctionResult = "1"
         return
     }
 
-    # Validate PathToPfxFile
-    if ($PathToPfxFile) { 
-        if (!$(Test-Path $PathToPfxFile)) {
-            Write-Error "The path '$PathToPfxFile'was not found at the path specified. Halting."
-            $global:FunctionResult = "1"
-            return
-        }
-
-        # See if Cert is password protected
-        try {
-            # First, try null password
-            $Cert1 = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new($PathToPfxFile, $null, [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::Exportable)
-        }
-        catch {
-            Write-Warning "Either the Private Key in '$PathToPfxFile' is Password Protected, or it is marked as Unexportable..."
-            if (!$CertPwd) {
-                $CertPwd = Read-Host -Prompt "Please enter the password for the certificate. If there is no password, simply press [ENTER]" -AsSecureString
-            }
-
-            # Next, try $CertPwd 
-            try {
-                $Cert1 = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new($PathToPfxFile, $CertPwd, [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::Exportable)
-            }
-            catch {
-                $ErrMsg = "Either the password supplied for the Private Key in $PathToPfxFile' is " +
-                "incorrect or it is not marked as Exportable! Halting!"
-                Write-Error $ErrMsg
-                $global:FunctionResult = "1"
-                return
-            }
-        }
+    $IWRSplatParams = @{
+        Uri         = "$VaultServerBaseUri/auth/token/accessors"
+        Headers     = @{"X-Vault-Token" = "$VaultAuthToken"}
+        Body        = @{"list" = "true"}
+        Method      = "Get"
     }
+    
+    $(Invoke-RestMethod @IWRSplatParams).data.keys
+}
 
-    # Validate CNofCertInStore
-    if ($CNofCertInStore) {
-        [array]$Cert1 = @(Get-ChildItem "Cert:\LocalMachine\My" | Where-Object {$_.Subject -match "CN=$CNofCertInStore,"})
 
-        if ($Cert1.Count -gt 1) {
-            Write-Warning "Multiple certificates under 'Cert:\LocalMachine\My' with a CommonName '$CNofCertInStore' have been identified! They are as follows:"
-            for ($i=0; $i -lt $Cert1.Count; $i++) {
-                Write-Host "$i) " + "Subject: " + $Cert1[$i].Subject + ' | Thumbprint: ' + $Cert1[$i].Thumbprint
-            }
-            $ValidChoiceNumbers = 0..$($Cert1.Count-1)
-            $CertChoicePrompt = "Please enter the number that corresponds to the Certificate that you " +
-            "would like to use. [0..$($Cert1.Count-1)]"
-            $CertChoice = Read-Host -Prompt $CertChoicePrompt
-            while ($ValidChoiceNumbers -notcontains $CertChoice) {
-                Write-Host "'$CertChoice' is not a valid choice number! Valid choice numbers are $($ValidChoiceNumbers -join ",")"
-                $CertChoice = Read-Host -Prompt $CertChoicePrompt
-            }
-            
-            $Cert1 = $Cert1[$CertChoice]
-        }
-        if ($Cert1.Count -lt 1) {
-            Write-Error "Unable to find a a certificate matching CN=$CNofCertInStore in 'Cert:\LocalMachine\My'! Halting!"
-            $global:FunctionResult = "1"
-            return
-        }
-        if ($Cert1.Count -eq 1) {
-            $Cert1 = $Cert1[0]
-        }
-    }
+<#
+    .SYNOPSIS
+        This function uses the Vault Server REST API to return a list of Vault Tokens and associated information.
 
-    if ($(-not $PSBoundParameters['PathToPfxFile']) -and $(-not $PSBoundParameters['CNofCertInStore'])) {
-        if (!$FileToOutput -and !$CNOfNewCert) {
-            $CNOfNewCert = Read-Host -Prompt "Please enter the desired CN for the new Self-Signed Certificate"
-        }
-        if ($FileToOutput -and !$CNofNewCert) {
-            $CNOfNewCert = $FileToOutputFileSansExt
-        }
+        IMPORTANT NOTE: This function will NOT work unless your Vault Server was created with a vault.hcl
+        configuration that included:
+            raw_storage_endpoint = true
 
-        # Create the Self-Signed Cert and add it to the Personal Local Machine Store
-        # Check to see if a Certificate with CN=$FileToOutputFileSansExt exists in the Local Machine Store already
-        [array]$LocalMachineCerts = @(Get-ChildItem Cert:\LocalMachine\My)
-        [array]$FoundMatchingExistingCert = @($LocalMachineCerts | Where-Object {$_.Subject -match "CN=$CNOfNewCert"})
+    .DESCRIPTION
+        See .SYNOPSIS
 
-        if ($FoundMatchingExistingCert.Count -gt 1) {
-            Write-Warning "Multiple certificates under 'Cert:\LocalMachine\My' with a CommonName '$CNofCertInStore' have been identified!"
+    .NOTES
 
-            $UseExistingCert = Read-Host -Prompt "Would you like to use and existing certificate? [Yes\No]"
-            while (![bool]$($UseExistingCert -match "^yes$|^y$|^no$|^n$")) {
-                Write-Host "'$UseExistingCert' is not a valid choice. Please enter either 'Yes' or 'No'"
-                $UseExistingCert = Read-Host -Prompt "Would you like to use and existing certificate? [Yes\No]"
-            }
+    .PARAMETER VaultServerBaseUri
+        This parameter is MANDATORY.
 
-            if ($UseExistingCert) {
-                for ($i=0; $i -lt $Cert1.Count; $i++) {
-                    Write-Host "$i) " + "Subject: " + $Cert1[$i].Subject + ' | Thumbprint: ' + $Cert1[$i].Thumbprint
-                }
-                $ValidChoiceNumbers = 0..$($Cert1.Count-1)
-                $CertChoicePrompt = "Please enter the number that corresponds to the Certificate that you " +
-                "would like to use. [0..$($Cert1.Count-1)]"
-                $CertChoice = Read-Host -Prompt $CertChoicePrompt
-                while ($ValidChoiceNumbers -notcontains $CertChoice) {
-                    Write-Host "'$CertChoice' is not a valid choice number! Valid choice numbers are $($ValidChoiceNumbers -join ",")"
-                    $CertChoice = Read-Host -Prompt $CertChoicePrompt
-                }
-                
-                $Cert1 = $Cert1[$CertChoice]
-            }
-            else {
-                if ($FileToOutput) {
-                    $PfxOutputDir = $FileToOutput | Split-Path -Parent
-                }
-                if (!$FileToOutput -and $SourceType -eq "File") {
-                    if ($ContentToEncrypt.GetType().FullName -eq "System.String[]") {
-                        $PfxOutputDir = $ContentToEncrypt[0] | Split-Path -Parent
-                    }
-                    else {
-                        $PfxOutputDir = $ContentToEncrypt | Split-Path -Parent
-                    }
-                }
-                if (!$FileToOutput -and $SourceType -eq "Directory") {
-                    if ($ContentToEncrypt.GetType().FullName -eq "System.String[]") {
-                        $PfxOutputDir = $ContentToEncrypt[0]
-                    }
-                    else {
-                        $PfxOutputDir = $ContentToEncrypt
-                    }
-                }
+        This parameter takes a string that represents a Uri referencing the location of the Vault Server
+        on your network. Example: "https://vaultserver.zero.lab:8200/v1"
 
-                $Cert1Prep = Get-EncryptionCert -CommonName $CNOfNewCert -ExportDirectory $PfxOutputDir
-                $Cert1 = $Cert1Prep.CertInfo
-            }
-        }
-        if ($FoundMatchingExistingCert.Count -eq 1) {
-            $Cert1 = $FoundMatchingExistingCert[0]
-        }
-        if ($FoundMatchingExistingCert.Count -lt 1) {
-            #$Cert1 = New-SelfSignedCertificate -CertStoreLocation "Cert:\LocalMachine\My" -DNSName "$FileToOutputFileSansExt" -KeyExportPolicy "Exportable"
-            if ($FileToOutput) {
-                $PfxOutputDir = $FileToOutput | Split-Path -Parent
-            }
-            if (!$FileToOutput -and $SourceType -eq "File") {
-                if ($ContentToEncrypt.GetType().FullName -eq "System.String[]") {
-                    $PfxOutputDir = $ContentToEncrypt[0] | Split-Path -Parent
-                }
-                else {
-                    $PfxOutputDir = $ContentToEncrypt | Split-Path -Parent
-                }
-            }
-            if (!$FileToOutput -and $SourceType -eq "Directory") {
-                if ($ContentToEncrypt.GetType().FullName -eq "System.String[]") {
-                    $PfxOutputDir = $ContentToEncrypt[0]
-                }
-                else {
-                    $PfxOutputDir = $ContentToEncrypt
-                }
-            }
+    .PARAMETER VaultAuthToken
+        This parameter is MANDATORY.
 
-            $Cert1Prep = Get-EncryptionCert -CommonName $CNOfNewCert -ExportDirectory $PfxOutputDir
-            $Cert1 = $Cert1Prep.CertInfo
-        }
-    }
+        This parameter takes a string that represents a Token for a Vault User that has (root) permission to
+        lookup Tokens using the Vault Server REST API.
 
-    # Now we have $Cert1 (which is an X509Certificate2 object)
+    .EXAMPLE
+        # Open an elevated PowerShell Session, import the module, and -
 
-    # If user did not explicitly use $PathToPfxFile, export the $Cert1 to a .pfx file in the same directory as $FileToOutput
-    # so that it's abundantly clear that it was used for encryption, even if it's already in the Cert:\LocalMachine\My Store
-    if (!$PSBoundParameters['PathToPfxFile']) {
-        $CertName = $($Cert1.Subject | Select-String -Pattern "^CN=[\w]+").Matches.Value -replace "CN=",""
-        try {
-            if ($FileToOutput) {
-                $PfxOutputDir = $FileToOutput | Split-Path -Parent
-            }
-            if (!$FileToOutput -and $SourceType -eq "File") {
-                if ($ContentToEncrypt.GetType().FullName -eq "System.String[]") {
-                    $PfxOutputDir = $ContentToEncrypt[0] | Split-Path -Parent
-                }
-                else {
-                    $PfxOutputDir = $ContentToEncrypt | Split-Path -Parent
-                }
-            }
-            if (!$FileToOutput -and $SourceType -eq "Directory") {
-                if ($ContentToEncrypt.GetType().FullName -eq "System.String[]") {
-                    $PfxOutputDir = $ContentToEncrypt[0]
-                }
-                else {
-                    $PfxOutputDir = $ContentToEncrypt
-                }
-            }
-            
-            $pfxbytes = $Cert1.Export([System.Security.Cryptography.X509Certificates.X509ContentType]::Pfx)
-            [System.IO.File]::WriteAllBytes("$PfxOutputDir\$CertName.pfx", $pfxbytes)
-        }
-        catch {
-            Write-Warning "Either the Private Key is Password Protected or it is marked as Unexportable...Asking for password to try and generate new .pfx file..."
-            # NOTE: The $Cert1.Export() method in the above try block has a second argument for PlainTextPassword, but it doesn't seem to work consistently
-            
-            # Check to see if it's already in the Cert:\LocalMachine\My Store
-            if ($(Get-Childitem "Cert:\LocalMachine\My").Thumbprint -contains $Cert1.Thumbprint) {
-                Write-Verbose "The certificate $CertName is already in the Cert:\LocalMachine\My Store."
-            }
-            else {
-                # IMPORTANT NOTE: For some reason, eventhough we have the X509Certificate2 object ($Cert1), it may not
-                # have the Property 'PrivateKey' until we import it to the Cert:\LocalMachine\My and then export it.
-                # This could be why why the above export in the ty block failed...
-                Write-Host "Importing $CertName to Cert:\LocalMachine\My Store..."
-                $X509Store = [System.Security.Cryptography.X509Certificates.X509Store]::new([System.Security.Cryptography.X509Certificates.StoreName]::My, [System.Security.Cryptography.X509Certificates.StoreLocation]::LocalMachine)
-                $X509Store.Open([System.Security.Cryptography.X509Certificates.OpenFlags]::ReadWrite)
-                $X509Store.Add($Cert1)
-            }
-
-            Write-Host "Attempting to export $CertName from Cert:\LocalMachine\My Store to .pfx file..."
-
-            if (!$CertPwd) {
-                $CertPwd = Read-Host -Prompt "Please enter the password for the private key in the certificate $CertName" -AsSecureString
-            }
-
-            try {
-                $Cert1 = Get-Item "Cert:\LocalMachine\My\$($Cert1.Thumbprint)"
-                [System.IO.File]::WriteAllBytes("$PfxOutputDir\$CertName.pfx", $Cert1.Export([System.Security.Cryptography.X509Certificates.X509ContentType]::Pkcs12, $CertPwd))
-                #Export-PfxCertificate -FilePath "$PfxOutputDir\$CertName.pfx" -Cert "Cert:\LocalMachine\My\$($Cert1.Thumbprint)" -Password $CertPwd
-                $ExportPfxCertificateSuccessful = $true
-            }
-            catch {
-                Write-Warning "Creating a .pfx file containing the public certificate used for encryption failed, but this is not strictly necessary and is only attempted for convenience. Continuing..."
-                $ExportPfxCertificateSuccessful = $false
-            }
-        }
-    }
-
-    # If $Cert1 does NOT have a PrivateKey, ask the user if they're ABSOLUTELY POSITIVE they have the private key
-    # before proceeding with encryption
-    if ($Cert1.PrivateKey -eq $null -and $Cert1.HasPrivateKey -ne $True) {
-        Write-Warning "Windows reports that there is NO Private Key associated with this X509Certificate2 object!"
-        $ShouldWeContinue = Read-Host -Prompt "Are you ABSOLUTELY SURE you have the private key somewhere and want to proceed with encryption? [Yes\No]"
-        if (![bool]$($ShouldWeContinue -match "^yes$|^y$")) {
-            Write-Verbose "User specified halt! Halting!"
-            Write-Error "User specified halt! Halting!"
-            $global:FunctionResult = "1"
-            return
-        }
-    }
-
-    ##### END Parameter Validation #####
-
-    ##### BEGIN Main Body #####
-    $MaxNumberOfBytesThatCanBeEncryptedViaRSA = ((2048 - 384) / 8) + 37
-    if ($SourceType -eq "String") {
-        $EncodedBytes1 = [system.text.encoding]::UTF8.GetBytes($ContentToEncrypt)
-
-        if ($EncodedBytes1.Length -ge $MaxNumberOfBytesThatCanBeEncryptedViaRSA) {
-            Write-Error "The string `$ContentToEncrypt is to large to encrypt via this method. Try writing it to a file first and then using this function to encrypt that file."
-            $global:FunctionResult = "1"
-            return
-        }
-
-        #$EncryptedBytes1 = $Cert1.PublicKey.Key.Encrypt($EncodedBytes1, $true)
-        <#
-        try {
-            $EncryptedBytes1 = $Cert1.PublicKey.Key.Encrypt($EncodedBytes1, [System.Security.Cryptography.RSAEncryptionPadding]::OaepSHA256)
-        }
-        catch {
-            $EncryptedBytes1 = $Cert1.PublicKey.Key.Encrypt($EncodedBytes1, [System.Security.Cryptography.RSAEncryptionPadding]::Pkcs1)
-        }
-        #>
-        $EncryptedBytes1 = $Cert1.PublicKey.Key.Encrypt($EncodedBytes1, [System.Security.Cryptography.RSAEncryptionPadding]::Pkcs1)
-        $EncryptedString1 = [System.Convert]::ToBase64String($EncryptedBytes1)
-        $EncryptedString1 | Out-File "$FileToOutput.rsaencrypted"
-
-        $CertLocation = if ($PathToPfxFile) {
-            $PathToPfxFile
-        } 
-        elseif (!$ExportPfxCertificateSuccessful) {
-            "Cert:\LocalMachine\My" + '\' + $Cert1.Thumbprint
-        }
-        elseif ($ExportPfxCertificateSuccessful) {
-            $("Cert:\LocalMachine\My" + '\' + $Cert1.Thumbprint),"$PfxOutputDir\$CertName.pfx"
-        }
-
-        [pscustomobject]@{
-            FileEncryptedViaRSA                 = "$FileToOutput.rsaencrypted"
-            FileEncryptedViaAES                 = $null
-            OriginalFile                        = $null
-            CertficateUsedForRSAEncryption      = $Cert1
-            LocationOfCertUsedForRSAEncryption  = $CertLocation
-            UnprotectedAESKey                   = $null
-            RSAEncryptedAESKey                  = $null
-            RSAEncryptedAESKeyLocation          = $null
-            AllFileOutputs                      = $(if ($PathToPfxFile) {"$FileToOutput.rsaencrypted"} else {"$FileToOutput.rsaencrypted","$PfxOutputDir\$CertName.pfx"})
-        }
-    }
-    if ($SourceType -eq "ArrayOfStrings") {
-        $RSAEncryptedFiles = @()
-        for ($i=0; $i -lt $ContentToEncrypt.Count; $i++) {
-            # Determine if the contents of the File is too long for Asymetric RSA Encryption with pub cert and priv key
-            $EncodedBytes1 = [system.text.encoding]::UTF8.GetBytes($ContentToEncrypt[$i])
-
-            if ($EncodedBytes1.Length -ge $MaxNumberOfBytesThatCanBeEncryptedViaRSA) {
-                Write-Warning "The string in index $i of the `$ContentToEncrypt array is to large to encrypt via this method. Skipping..."
-                continue
-            }
-
-            #$EncryptedBytes1 = $Cert1.PublicKey.Key.Encrypt($EncodedBytes1, $true)
-            <#
-            try {
-                $EncryptedBytes1 = $Cert1.PublicKey.Key.Encrypt($EncodedBytes1, [System.Security.Cryptography.RSAEncryptionPadding]::OaepSHA256)
-            }
-            catch {
-                $EncryptedBytes1 = $Cert1.PublicKey.Key.Encrypt($EncodedBytes1, [System.Security.Cryptography.RSAEncryptionPadding]::Pkcs1)
-            }
-            #>
-            $EncryptedBytes1 = $Cert1.PublicKey.Key.Encrypt($EncodedBytes1, [System.Security.Cryptography.RSAEncryptionPadding]::Pkcs1)
-            $EncryptedString1 = [System.Convert]::ToBase64String($EncryptedBytes1)
-            $FileOutputPathSplit = $FileToOutput -split "\."
-            $FileToOutputUpdated = $FileOutputPathSplit[0] + "_$i." + $FileOutputPathSplit[-1] + ".rsaencrypted"
-            $EncryptedString1 | Out-File $FileToOutputUpdated
-
-            $RSAEncryptedFiles += $FileToOutputUpdated
-        }
-
-        $CertLocation = if ($PathToPfxFile) {
-            $PathToPfxFile
-        } 
-        elseif (!$ExportPfxCertificateSuccessful) {
-            "Cert:\LocalMachine\My" + '\' + $Cert1.Thumbprint
-        }
-        elseif ($ExportPfxCertificateSuccessful) {
-            $("Cert:\LocalMachine\My" + '\' + $Cert1.Thumbprint),"$PfxOutputDir\$CertName.pfx"
-        }
-
-        [pscustomobject]@{
-            FilesEncryptedViaRSA                = $RSAEncryptedFiles
-            FilesEncryptedViaAES                = $null
-            OriginalFiles                       = $null
-            CertficateUsedForRSAEncryption      = $Cert1
-            LocationOfCertUsedForRSAEncryption  = $CertLocation
-            UnprotectedAESKey                   = $null
-            RSAEncryptedAESKey                  = $null
-            RSAEncryptedAESKeyLocation          = $null
-            AllFileOutputs                      = $(if ($PathToPfxFile) {$RSAEncryptedFiles} else {$RSAEncryptedFiles,"$PfxOutputDir\$CertName.pfx"})
-        }
-    }
-    if ($SourceType -eq "File") {
-        $OriginalFileItem = Get-Item $ContentToEncrypt
-        $OriginalFile = $OriginalFileItem.FullName
-        $OriginalFileName = $OriginalFileItem.Name
-        $OriginalDirectory = $OriginalFileItem.Directory
-
-        # Determine if the contents of the File is too long for Asymetric RSA Encryption with pub cert and priv key
-        #$EncodedBytes1 = Get-Content $ContentToEncrypt -Encoding Byte -ReadCount 0
-        $EncodedBytes1 = [System.IO.File]::ReadAllBytes($ContentToEncrypt)
-
-        # If the file content is small enough, encrypt via RSA
-        if ($EncodedBytes1.Length -lt $MaxNumberOfBytesThatCanBeEncryptedViaRSA) {
-            #$EncryptedBytes1 = $Cert1.PublicKey.Key.Encrypt($EncodedBytes1, $true)
-            <#
-            try {
-                $EncryptedBytes1 = $Cert1.PublicKey.Key.Encrypt($EncodedBytes1, [System.Security.Cryptography.RSAEncryptionPadding]::OaepSHA256)
-            }
-            catch {
-                $EncryptedBytes1 = $Cert1.PublicKey.Key.Encrypt($EncodedBytes1, [System.Security.Cryptography.RSAEncryptionPadding]::Pkcs1)
-            }
-            #>
-            $EncryptedBytes1 = $Cert1.PublicKey.Key.Encrypt($EncodedBytes1, [System.Security.Cryptography.RSAEncryptionPadding]::Pkcs1)
-            $EncryptedString1 = [System.Convert]::ToBase64String($EncryptedBytes1)
-            $EncryptedString1 | Out-File "$OriginalDirectory\$OriginalFileName.rsaencrypted"
-        }
-        # If the file content is too large, encrypt via AES and then Encrypt the AES Key via RSA
-        if ($EncodedBytes1.Length -ge $MaxNumberOfBytesThatCanBeEncryptedViaRSA) {
-            $AESKeyDir = $ContentToEncrypt | Split-Path -Parent
-            $AESKeyFileNameSansExt = $(Get-ChildItem $ContentToEncrypt).BaseName
-
-            # Copy the original file and update file name on copy to indicate it's the original
-            Copy-Item -Path $ContentToEncrypt -Destination "$OriginalFile.original"
-
-            $AESKey = NewCryptographyKey -AsPlainText
-            $FileEncryptionInfo = EncryptFile $ContentToEncrypt $AESKey
-
-            # Save $AESKey for later use in the same directory as $ContentToEncrypt
-            # $bytes = [System.Convert]::FromBase64String($AESKey)
-            # [System.IO.File]::WriteAllBytes("$AESKeyDir\$AESKeyFileNameSansExt.aeskey",$bytes)
-            $FileEncryptionInfo.AESKey | Out-File "$AESKeyDir\$AESKeyFileNameSansExt.aeskey"
-
-            # Encrypt the AESKey File using RSA asymetric encryption
-            # NOTE: When Get-Content's -ReadCount is 0, all content is read in one fell swoop, so it's not an array of lines
-            #$EncodedBytes1 = Get-Content "$AESKeyDir\$AESKeyFileNameSansExt.aeskey" -Encoding Byte -ReadCount 0
-            $EncodedBytes1 = [System.IO.File]::ReadAllBytes("$AESKeyDir\$AESKeyFileNameSansExt.aeskey")
-            #$EncryptedBytes1 = $Cert1.PublicKey.Key.Encrypt($EncodedBytes1, $true)
-            <#
-            try {
-                $EncryptedBytes1 = $Cert1.PublicKey.Key.Encrypt($EncodedBytes1, [System.Security.Cryptography.RSAEncryptionPadding]::OaepSHA256)
-            }
-            catch {
-                $EncryptedBytes1 = $Cert1.PublicKey.Key.Encrypt($EncodedBytes1, [System.Security.Cryptography.RSAEncryptionPadding]::Pkcs1)
-            }
-            #>
-            $EncryptedBytes1 = $Cert1.PublicKey.Key.Encrypt($EncodedBytes1, [System.Security.Cryptography.RSAEncryptionPadding]::Pkcs1)
-            $EncryptedString1 = [System.Convert]::ToBase64String($EncryptedBytes1)
-            $EncryptedString1 | Out-File "$AESKeyDir\$AESKeyFileNameSansExt.aeskey.rsaencrypted"
-            Remove-Item "$AESKeyDir\$AESKeyFileNameSansExt.aeskey"
-        }
-
-        $FileEncryptedViaRSA = if (!$AESKey) {"$OriginalFile.rsaencrypted"}
-        $FileEncryptedViaAES = if ($AESKey) {$FileEncryptionInfo.FilesEncryptedwAESKey}
-        $RSAEncryptedAESKeyLocation = if ($AESKey) {"$AESKeyDir\$AESKeyFileNameSansExt.aeskey.rsaencrypted"}
-        $RSAEncryptedFileName = if ($FileEncryptedViaRSA) {$FileEncryptedViaRSA}
-        $AESEncryptedFileName = if ($FileEncryptedViaAES) {$FileEncryptedViaAES}
-
-        $AllFileOutputsPrep = $RSAEncryptedFileName,$AESEncryptedFileName,"$OriginalFile.original",$RSAEncryptedAESKeyLocation
-        $AllFileOutputs = $AllFileOutputsPrep | foreach {if ($_ -ne $null) {$_}}
-        if (!$PathToPfxFile) {
-            $AllFileOutputs = $AllFileOutputs + "$PfxOutputDir\$CertName.pfx"
-        }
-
-        $CertLocation = if ($PathToPfxFile) {
-            $PathToPfxFile
-        } 
-        elseif (!$ExportPfxCertificateSuccessful) {
-            "Cert:\LocalMachine\My" + '\' + $Cert1.Thumbprint
-        }
-        elseif ($ExportPfxCertificateSuccessful) {
-            $("Cert:\LocalMachine\My" + '\' + $Cert1.Thumbprint),"$PfxOutputDir\$CertName.pfx"
-        }
+        PS C:\Users\zeroadmin> Get-VaultTokens -VaultServerBaseUri "https://vaultserver.zero.lab:8200/v1" -VaultAuthToken '434f37ca-89ae-9073-8783-087c268fd46f'
         
-        $RenameItemSplatParams = @{
-            Path        = "$OriginalFile.original"
-            NewName     = $OriginalFile
-            PassThru    = $True
-            ErrorAction = "SilentlyContinue"
-        }
-        $FinalOriginalFileItem = Rename-Item @RenameItemSplatParams
-        if ($RemoveOriginalFile) {
-            Remove-Item -Path $FinalOriginalFileItem.FullName -Force -ErrorAction SilentlyContinue
-        }
-        
+#>
+function Get-VaultTokens {
+    [CmdletBinding()]
+    Param(
+        [Parameter(Mandatory=$True)]
+        [string]$VaultServerBaseUri, # Should be something like "http://192.168.2.12:8200/v1"
 
-        [pscustomobject]@{
-            FileEncryptedViaRSA                 = $FileEncryptedViaRSA
-            FileEncryptedViaAES                 = $FileEncryptedViaAES
-            OriginalFile                        = $FinalOriginalFileItem.FullName
-            CertficateUsedForRSAEncryption      = $Cert1
-            LocationOfCertUsedForRSAEncryption  = $CertLocation
-            UnprotectedAESKey                   = $(if ($AESKey) {$FileEncryptionInfo.AESKey})
-            RSAEncryptedAESKey                  = $(if ($AESKey) {$EncryptedString1})
-            RSAEncryptedAESKeyLocation          = $RSAEncryptedAESKeyLocation
-            AllFileOutputs                      = $AllFileOutputs
-        }
+        [Parameter(Mandatory=$True)]
+        [string]$VaultAuthToken # Should be something like 'myroot' or '434f37ca-89ae-9073-8783-087c268fd46f'
+    )
+
+    # Make sure $VaultServerBaseUri is a valid Url
+    try {
+        $UriObject = [uri]$VaultServerBaseUri
     }
-    if ($SourceType -eq "Directory") {
-        if (!$Recurse) {
-            $FilesToEncryptPrep = $(Get-ChildItem -Path $ContentToEncrypt -File).FullName
-        }
-        if ($Recurse) {
-            $FilesToEncryptPrep = $(Get-ChildItem -Path $ContentToEncrypt -Recurse -File).FullName
-        }
-        
-        [array]$FilesToEncryptViaRSA = @()
-        [array]$FilesToEncryptViaAES = @()
-        foreach ($file in $FilesToEncryptPrep) {
-            # Determine if the contents of the File is too long for Asymetric RSA Encryption with pub cert and priv key
-            #$EncodedBytes1 = Get-Content $file -Encoding Byte -ReadCount 0
-            $EncodedBytes1 = [System.IO.File]::ReadAllBytes($file)
-
-            # If the file content is small enough, encrypt via RSA
-            if ($EncodedBytes1.Length -lt $MaxNumberOfBytesThatCanBeEncryptedViaRSA) {
-                $FilesToEncryptViaRSA += $file
-            }
-            if ($EncodedBytes1.Length -ge $MaxNumberOfBytesThatCanBeEncryptedViaRSA) {
-                $FilesToEncryptViaAES += $file
-            }
-        }
-        foreach ($file in $FilesToEncryptViaAES) {
-            # Copy the original file and update file name on copy to indicate it's the original
-            Copy-Item -Path $file -Destination "$file.original"
-        }
-
-        # Start Doing the Encryption
-        foreach ($file in $FilesToEncryptViaRSA) {
-            #$EncodedBytes1 = Get-Content $file -Encoding Byte -ReadCount 0
-            $EncodedBytes1 = [System.IO.File]::ReadAllBytes($file)
-            #$EncryptedBytes1 = $Cert1.PublicKey.Key.Encrypt($EncodedBytes1, $true)
-            <#
-            try {
-                $EncryptedBytes1 = $Cert1.PublicKey.Key.Encrypt($EncodedBytes1, [System.Security.Cryptography.RSAEncryptionPadding]::OaepSHA256)
-            }
-            catch {
-                $EncryptedBytes1 = $Cert1.PublicKey.Key.Encrypt($EncodedBytes1, [System.Security.Cryptography.RSAEncryptionPadding]::Pkcs1)
-            }
-            #>
-            $EncryptedBytes1 = $Cert1.PublicKey.Key.Encrypt($EncodedBytes1, [System.Security.Cryptography.RSAEncryptionPadding]::Pkcs1)
-            $EncryptedString1 = [System.Convert]::ToBase64String($EncryptedBytes1)
-            $EncryptedString1 | Out-File "$file.rsaencrypted"
-        }
-
-        $AESKeyDir = $ContentToEncrypt
-        $AESKeyFileName = "$($AESKeyDir | Split-Path -Leaf).aeskey"
-        $AESKey = NewCryptographyKey -AsPlainText
-        $FileEncryptionInfo = EncryptFile $FilesToEncryptViaAES $AESKey
-
-        # Save $AESKey for later use in the same directory as $file
-        # $bytes = [System.Convert]::FromBase64String($AESKey)
-        # [System.IO.File]::WriteAllBytes("$AESKeyDir\$AESKeyFileName.aeskey",$bytes)
-        $FileEncryptionInfo.AESKey | Out-File "$AESKeyDir\$AESKeyFileName"
-
-        # Encrypt the AESKey File using RSA asymetric encryption
-        # NOTE: When Get-Content's -ReadCount is 0, all content is read in one fell swoop, so it's not an array of lines
-        #$EncodedBytes1 = Get-Content "$AESKeyDir\$AESKeyFileName" -Encoding Byte -ReadCount 0
-        $EncodedBytes1 = [System.IO.File]::ReadAllBytes("$AESKeyDir\$AESKeyFileName")
-        #$EncryptedBytes1 = $Cert1.PublicKey.Key.Encrypt($EncodedBytes1, $true)
-        <#
-        try {
-            $EncryptedBytes1 = $Cert1.PublicKey.Key.Encrypt($EncodedBytes1, [System.Security.Cryptography.RSAEncryptionPadding]::OaepSHA256)
-        }
-        catch {
-            $EncryptedBytes1 = $Cert1.PublicKey.Key.Encrypt($EncodedBytes1, [System.Security.Cryptography.RSAEncryptionPadding]::Pkcs1)
-        }
-        #>
-        $EncryptedBytes1 = $Cert1.PublicKey.Key.Encrypt($EncodedBytes1, [System.Security.Cryptography.RSAEncryptionPadding]::Pkcs1)
-        $EncryptedString1 = [System.Convert]::ToBase64String($EncryptedBytes1)
-        $EncryptedString1 | Out-File "$AESKeyDir\$AESKeyFileName.rsaencrypted"
-        Remove-Item "$AESKeyDir\$AESKeyFileName"
-
-        $RSAEncryptedAESKeyLocation = if ($FilesToEncryptViaAES.Count -ge 1) {"$AESKeyDir\$AESKeyFileName.rsaencrypted"}
-        $OriginalFilesPrep = $FilesToEncryptViaRSA + $FilesToEncryptViaAES
-        $OriginalFiles = foreach ($file in $OriginalFilesPrep) {"$file.original"}
-        $RSAEncryptedFileNames = foreach ($file in $FilesToEncryptViaRSA) {
-            "$file.rsaencrypted"
-        }
-        $AESEncryptedFileNames = foreach ($file in $FilesToEncryptViaAES) {
-            "$file.aesencrypted"
-        }
-
-        $AllFileOutputsPrep = $RSAEncryptedFileNames,$AESEncryptedFileNames,$OriginalFiles,$RSAEncryptedAESKeyLocation
-        $AllFileOutputs = foreach ($element in $AllFileOutputsPrep) {if ($element -ne $null) {$element}}
-        if (!$PathToPfxFile) {
-            $AllFileOutputs = $AllFileOutputs + "$PfxOutputDir\$CertName.pfx"
-        }
-
-        $CertLocation = if ($PathToPfxFile) {
-            $PathToPfxFile
-        } 
-        elseif (!$ExportPfxCertificateSuccessful) {
-            "Cert:\LocalMachine\My" + '\' + $Cert1.Thumbprint
-        }
-        elseif ($ExportPfxCertificateSuccessful) {
-            $("Cert:\LocalMachine\My" + '\' + $Cert1.Thumbprint),"$PfxOutputDir\$CertName.pfx"
-        }
-
-        [System.Collections.ArrayList]$FinalOriginalFileItems = @()
-        foreach ($FullFilePath in $OriginalFiles) {
-            $RenameItemSplatParams = @{
-                Path        = $FullFilePath
-                NewName     = $($FullFilePath -replace "\.original","")
-                PassThru    = $True
-                ErrorAction = "SilentlyContinue"
-            }
-            $FinalOriginalFileItem = Rename-Item @RenameItemSplatParams
-            $null = $FinalOriginalFileItems.Add($FinalOriginalFileItem)
-            if ($RemoveOriginalFile) {
-                Remove-Item -Path $FullFilePath -Force -ErrorAction SilentlyContinue
-            }
-        }
-
-        [pscustomobject]@{
-            FilesEncryptedViaRSA                = $RSAEncryptedFileNames
-            FilesEncryptedViaAES                = $AESEncryptedFileNames
-            OriginalFiles                       = $FinalOriginalFileItems.FullName
-            CertficateUsedForRSAEncryption      = $Cert1
-            LocationOfCertUsedForRSAEncryption  = $CertLocation
-            UnprotectedAESKey                   = $FileEncryptionInfo.AESKey
-            RSAEncryptedAESKey                  = $EncryptedString1
-            RSAEncryptedAESKeyLocation          = $RSAEncryptedAESKeyLocation
-            AllFileOutputs                      = $AllFileOutputs
-        }
+    catch {
+        Write-Error $_
+        $global:FunctionResult = "1"
+        return
+    }
+    if (![bool]$($UriObject.Scheme -match "http")) {
+        Write-Error "'$VaultServerBaseUri' does not appear to be a URL! Halting!"
+        $global:FunctionResult = "1"
+        return
     }
 
-    ##### END Main Body #####
+    # If $VaultServerBaseUri ends in '/', remove it
+    if ($VaultServerBaseUri[-1] -eq "/") {
+        $VaultServerBaseUri = $VaultServerBaseUri.Substring(0,$VaultServerBaseUri.Length-1)
+    }
+
+    $QueryParameters = @{
+        list = "true"
+    }
+    $HeadersParameters = @{
+        "X-Vault-Token" = $VaultAuthToken
+    }
+    $IWRSplatParamsForSaltedTokenIds = @{
+        Uri         = "$VaultServerBaseUri/sys/raw/sys/token/id"
+        Headers     = $HeadersParameters
+        Body        = $QueryParameters
+        Method      = "Get"
+    }
+    $SaltedTokenIds = $($(Invoke-WebRequest @IWRSplatParamsForSaltedTokenIds).Content | ConvertFrom-Json).data.keys
+    if (!$SaltedTokenIds) {
+        Write-Error "There was a problem accesing the endpoint '$VaultServerBaseUri/sys/raw/sys/token/id'. Was 'raw_storage_endpoint = true' set in your Vault Server 'vault.hcl' configuration? Halting!"
+        $global:FunctionResult = "1"
+        return
+    }
+
+    [System.Collections.ArrayList]$AvailableTokensPSObjects = @()
+    foreach ($SaltedId in $SaltedTokenIds) {
+        $IWRSplatParamsForTokenObjects = @{
+            Uri         = "$VaultServerBaseUri/sys/raw/sys/token/id/$SaltedId"
+            Headers     = $HeadersParameters
+            Method      = "Get"
+        }
+
+        $PSObject = $($(Invoke-WebRequest @IWRSplatParamsForTokenObjects).Content | ConvertFrom-Json).data.value | ConvertFrom-Json
+        
+        $null = $AvailableTokensPSObjects.Add($PSObject)
+    }
+
+    $AvailableTokensPSObjects
 }
 
 
 <#
     .Synopsis
-        This cmdlet generates a self-signed certificate.
+        Provides access to Windows Credential Manager basic functionality for client scripts. Allows the user
+        to add, delete, and show credentials within the Windows Credential Manager.
+
+        Refactored From: https://gallery.technet.microsoft.com/scriptcenter/PowerShell-Credentials-d44c3cde
+
+        ****************** IMPORTANT ******************
+        *
+        * If you use this script from the PS console, you 
+        * should ALWAYS pass the Target, User and Password
+        * parameters using single quotes:
+        * 
+        *  .\CredMan.ps1 -AddCred -Target 'http://server' -User 'JoeSchmuckatelli' -Pass 'P@55w0rd!'
+        * 
+        * to prevent PS misinterpreting special characters 
+        * you might use as PS reserved characters
+        * 
+        ****************** IMPORTANT ******************
+
     .Description
-        This cmdlet generates a self-signed certificate with the required data.
+        See .SYNOPSIS
+
     .NOTES
-        New-SelfSignedCertificateEx.ps1
-        Version 1.0
-        
-        Creates self-signed certificate. This tool is a base replacement
-        for deprecated makecert.exe
-        
-        Vadims Podans (c) 2013
-        http://en-us.sysadmins.lv/
+        Original Author: Jim Harrison (jim@isatools.org)
+        Date  : 2012/05/20
+        Vers  : 1.5
 
-    .Parameter Subject
-        Specifies the certificate subject in a X500 distinguished name format.
-        Example: CN=Test Cert, OU=Sandbox
-    .Parameter NotBefore
-        Specifies the date and time when the certificate become valid. By default previous day
-        date is used.
-    .Parameter NotAfter
-        Specifies the date and time when the certificate expires. By default, the certificate is
-        valid for 1 year.
-    .Parameter SerialNumber
-        Specifies the desired serial number in a hex format.
-        Example: 01a4ff2
-    .Parameter ProviderName
-        Specifies the Cryptography Service Provider (CSP) name. You can use either legacy CSP
-        and Key Storage Providers (KSP). By default "Microsoft Enhanced Cryptographic Provider v1.0"
-        CSP is used.
-    .Parameter AlgorithmName
-        Specifies the public key algorithm. By default RSA algorithm is used. RSA is the only
-        algorithm supported by legacy CSPs. With key storage providers (KSP) you can use CNG
-        algorithms, like ECDH. For CNG algorithms you must use full name:
-        ECDH_P256
-        ECDH_P384
-        ECDH_P521
-        
-        In addition, KeyLength parameter must be specified explicitly when non-RSA algorithm is used.
-    .Parameter KeyLength
-        Specifies the key length to generate. By default 2048-bit key is generated.
-    .Parameter KeySpec
-        Specifies the public key operations type. The possible values are: Exchange and Signature.
-        Default value is Exchange.
-    .Parameter EnhancedKeyUsage
-        Specifies the intended uses of the public key contained in a certificate. You can
-        specify either, EKU friendly name (for example 'Server Authentication') or
-        object identifier (OID) value (for example '1.3.6.1.5.5.7.3.1').
-    .Parameter KeyUsage
-        Specifies restrictions on the operations that can be performed by the public key contained in the certificate.
-        Possible values (and their respective integer values to make bitwise operations) are:
-        EncipherOnly
-        CrlSign
-        KeyCertSign
-        KeyAgreement
-        DataEncipherment
-        KeyEncipherment
-        NonRepudiation
-        DigitalSignature
-        DecipherOnly
-        
-        you can combine key usages values by using bitwise OR operation. when combining multiple
-        flags, they must be enclosed in quotes and separated by a comma character. For example,
-        to combine KeyEncipherment and DigitalSignature flags you should type:
-        "KeyEncipherment, DigitalSignature".
-        
-        If the certificate is CA certificate (see IsCA parameter), key usages extension is generated
-        automatically with the following key usages: Certificate Signing, Off-line CRL Signing, CRL Signing.
-    .Parameter SubjectAlternativeName
-        Specifies alternative names for the subject. Unlike Subject field, this extension
-        allows to specify more than one name. Also, multiple types of alternative names
-        are supported. The cmdlet supports the following SAN types:
-        RFC822 Name
-        IP address (both, IPv4 and IPv6)
-        Guid
-        Directory name
-        DNS name
-    .Parameter IsCA
-        Specifies whether the certificate is CA (IsCA = $true) or end entity (IsCA = $false)
-        certificate. If this parameter is set to $false, PathLength parameter is ignored.
-        Basic Constraints extension is marked as critical.
-    .Parameter PathLength
-        Specifies the number of additional CA certificates in the chain under this certificate. If
-        PathLength parameter is set to zero, then no additional (subordinate) CA certificates are
-        permitted under this CA.
-    .Parameter CustomExtension
-        Specifies the custom extension to include to a self-signed certificate. This parameter
-        must not be used to specify the extension that is supported via other parameters. In order
-        to use this parameter, the extension must be formed in a collection of initialized
-        System.Security.Cryptography.X509Certificates.X509Extension objects.
-    .Parameter SignatureAlgorithm
-        Specifies signature algorithm used to sign the certificate. By default 'SHA1'
-        algorithm is used.
-    .Parameter FriendlyName
-        Specifies friendly name for the certificate.
-    .Parameter StoreLocation
-        Specifies the store location to store self-signed certificate. Possible values are:
-        'CurrentUser' and 'LocalMachine'. 'CurrentUser' store is intended for user certificates
-        and computer (as well as CA) certificates must be stored in 'LocalMachine' store.
-    .Parameter StoreName
-        Specifies the container name in the certificate store. Possible container names are:
-        AddressBook
-        AuthRoot
-        CertificateAuthority
-        Disallowed
-        My
-        Root
-        TrustedPeople
-        TrustedPublisher
-    .Parameter Path
-        Specifies the path to a PFX file to export a self-signed certificate.
-    .Parameter Password
-        Specifies the password for PFX file.
-    .Parameter AllowSMIME
-        Enables Secure/Multipurpose Internet Mail Extensions for the certificate.
-    .Parameter Exportable
-        Marks private key as exportable. Smart card providers usually do not allow
-        exportable keys.
- .Example
-  # Creates a self-signed certificate intended for code signing and which is valid for 5 years. Certificate
-  # is saved in the Personal store of the current user account.
-  
-        New-SelfsignedCertificateEx -Subject "CN=Test Code Signing" -EKU "Code Signing" -KeySpec "Signature" `
-        -KeyUsage "DigitalSignature" -FriendlyName "Test code signing" -NotAfter [datetime]::now.AddYears(5)
-        
-        
-    .Example
-  # Creates a self-signed SSL certificate with multiple subject names and saves it to a file. Additionally, the
-        # certificate is saved in the Personal store of the Local Machine store. Private key is marked as exportable,
-        # so you can export the certificate with a associated private key to a file at any time. The certificate
-  # includes SMIME capabilities.
-  
-  New-SelfsignedCertificateEx -Subject "CN=www.domain.com" -EKU "Server Authentication", "Client authentication" `
-        -KeyUsage "KeyEcipherment, DigitalSignature" -SAN "sub.domain.com","www.domain.com","192.168.1.1" `
-        -AllowSMIME -Path C:\test\ssl.pfx -Password (ConvertTo-SecureString "P@ssw0rd" -AsPlainText -Force) -Exportable `
-        -StoreLocation "LocalMachine"
-        
-    .Example
-  # Creates a self-signed SSL certificate with multiple subject names and saves it to a file. Additionally, the
-        # certificate is saved in the Personal store of the Local Machine store. Private key is marked as exportable,
-        # so you can export the certificate with a associated private key to a file at any time. Certificate uses
-        # Ellyptic Curve Cryptography (ECC) key algorithm ECDH with 256-bit key. The certificate is signed by using
-  # SHA256 algorithm.
-  
-  New-SelfsignedCertificateEx -Subject "CN=www.domain.com" -EKU "Server Authentication", "Client authentication" `
-        -KeyUsage "KeyEcipherment, DigitalSignature" -SAN "sub.domain.com","www.domain.com","192.168.1.1" `
-        -StoreLocation "LocalMachine" -ProviderName "Microsoft Software Key Storae Provider" -AlgorithmName ecdh_256 `
-  -KeyLength 256 -SignatureAlgorithm sha256
-  
-    .Example
-  # Creates self-signed root CA certificate.
+    .PARAMETER AddCred
+        This parameter is OPTIONAL.
 
-  New-SelfsignedCertificateEx -Subject "CN=Test Root CA, OU=Sandbox" -IsCA $true -ProviderName `
-  "Microsoft Software Key Storage Provider" -Exportable
-  
+        This parameter is a switch. Use it in conjunction with -Target, -User, and -Pass
+        parameters to add a new credential or update existing credentials.
+
+    .PARAMETER Comment
+        This parameter is OPTIONAL.
+
+        This parameter takes a string that represents additional information that you wish
+        to place in the credentials comment field. Use with the -AddCred switch.
+
+    .PARAMETER CredPersist
+        This parameter is OPTIONAL, however, it has a default value of "ENTERPRISE".
+
+        This parameter takes a string. Valid values are:
+        "SESSION", "LOCAL_MACHINE", "ENTERPRISE"
+        
+        ENTERPRISE persistance means that the credentials will survive logoff and reboot.
+        
+    .PARAMETER CredType
+        This parameter is OPTIONAL, however, it has a default value of "GENERIC".
+
+        This parameter takes a string. Valid values are:
+        "GENERIC", "DOMAIN_PASSWORD", "DOMAIN_CERTIFICATE",
+        "DOMAIN_VISIBLE_PASSWORD", "GENERIC_CERTIFICATE", "DOMAIN_EXTENDED",
+        "MAXIMUM", "MAXIMUM_EX"
+        
+        ****************** IMPORTANT ******************
+        *
+        * I STRONGLY recommend that you become familiar 
+        * with http://msdn.microsoft.com/en-us/library/windows/desktop/aa374788(v=vs.85).aspx
+        * before you create new credentials with -CredType other than "GENERIC"
+        * 
+        ****************** IMPORTANT ******************
+
+    .PARAMETER DelCred
+        This parameter is OPTIONAL.
+
+        This parameter is a switch. Use it to remove existing credentials. If more than one
+        credential sets have the same -Target, you must use this switch in conjunction with the
+        -CredType parameter.
+
+    .PARAMETER GetCred
+        This parameter is OPTIONAL.
+
+        This parameter is a switch. Use it to retrieve an existing credential. The
+        -CredType parameter may be required to access the correct credential if more set
+        of credentials have the same -Target.
+
+    .PARAMETER Pass
+        This parameter is OPTIONAL, however, it is MANDATORY if the -AddCred switch is used.
+
+        This parameter takes a string that represents tha secret/password that you would like to store.
+
+    .PARAMETER RunTests
+        This parameter is OPTIONAL.
+
+        This parameter is a switch. If used, the function will run built-in Win32 CredMan
+        functionality tests.
+
+    .PARAMETER ShoCred
+        This parameter is OPTIONAL.
+
+        This parameter is a switch. If used, the function will retrieve all credentials stored for
+        the interactive user.
+
+    .PARAMETER Target
+        This parameter is OPTIONAL, however, it is MANDATORY unless the -ShoCred switch is used.
+
+        This parameter takes a string that specifies the authentication target for the specified credentials
+        If not specified, the value provided to the -User parameter is used.
+
+    .PARAMETER User
+        This parameter is OPTIONAL.
+
+        This parameter takes a string that represents the credential's UserName.
+        
+
+    .LINK
+        http://msdn.microsoft.com/en-us/library/windows/desktop/aa374788(v=vs.85).aspx
+        http://stackoverflow.com/questions/7162604/get-cached-credentials-in-powershell-from-windows-7-credential-manager
+        http://msdn.microsoft.com/en-us/library/windows/desktop/aa374788(v=vs.85).aspx
+        http://blogs.msdn.com/b/peerchan/archive/2005/11/01/487834.aspx
+
+    .EXAMPLE
+        # Stores the credential for 'UserName' with a password of 'P@55w0rd!' for authentication against 'http://aserver' and adds a comment of 'cuziwanna'
+        Manage-StoredCredentials -AddCred -Target 'http://aserver' -User 'UserName' -Password 'P@55w0rd!' -Comment 'cuziwanna'
+
+    .EXAMPLE
+        # Removes the credential used for the target 'http://aserver' as credentials type 'DOMAIN_PASSWORD'
+        Manage-StoredCredentials -DelCred -Target 'http://aserver' -CredType 'DOMAIN_PASSWORD'
+
+    .EXAMPLE
+        # Retreives the credential used for the target 'http://aserver'
+        Manage-StoredCredentials -GetCred -Target 'http://aserver'
+
+    .EXAMPLE
+        # Retrieves a summary list of all credentials stored for the interactive user
+        Manage-StoredCredentials -ShoCred
+
+    .EXAMPLE
+        # Retrieves a detailed list of all credentials stored for the interactive user
+        Manage-StoredCredentials -ShoCred -All
+
 #>
-function New-SelfSignedCertificateEx {
-    [CmdletBinding(DefaultParameterSetName = '__store')]
- param (
-  [Parameter(Mandatory = $true, Position = 0)]
-  [string]$Subject,
-  [Parameter(Position = 1)]
-  [datetime]$NotBefore = [DateTime]::Now.AddDays(-1),
-  [Parameter(Position = 2)]
-  [datetime]$NotAfter = $NotBefore.AddDays(365),
-  [string]$SerialNumber,
-  [Alias('CSP')]
-  [string]$ProviderName = "Microsoft Enhanced Cryptographic Provider v1.0",
-  [string]$AlgorithmName = "RSA",
-  [int]$KeyLength = 2048,
-  [validateSet("Exchange","Signature")]
-  [string]$KeySpec = "Exchange",
-  [Alias('EKU')]
-  [Security.Cryptography.Oid[]]$EnhancedKeyUsage,
-  [Alias('KU')]
-  [Security.Cryptography.X509Certificates.X509KeyUsageFlags]$KeyUsage,
-  [Alias('SAN')]
-  [String[]]$SubjectAlternativeName,
-  [bool]$IsCA,
-  [int]$PathLength = -1,
-  [Security.Cryptography.X509Certificates.X509ExtensionCollection]$CustomExtension,
-  [ValidateSet('MD5','SHA1','SHA256','SHA384','SHA512')]
-  [string]$SignatureAlgorithm = "SHA1",
-  [string]$FriendlyName,
-  [Parameter(ParameterSetName = '__store')]
-  [Security.Cryptography.X509Certificates.StoreLocation]$StoreLocation = "CurrentUser",
-  [Parameter(ParameterSetName = '__store')]
-  [Security.Cryptography.X509Certificates.StoreName]$StoreName = "My",
-  [Parameter(Mandatory = $true, ParameterSetName = '__file')]
-  [Alias('OutFile','OutPath','Out')]
-  [IO.FileInfo]$Path,
-  [Parameter(Mandatory = $true, ParameterSetName = '__file')]
-  [Security.SecureString]$Password,
-  [switch]$AllowSMIME,
-  [switch]$Exportable
- )
+function Manage-StoredCredentials {
+    [CmdletBinding()]
+    Param (
+     [Parameter(Mandatory=$false)]
+        [Switch] $AddCred,
 
- $ErrorActionPreference = "Stop"
- if ([Environment]::OSVersion.Version.Major -lt 6) {
-  $NotSupported = New-Object NotSupportedException -ArgumentList "Windows XP and Windows Server 2003 are not supported!"
-  throw $NotSupported
- }
- $ExtensionsToAdd = @()
+     [Parameter(Mandatory=$false)]
+        [Switch]$DelCred,
+     
+        [Parameter(Mandatory=$false)]
+        [Switch]$GetCred,
+     
+        [Parameter(Mandatory=$false)]
+        [Switch]$ShoCred,
 
-    #region >> Constants
- # contexts
- New-Variable -Name UserContext -Value 0x1 -Option Constant
- New-Variable -Name MachineContext -Value 0x2 -Option Constant
- # encoding
- New-Variable -Name Base64Header -Value 0x0 -Option Constant
- New-Variable -Name Base64 -Value 0x1 -Option Constant
- New-Variable -Name Binary -Value 0x3 -Option Constant
- New-Variable -Name Base64RequestHeader -Value 0x4 -Option Constant
- # SANs
- New-Variable -Name OtherName -Value 0x1 -Option Constant
- New-Variable -Name RFC822Name -Value 0x2 -Option Constant
- New-Variable -Name DNSName -Value 0x3 -Option Constant
- New-Variable -Name DirectoryName -Value 0x5 -Option Constant
- New-Variable -Name URL -Value 0x7 -Option Constant
- New-Variable -Name IPAddress -Value 0x8 -Option Constant
- New-Variable -Name RegisteredID -Value 0x9 -Option Constant
- New-Variable -Name Guid -Value 0xa -Option Constant
- New-Variable -Name UPN -Value 0xb -Option Constant
- # installation options
- New-Variable -Name AllowNone -Value 0x0 -Option Constant
- New-Variable -Name AllowNoOutstandingRequest -Value 0x1 -Option Constant
- New-Variable -Name AllowUntrustedCertificate -Value 0x2 -Option Constant
- New-Variable -Name AllowUntrustedRoot -Value 0x4 -Option Constant
- # PFX export options
- New-Variable -Name PFXExportEEOnly -Value 0x0 -Option Constant
- New-Variable -Name PFXExportChainNoRoot -Value 0x1 -Option Constant
- New-Variable -Name PFXExportChainWithRoot -Value 0x2 -Option Constant
-    #endregion >> Constants
- 
-    #region >> Subject Processing
- # http://msdn.microsoft.com/en-us/library/aa377051(VS.85).aspx
- $SubjectDN = New-Object -ComObject X509Enrollment.CX500DistinguishedName
- $SubjectDN.Encode($Subject, 0x0)
-    #endregion >> Subject Processing
+     [Parameter(Mandatory=$false)]
+        [Switch]$RunTests,
+     
+        [Parameter(Mandatory=$false)]
+        [ValidateLength(1,32767) <# CRED_MAX_GENERIC_TARGET_NAME_LENGTH #>]
+        [String]$Target,
 
-    #region >> Extensions
+     [Parameter(Mandatory=$false)]
+        [ValidateLength(1,512) <# CRED_MAX_USERNAME_LENGTH #>]
+        [String]$User,
 
-    #region >> Enhanced Key Usages Processing
- if ($EnhancedKeyUsage) {
-  $OIDs = New-Object -ComObject X509Enrollment.CObjectIDs
-  $EnhancedKeyUsage | %{
-   $OID = New-Object -ComObject X509Enrollment.CObjectID
-   $OID.InitializeFromValue($_.Value)
-   # http://msdn.microsoft.com/en-us/library/aa376785(VS.85).aspx
-   $OIDs.Add($OID)
-  }
-  # http://msdn.microsoft.com/en-us/library/aa378132(VS.85).aspx
-  $EKU = New-Object -ComObject X509Enrollment.CX509ExtensionEnhancedKeyUsage
-  $EKU.InitializeEncode($OIDs)
-  $ExtensionsToAdd += "EKU"
- }
-    #endregion >> Enhanced Key Usages Processing
+     [Parameter(Mandatory=$false)]
+        [ValidateLength(1,512) <# CRED_MAX_CREDENTIAL_BLOB_SIZE #>]
+        [String]$Pass,
 
-    #region >> Key Usages Processing
- if ($KeyUsage -ne $null) {
-  $KU = New-Object -ComObject X509Enrollment.CX509ExtensionKeyUsage
-  $KU.InitializeEncode([int]$KeyUsage)
-  $KU.Critical = $true
-  $ExtensionsToAdd += "KU"
- }
-    #endregion >> Key Usages Processing
+     [Parameter(Mandatory=$false)]
+        [ValidateLength(1,256) <# CRED_MAX_STRING_LENGTH #>]
+        [String]$Comment,
 
-    #region >> Basic Constraints Processing
- if ($PSBoundParameters.Keys.Contains("IsCA")) {
-  # http://msdn.microsoft.com/en-us/library/aa378108(v=vs.85).aspx
-  $BasicConstraints = New-Object -ComObject X509Enrollment.CX509ExtensionBasicConstraints
-  if (!$IsCA) {$PathLength = -1}
-  $BasicConstraints.InitializeEncode($IsCA,$PathLength)
-  $BasicConstraints.Critical = $IsCA
-  $ExtensionsToAdd += "BasicConstraints"
- }
-    #endregion >> Basic Constraints Processing
+     [Parameter(Mandatory=$false)]
+        [ValidateSet("GENERIC","DOMAIN_PASSWORD","DOMAIN_CERTIFICATE","DOMAIN_VISIBLE_PASSWORD",
+        "GENERIC_CERTIFICATE","DOMAIN_EXTENDED","MAXIMUM","MAXIMUM_EX")]
+        [String]$CredType = "GENERIC",
 
-    #region >> SAN Processing
- if ($SubjectAlternativeName) {
-  $SAN = New-Object -ComObject X509Enrollment.CX509ExtensionAlternativeNames
-  $Names = New-Object -ComObject X509Enrollment.CAlternativeNames
-  foreach ($altname in $SubjectAlternativeName) {
-   $Name = New-Object -ComObject X509Enrollment.CAlternativeName
-   if ($altname.Contains("@")) {
-    $Name.InitializeFromString($RFC822Name,$altname)
-   } else {
-    try {
-     $Bytes = [Net.IPAddress]::Parse($altname).GetAddressBytes()
-     $Name.InitializeFromRawData($IPAddress,$Base64,[Convert]::ToBase64String($Bytes))
-    } catch {
-     try {
-      $Bytes = [Guid]::Parse($altname).ToByteArray()
-      $Name.InitializeFromRawData($Guid,$Base64,[Convert]::ToBase64String($Bytes))
-     } catch {
-      try {
-       $Bytes = ([Security.Cryptography.X509Certificates.X500DistinguishedName]$altname).RawData
-       $Name.InitializeFromRawData($DirectoryName,$Base64,[Convert]::ToBase64String($Bytes))
-      } catch {$Name.InitializeFromString($DNSName,$altname)}
+     [Parameter(Mandatory=$false)]
+        [ValidateSet("SESSION","LOCAL_MACHINE","ENTERPRISE")]
+        [String]$CredPersist = "ENTERPRISE"
+    )
+
+    #region Pinvoke
+    #region Inline C#
+    [String] $PsCredmanUtils = @"
+    using System;
+    using System.Runtime.InteropServices;
+
+    namespace PsUtils
+    {
+        public class CredMan
+        {
+            #region Imports
+            // DllImport derives from System.Runtime.InteropServices
+            [DllImport("Advapi32.dll", SetLastError = true, EntryPoint = "CredDeleteW", CharSet = CharSet.Unicode)]
+            private static extern bool CredDeleteW([In] string target, [In] CRED_TYPE type, [In] int reservedFlag);
+
+            [DllImport("Advapi32.dll", SetLastError = true, EntryPoint = "CredEnumerateW", CharSet = CharSet.Unicode)]
+            private static extern bool CredEnumerateW([In] string Filter, [In] int Flags, out int Count, out IntPtr CredentialPtr);
+
+            [DllImport("Advapi32.dll", SetLastError = true, EntryPoint = "CredFree")]
+            private static extern void CredFree([In] IntPtr cred);
+
+            [DllImport("Advapi32.dll", SetLastError = true, EntryPoint = "CredReadW", CharSet = CharSet.Unicode)]
+            private static extern bool CredReadW([In] string target, [In] CRED_TYPE type, [In] int reservedFlag, out IntPtr CredentialPtr);
+
+            [DllImport("Advapi32.dll", SetLastError = true, EntryPoint = "CredWriteW", CharSet = CharSet.Unicode)]
+            private static extern bool CredWriteW([In] ref Credential userCredential, [In] UInt32 flags);
+            #endregion
+
+            #region Fields
+            public enum CRED_FLAGS : uint
+            {
+                NONE = 0x0,
+                PROMPT_NOW = 0x2,
+                USERNAME_TARGET = 0x4
+            }
+
+            public enum CRED_ERRORS : uint
+            {
+                ERROR_SUCCESS = 0x0,
+                ERROR_INVALID_PARAMETER = 0x80070057,
+                ERROR_INVALID_FLAGS = 0x800703EC,
+                ERROR_NOT_FOUND = 0x80070490,
+                ERROR_NO_SUCH_LOGON_SESSION = 0x80070520,
+                ERROR_BAD_USERNAME = 0x8007089A
+            }
+
+            public enum CRED_PERSIST : uint
+            {
+                SESSION = 1,
+                LOCAL_MACHINE = 2,
+                ENTERPRISE = 3
+            }
+
+            public enum CRED_TYPE : uint
+            {
+                GENERIC = 1,
+                DOMAIN_PASSWORD = 2,
+                DOMAIN_CERTIFICATE = 3,
+                DOMAIN_VISIBLE_PASSWORD = 4,
+                GENERIC_CERTIFICATE = 5,
+                DOMAIN_EXTENDED = 6,
+                MAXIMUM = 7,      // Maximum supported cred type
+                MAXIMUM_EX = (MAXIMUM + 1000),  // Allow new applications to run on old OSes
+            }
+
+            [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+            public struct Credential
+            {
+                public CRED_FLAGS Flags;
+                public CRED_TYPE Type;
+                public string TargetName;
+                public string Comment;
+                public DateTime LastWritten;
+                public UInt32 CredentialBlobSize;
+                public string CredentialBlob;
+                public CRED_PERSIST Persist;
+                public UInt32 AttributeCount;
+                public IntPtr Attributes;
+                public string TargetAlias;
+                public string UserName;
+            }
+
+            [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+            private struct NativeCredential
+            {
+                public CRED_FLAGS Flags;
+                public CRED_TYPE Type;
+                public IntPtr TargetName;
+                public IntPtr Comment;
+                public System.Runtime.InteropServices.ComTypes.FILETIME LastWritten;
+                public UInt32 CredentialBlobSize;
+                public IntPtr CredentialBlob;
+                public UInt32 Persist;
+                public UInt32 AttributeCount;
+                public IntPtr Attributes;
+                public IntPtr TargetAlias;
+                public IntPtr UserName;
+            }
+            #endregion
+
+            #region Child Class
+            private class CriticalCredentialHandle : Microsoft.Win32.SafeHandles.CriticalHandleZeroOrMinusOneIsInvalid
+            {
+                public CriticalCredentialHandle(IntPtr preexistingHandle)
+                {
+                    SetHandle(preexistingHandle);
+                }
+
+                private Credential XlateNativeCred(IntPtr pCred)
+                {
+                    NativeCredential ncred = (NativeCredential)Marshal.PtrToStructure(pCred, typeof(NativeCredential));
+                    Credential cred = new Credential();
+                    cred.Type = ncred.Type;
+                    cred.Flags = ncred.Flags;
+                    cred.Persist = (CRED_PERSIST)ncred.Persist;
+
+                    long LastWritten = ncred.LastWritten.dwHighDateTime;
+                    LastWritten = (LastWritten << 32) + ncred.LastWritten.dwLowDateTime;
+                    cred.LastWritten = DateTime.FromFileTime(LastWritten);
+
+                    cred.UserName = Marshal.PtrToStringUni(ncred.UserName);
+                    cred.TargetName = Marshal.PtrToStringUni(ncred.TargetName);
+                    cred.TargetAlias = Marshal.PtrToStringUni(ncred.TargetAlias);
+                    cred.Comment = Marshal.PtrToStringUni(ncred.Comment);
+                    cred.CredentialBlobSize = ncred.CredentialBlobSize;
+                    if (0 < ncred.CredentialBlobSize)
+                    {
+                        cred.CredentialBlob = Marshal.PtrToStringUni(ncred.CredentialBlob, (int)ncred.CredentialBlobSize / 2);
+                    }
+                    return cred;
+                }
+
+                public Credential GetCredential()
+                {
+                    if (IsInvalid)
+                    {
+                        throw new InvalidOperationException("Invalid CriticalHandle!");
+                    }
+                    Credential cred = XlateNativeCred(handle);
+                    return cred;
+                }
+
+                public Credential[] GetCredentials(int count)
+                {
+                    if (IsInvalid)
+                    {
+                        throw new InvalidOperationException("Invalid CriticalHandle!");
+                    }
+                    Credential[] Credentials = new Credential[count];
+                    IntPtr pTemp = IntPtr.Zero;
+                    for (int inx = 0; inx < count; inx++)
+                    {
+                        pTemp = Marshal.ReadIntPtr(handle, inx * IntPtr.Size);
+                        Credential cred = XlateNativeCred(pTemp);
+                        Credentials[inx] = cred;
+                    }
+                    return Credentials;
+                }
+
+                override protected bool ReleaseHandle()
+                {
+                    if (IsInvalid)
+                    {
+                        return false;
+                    }
+                    CredFree(handle);
+                    SetHandleAsInvalid();
+                    return true;
+                }
+            }
+            #endregion
+
+            #region Custom API
+            public static int CredDelete(string target, CRED_TYPE type)
+            {
+                if (!CredDeleteW(target, type, 0))
+                {
+                    return Marshal.GetHRForLastWin32Error();
+                }
+                return 0;
+            }
+
+            public static int CredEnum(string Filter, out Credential[] Credentials)
+            {
+                int count = 0;
+                int Flags = 0x0;
+                if (string.IsNullOrEmpty(Filter) ||
+                    "*" == Filter)
+                {
+                    Filter = null;
+                    if (6 <= Environment.OSVersion.Version.Major)
+                    {
+                        Flags = 0x1; //CRED_ENUMERATE_ALL_CREDENTIALS; only valid is OS >= Vista
+                    }
+                }
+                IntPtr pCredentials = IntPtr.Zero;
+                if (!CredEnumerateW(Filter, Flags, out count, out pCredentials))
+                {
+                    Credentials = null;
+                    return Marshal.GetHRForLastWin32Error(); 
+                }
+                CriticalCredentialHandle CredHandle = new CriticalCredentialHandle(pCredentials);
+                Credentials = CredHandle.GetCredentials(count);
+                return 0;
+            }
+
+            public static int CredRead(string target, CRED_TYPE type, out Credential Credential)
+            {
+                IntPtr pCredential = IntPtr.Zero;
+                Credential = new Credential();
+                if (!CredReadW(target, type, 0, out pCredential))
+                {
+                    return Marshal.GetHRForLastWin32Error();
+                }
+                CriticalCredentialHandle CredHandle = new CriticalCredentialHandle(pCredential);
+                Credential = CredHandle.GetCredential();
+                return 0;
+            }
+
+            public static int CredWrite(Credential userCredential)
+            {
+                if (!CredWriteW(ref userCredential, 0))
+                {
+                    return Marshal.GetHRForLastWin32Error();
+                }
+                return 0;
+            }
+
+            #endregion
+
+            private static int AddCred()
+            {
+                Credential Cred = new Credential();
+                string Password = "Password";
+                Cred.Flags = 0;
+                Cred.Type = CRED_TYPE.GENERIC;
+                Cred.TargetName = "Target";
+                Cred.UserName = "UserName";
+                Cred.AttributeCount = 0;
+                Cred.Persist = CRED_PERSIST.ENTERPRISE;
+                Cred.CredentialBlobSize = (uint)Password.Length;
+                Cred.CredentialBlob = Password;
+                Cred.Comment = "Comment";
+                return CredWrite(Cred);
+            }
+
+            private static bool CheckError(string TestName, CRED_ERRORS Rtn)
+            {
+                switch(Rtn)
+                {
+                    case CRED_ERRORS.ERROR_SUCCESS:
+                        Console.WriteLine(string.Format("'{0}' worked", TestName));
+                        return true;
+                    case CRED_ERRORS.ERROR_INVALID_FLAGS:
+                    case CRED_ERRORS.ERROR_INVALID_PARAMETER:
+                    case CRED_ERRORS.ERROR_NO_SUCH_LOGON_SESSION:
+                    case CRED_ERRORS.ERROR_NOT_FOUND:
+                    case CRED_ERRORS.ERROR_BAD_USERNAME:
+                        Console.WriteLine(string.Format("'{0}' failed; {1}.", TestName, Rtn));
+                        break;
+                    default:
+                        Console.WriteLine(string.Format("'{0}' failed; 0x{1}.", TestName, Rtn.ToString("X")));
+                        break;
+                }
+                return false;
+            }
+
+            /*
+             * Note: the Main() function is primarily for debugging and testing in a Visual 
+             * Studio session.  Although it will work from PowerShell, it's not very useful.
+             */
+            public static void Main()
+            {
+                Credential[] Creds = null;
+                Credential Cred = new Credential();
+                int Rtn = 0;
+
+                Console.WriteLine("Testing CredWrite()");
+                Rtn = AddCred();
+                if (!CheckError("CredWrite", (CRED_ERRORS)Rtn))
+                {
+                    return;
+                }
+                Console.WriteLine("Testing CredEnum()");
+                Rtn = CredEnum(null, out Creds);
+                if (!CheckError("CredEnum", (CRED_ERRORS)Rtn))
+                {
+                    return;
+                }
+                Console.WriteLine("Testing CredRead()");
+                Rtn = CredRead("Target", CRED_TYPE.GENERIC, out Cred);
+                if (!CheckError("CredRead", (CRED_ERRORS)Rtn))
+                {
+                    return;
+                }
+                Console.WriteLine("Testing CredDelete()");
+                Rtn = CredDelete("Target", CRED_TYPE.GENERIC);
+                if (!CheckError("CredDelete", (CRED_ERRORS)Rtn))
+                {
+                    return;
+                }
+                Console.WriteLine("Testing CredRead() again");
+                Rtn = CredRead("Target", CRED_TYPE.GENERIC, out Cred);
+                if (!CheckError("CredRead", (CRED_ERRORS)Rtn))
+                {
+                    Console.WriteLine("if the error is 'ERROR_NOT_FOUND', this result is OK.");
+                }
+            }
+        }
+    }
+"@
+    #endregion
+
+    $PsCredMan = $null
+    try
+    {
+     $PsCredMan = [PsUtils.CredMan]
+    }
+    catch
+    {
+     #only remove the error we generate
+     try {$Error.RemoveAt($Error.Count-1)} catch {Write-Verbose "No past errors yet..."}
+    
+    }
+    if($null -eq $PsCredMan)
+    {
+     Add-Type $PsCredmanUtils
+    }
+    #endregion
+
+    #region Internal Tools
+    [HashTable] $ErrorCategory = @{0x80070057 = "InvalidArgument";
+                                   0x800703EC = "InvalidData";
+                                   0x80070490 = "ObjectNotFound";
+                                   0x80070520 = "SecurityError";
+                                   0x8007089A = "SecurityError"}
+
+    function Get-CredType {
+     Param (
+      [Parameter(Mandatory=$true)]
+            [ValidateSet("GENERIC","DOMAIN_PASSWORD","DOMAIN_CERTIFICATE","DOMAIN_VISIBLE_PASSWORD",
+      "GENERIC_CERTIFICATE","DOMAIN_EXTENDED","MAXIMUM","MAXIMUM_EX")]
+            [String]$CredType
+     )
+     
+     switch($CredType) {
+      "GENERIC" {return [PsUtils.CredMan+CRED_TYPE]::GENERIC}
+      "DOMAIN_PASSWORD" {return [PsUtils.CredMan+CRED_TYPE]::DOMAIN_PASSWORD}
+      "DOMAIN_CERTIFICATE" {return [PsUtils.CredMan+CRED_TYPE]::DOMAIN_CERTIFICATE}
+      "DOMAIN_VISIBLE_PASSWORD" {return [PsUtils.CredMan+CRED_TYPE]::DOMAIN_VISIBLE_PASSWORD}
+      "GENERIC_CERTIFICATE" {return [PsUtils.CredMan+CRED_TYPE]::GENERIC_CERTIFICATE}
+      "DOMAIN_EXTENDED" {return [PsUtils.CredMan+CRED_TYPE]::DOMAIN_EXTENDED}
+      "MAXIMUM" {return [PsUtils.CredMan+CRED_TYPE]::MAXIMUM}
+      "MAXIMUM_EX" {return [PsUtils.CredMan+CRED_TYPE]::MAXIMUM_EX}
      }
     }
-   }
-   $Names.Add($Name)
-  }
-  $SAN.InitializeEncode($Names)
-  $ExtensionsToAdd += "SAN"
- }
-    #endregion >> SAN Processing
 
-    #region >> Custom Extensions
- if ($CustomExtension) {
-  $count = 0
-  foreach ($ext in $CustomExtension) {
-   # http://msdn.microsoft.com/en-us/library/aa378077(v=vs.85).aspx
-   $Extension = New-Object -ComObject X509Enrollment.CX509Extension
-   $EOID = New-Object -ComObject X509Enrollment.CObjectId
-   $EOID.InitializeFromValue($ext.Oid.Value)
-   $EValue = [Convert]::ToBase64String($ext.RawData)
-   $Extension.Initialize($EOID,$Base64,$EValue)
-   $Extension.Critical = $ext.Critical
-   New-Variable -Name ("ext" + $count) -Value $Extension
-   $ExtensionsToAdd += ("ext" + $count)
-   $count++
-  }
- }
-    #endregion >> Custom Extensions
+    function Get-CredPersist {
+     Param (
+      [Parameter(Mandatory=$true)]
+            [ValidateSet("SESSION","LOCAL_MACHINE","ENTERPRISE")]
+            [String] $CredPersist
+     )
+     
+     switch($CredPersist) {
+      "SESSION" {return [PsUtils.CredMan+CRED_PERSIST]::SESSION}
+      "LOCAL_MACHINE" {return [PsUtils.CredMan+CRED_PERSIST]::LOCAL_MACHINE}
+      "ENTERPRISE" {return [PsUtils.CredMan+CRED_PERSIST]::ENTERPRISE}
+     }
+    }
+    #endregion
 
-    #endregion >> Extensions
+    #region Dot-Sourced API
+    function Del-Creds {
+        <#
+        .Synopsis
+            Deletes the specified credentials
 
-    #region >> Private Key
- # http://msdn.microsoft.com/en-us/library/aa378921(VS.85).aspx
- $PrivateKey = New-Object -ComObject X509Enrollment.CX509PrivateKey
- $PrivateKey.ProviderName = $ProviderName
- $AlgID = New-Object -ComObject X509Enrollment.CObjectId
- $AlgID.InitializeFromValue(([Security.Cryptography.Oid]$AlgorithmName).Value)
- $PrivateKey.Algorithm = $AlgID
- # http://msdn.microsoft.com/en-us/library/aa379409(VS.85).aspx
- $PrivateKey.KeySpec = switch ($KeySpec) {"Exchange" {1}; "Signature" {2}}
- $PrivateKey.Length = $KeyLength
- # key will be stored in current user certificate store
- switch ($PSCmdlet.ParameterSetName) {
-  '__store' {
-   $PrivateKey.MachineContext = if ($StoreLocation -eq "LocalMachine") {$true} else {$false}
-  }
-  '__file' {
-   $PrivateKey.MachineContext = $false
-  }
- }
- $PrivateKey.ExportPolicy = if ($Exportable) {1} else {0}
- $PrivateKey.Create()
-    #endregion >> Private Key
+        .Description
+            Calls Win32 CredDeleteW via [PsUtils.CredMan]::CredDelete
 
- # http://msdn.microsoft.com/en-us/library/aa377124(VS.85).aspx
- $Cert = New-Object -ComObject X509Enrollment.CX509CertificateRequestCertificate
- if ($PrivateKey.MachineContext) {
-  $Cert.InitializeFromPrivateKey($MachineContext,$PrivateKey,"")
- } else {
-  $Cert.InitializeFromPrivateKey($UserContext,$PrivateKey,"")
- }
- $Cert.Subject = $SubjectDN
- $Cert.Issuer = $Cert.Subject
- $Cert.NotBefore = $NotBefore
- $Cert.NotAfter = $NotAfter
- foreach ($item in $ExtensionsToAdd) {$Cert.X509Extensions.Add((Get-Variable -Name $item -ValueOnly))}
- if (![string]::IsNullOrEmpty($SerialNumber)) {
-  if ($SerialNumber -match "[^0-9a-fA-F]") {throw "Invalid serial number specified."}
-  if ($SerialNumber.Length % 2) {$SerialNumber = "0" + $SerialNumber}
-  $Bytes = $SerialNumber -split "(.{2})" | ?{$_} | %{[Convert]::ToByte($_,16)}
-  $ByteString = [Convert]::ToBase64String($Bytes)
-  $Cert.SerialNumber.InvokeSet($ByteString,1)
- }
- if ($AllowSMIME) {$Cert.SmimeCapabilities = $true}
- $SigOID = New-Object -ComObject X509Enrollment.CObjectId
- $SigOID.InitializeFromValue(([Security.Cryptography.Oid]$SignatureAlgorithm).Value)
- $Cert.SignatureInformation.HashAlgorithm = $SigOID
- # completing certificate request template building
- $Cert.Encode()
- 
- # interface: http://msdn.microsoft.com/en-us/library/aa377809(VS.85).aspx
- $Request = New-Object -ComObject X509Enrollment.CX509enrollment
- $Request.InitializeFromRequest($Cert)
- $Request.CertificateFriendlyName = $FriendlyName
- $endCert = $Request.CreateRequest($Base64)
- $Request.InstallResponse($AllowUntrustedCertificate,$endCert,$Base64,"")
- switch ($PSCmdlet.ParameterSetName) {
-  '__file' {
-   $PFXString = $Request.CreatePFX(
-    [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($Password)),
-    $PFXExportEEOnly,
-    $Base64
-   )
-   #Set-Content -Path $Path -Value ([Convert]::FromBase64String($PFXString)) -Encoding Byte
-   [System.IO.File]::WriteAllBytes($Path, $([Convert]::FromBase64String($PFXString)))
+        .INPUTS
+            See function-level notes
+
+        .OUTPUTS
+            0 or non-0 according to action success
+            [Management.Automation.ErrorRecord] if error encountered
+
+        .PARAMETER Target
+            Specifies the URI for which the credentials are associated
+          
+        .PARAMETER CredType
+            Specifies the desired credentials type; defaults to 
+            "CRED_TYPE_GENERIC"
+        #>
+
+     Param (
+      [Parameter(Mandatory=$true)]
+            [ValidateLength(1,32767)]
+            [String] $Target,
+
+      [Parameter(Mandatory=$false)]
+            [ValidateSet("GENERIC","DOMAIN_PASSWORD","DOMAIN_CERTIFICATE","DOMAIN_VISIBLE_PASSWORD",
+      "GENERIC_CERTIFICATE","DOMAIN_EXTENDED","MAXIMUM","MAXIMUM_EX")]
+            [String] $CredType = "GENERIC"
+     )
+     
+     [Int]$Results = 0
+     try {
+      $Results = [PsUtils.CredMan]::CredDelete($Target, $(Get-CredType $CredType))
+     }
+     catch {
+      return $_
+     }
+     if(0 -ne $Results) {
+      [String]$Msg = "Failed to delete credentials store for target '$Target'"
+      [Management.ManagementException] $MgmtException = New-Object Management.ManagementException($Msg)
+      [Management.Automation.ErrorRecord] $ErrRcd = New-Object Management.Automation.ErrorRecord($MgmtException, $Results.ToString("X"), $ErrorCategory[$Results], $null)
+      return $ErrRcd
+     }
+     return $Results
+    }
+
+    function Enum-Creds {
+        <#
+        .Synopsis
+          Enumerates stored credentials for operating user
+
+        .Description
+          Calls Win32 CredEnumerateW via [PsUtils.CredMan]::CredEnum
+
+        .INPUTS
+          
+        .OUTPUTS
+          [PsUtils.CredMan+Credential[]] if successful
+          [Management.Automation.ErrorRecord] if unsuccessful or error encountered
+
+        .PARAMETER Filter
+          Specifies the filter to be applied to the query
+          Defaults to [String]::Empty
+          
+        #>
+
+     Param (
+      [Parameter(Mandatory=$false)]
+            [AllowEmptyString()]
+            [String]$Filter = [String]::Empty
+     )
+     
+     [PsUtils.CredMan+Credential[]]$Creds = [Array]::CreateInstance([PsUtils.CredMan+Credential], 0)
+     [Int]$Results = 0
+     try {
+      $Results = [PsUtils.CredMan]::CredEnum($Filter, [Ref]$Creds)
+     }
+     catch {
+      return $_
+     }
+     switch($Results) {
+            0 {break}
+            0x80070490 {break} #ERROR_NOT_FOUND
+            default {
+          [String]$Msg = "Failed to enumerate credentials store for user '$Env:UserName'"
+          [Management.ManagementException] $MgmtException = New-Object Management.ManagementException($Msg)
+          [Management.Automation.ErrorRecord] $ErrRcd = New-Object Management.Automation.ErrorRecord($MgmtException, $Results.ToString("X"), $ErrorCategory[$Results], $null)
+          return $ErrRcd
+            }
+     }
+     return $Creds
+    }
+
+    function Read-Creds {
+        <#
+        .Synopsis
+            Reads specified credentials for operating user
+
+        .Description
+            Calls Win32 CredReadW via [PsUtils.CredMan]::CredRead
+
+        .INPUTS
+
+        .OUTPUTS
+            [PsUtils.CredMan+Credential] if successful
+            [Management.Automation.ErrorRecord] if unsuccessful or error encountered
+
+        .PARAMETER Target
+            Specifies the URI for which the credentials are associated
+            If not provided, the username is used as the target
+          
+        .PARAMETER CredType
+            Specifies the desired credentials type; defaults to 
+            "CRED_TYPE_GENERIC"
+        #>
+
+     Param (
+      [Parameter(Mandatory=$true)]
+            [ValidateLength(1,32767)]
+            [String]$Target,
+
+      [Parameter(Mandatory=$false)]
+            [ValidateSet("GENERIC","DOMAIN_PASSWORD","DOMAIN_CERTIFICATE","DOMAIN_VISIBLE_PASSWORD",
+      "GENERIC_CERTIFICATE","DOMAIN_EXTENDED","MAXIMUM","MAXIMUM_EX")]
+            [String]$CredType = "GENERIC"
+     )
+     
+        #CRED_MAX_DOMAIN_TARGET_NAME_LENGTH
+     if ("GENERIC" -ne $CredType -and 337 -lt $Target.Length) { 
+      [String]$Msg = "Target field is longer ($($Target.Length)) than allowed (max 337 characters)"
+      [Management.ManagementException]$MgmtException = New-Object Management.ManagementException($Msg)
+      [Management.Automation.ErrorRecord]$ErrRcd = New-Object Management.Automation.ErrorRecord($MgmtException, 666, 'LimitsExceeded', $null)
+      return $ErrRcd
+     }
+     [PsUtils.CredMan+Credential]$Cred = New-Object PsUtils.CredMan+Credential
+        [Int]$Results = 0
+     try {
+      $Results = [PsUtils.CredMan]::CredRead($Target, $(Get-CredType $CredType), [Ref]$Cred)
+     }
+     catch {
+      return $_
+     }
+     
+     switch($Results) {
+            0 {break}
+            0x80070490 {return $null} #ERROR_NOT_FOUND
+            default {
+          [String] $Msg = "Error reading credentials for target '$Target' from '$Env:UserName' credentials store"
+          [Management.ManagementException]$MgmtException = New-Object Management.ManagementException($Msg)
+          [Management.Automation.ErrorRecord]$ErrRcd = New-Object Management.Automation.ErrorRecord($MgmtException, $Results.ToString("X"), $ErrorCategory[$Results], $null)
+          return $ErrRcd
+            }
+     }
+     return $Cred
+    }
+
+    function Write-Creds {
+        <#
+        .Synopsis
+          Saves or updates specified credentials for operating user
+
+        .Description
+          Calls Win32 CredWriteW via [PsUtils.CredMan]::CredWrite
+
+        .INPUTS
+
+        .OUTPUTS
+          [Boolean] true if successful
+          [Management.Automation.ErrorRecord] if unsuccessful or error encountered
+
+        .PARAMETER Target
+          Specifies the URI for which the credentials are associated
+          If not provided, the username is used as the target
+          
+        .PARAMETER UserName
+          Specifies the name of credential to be read
+          
+        .PARAMETER Password
+          Specifies the password of credential to be read
+          
+        .PARAMETER Comment
+          Allows the caller to specify the comment associated with 
+          these credentials
+          
+        .PARAMETER CredType
+          Specifies the desired credentials type; defaults to 
+          "CRED_TYPE_GENERIC"
+
+        .PARAMETER CredPersist
+          Specifies the desired credentials storage type;
+          defaults to "CRED_PERSIST_ENTERPRISE"
+        #>
+
+     Param (
+      [Parameter(Mandatory=$false)]
+            [ValidateLength(0,32676)]
+            [String]$Target,
+
+      [Parameter(Mandatory=$true)]
+            [ValidateLength(1,512)]
+            [String]$UserName,
+
+      [Parameter(Mandatory=$true)]
+            [ValidateLength(1,512)]
+            [String]$Password,
+
+      [Parameter(Mandatory=$false)]
+            [ValidateLength(0,256)]
+            [String]$Comment = [String]::Empty,
+
+      [Parameter(Mandatory=$false)]
+            [ValidateSet("GENERIC","DOMAIN_PASSWORD","DOMAIN_CERTIFICATE","DOMAIN_VISIBLE_PASSWORD",
+      "GENERIC_CERTIFICATE","DOMAIN_EXTENDED","MAXIMUM","MAXIMUM_EX")]
+            [String]$CredType = "GENERIC",
+
+      [Parameter(Mandatory=$false)]
+            [ValidateSet("SESSION","LOCAL_MACHINE","ENTERPRISE")]
+            [String]$CredPersist = "ENTERPRISE"
+     )
+
+     if ([String]::IsNullOrEmpty($Target)) {
+      $Target = $UserName
+     }
+        #CRED_MAX_DOMAIN_TARGET_NAME_LENGTH
+     if ("GENERIC" -ne $CredType -and 337 -lt $Target.Length) {
+      [String] $Msg = "Target field is longer ($($Target.Length)) than allowed (max 337 characters)"
+      [Management.ManagementException] $MgmtException = New-Object Management.ManagementException($Msg)
+      [Management.Automation.ErrorRecord] $ErrRcd = New-Object Management.Automation.ErrorRecord($MgmtException, 666, 'LimitsExceeded', $null)
+      return $ErrRcd
+     }
+        if ([String]::IsNullOrEmpty($Comment)) {
+            $Comment = [String]::Format("Last edited by {0}\{1} on {2}",$Env:UserDomain,$Env:UserName,$Env:ComputerName)
+        }
+     [String]$DomainName = [Net.NetworkInformation.IPGlobalProperties]::GetIPGlobalProperties().DomainName
+     [PsUtils.CredMan+Credential]$Cred = New-Object PsUtils.CredMan+Credential
+     
+        switch($Target -eq $UserName -and 
+        $("CRED_TYPE_DOMAIN_PASSWORD" -eq $CredType -or "CRED_TYPE_DOMAIN_CERTIFICATE" -eq $CredType)) {
+      $true  {$Cred.Flags = [PsUtils.CredMan+CRED_FLAGS]::USERNAME_TARGET}
+      $false  {$Cred.Flags = [PsUtils.CredMan+CRED_FLAGS]::NONE}
+     }
+     $Cred.Type = Get-CredType $CredType
+     $Cred.TargetName = $Target
+     $Cred.UserName = $UserName
+     $Cred.AttributeCount = 0
+     $Cred.Persist = Get-CredPersist $CredPersist
+     $Cred.CredentialBlobSize = [Text.Encoding]::Unicode.GetBytes($Password).Length
+     $Cred.CredentialBlob = $Password
+     $Cred.Comment = $Comment
+
+     [Int] $Results = 0
+     try {
+      $Results = [PsUtils.CredMan]::CredWrite($Cred)
+     }
+     catch {
+      return $_
+     }
+
+     if(0 -ne $Results) {
+      [String] $Msg = "Failed to write to credentials store for target '$Target' using '$UserName', '$Password', '$Comment'"
+      [Management.ManagementException] $MgmtException = New-Object Management.ManagementException($Msg)
+      [Management.Automation.ErrorRecord] $ErrRcd = New-Object Management.Automation.ErrorRecord($MgmtException, $Results.ToString("X"), $ErrorCategory[$Results], $null)
+      return $ErrRcd
+     }
+     return $Results
+    }
+
+    #endregion
+
+    #region Cmd-Line functionality
+    function CredManMain {
+    #region Adding credentials
+     if ($AddCred) {
+      if([String]::IsNullOrEmpty($User) -or [String]::IsNullOrEmpty($Pass)) {
+       Write-Host "You must supply a user name and password (target URI is optional)."
+       return
+      }
+      # may be [Int32] or [Management.Automation.ErrorRecord]
+      [Object]$Results = Write-Creds $Target $User $Pass $Comment $CredType $CredPersist
+      if (0 -eq $Results) {
+       [Object]$Cred = Read-Creds $Target $CredType
+       if ($null -eq $Cred) {
+        Write-Host "Credentials for '$Target', '$User' was not found."
+        return
+       }
+       if ($Cred -is [Management.Automation.ErrorRecord]) {
+        return $Cred
+       }
+
+                New-Variable -Name "AddedCredentialsObject" -Value $(
+                    [pscustomobject][ordered]@{
+                        UserName    = $($Cred.UserName)
+                        Password    = $($Cred.CredentialBlob)
+                        Target      = $($Cred.TargetName.Substring($Cred.TargetName.IndexOf("=")+1))
+                        Updated     = "$([String]::Format('{0:yyyy-MM-dd HH:mm:ss}', $Cred.LastWritten.ToUniversalTime())) UTC"
+                        Comment     = $($Cred.Comment)
+                    }
+                )
+
+       return $AddedCredentialsObject
+      }
+      # will be a [Management.Automation.ErrorRecord]
+      return $Results
+     }
+    #endregion 
+
+    #region Removing credentials
+     if ($DelCred) {
+      if (-not $Target) {
+       Write-Host "You must supply a target URI."
+       return
+      }
+      # may be [Int32] or [Management.Automation.ErrorRecord]
+      [Object]$Results = Del-Creds $Target $CredType 
+      if (0 -eq $Results) {
+       Write-Host "Successfully deleted credentials for '$Target'"
+       return
+      }
+      # will be a [Management.Automation.ErrorRecord]
+      return $Results
+     }
+    #endregion
+
+    #region Reading selected credential
+     if ($GetCred) {
+      if(-not $Target) {
+       Write-Host "You must supply a target URI."
+       return
+      }
+      # may be [PsUtils.CredMan+Credential] or [Management.Automation.ErrorRecord]
+      [Object]$Cred = Read-Creds $Target $CredType
+      if ($null -eq $Cred) {
+       Write-Host "Credential for '$Target' as '$CredType' type was not found."
+       return
+      }
+      if ($Cred -is [Management.Automation.ErrorRecord]) {
+       return $Cred
+      }
+
+            New-Variable -Name "AddedCredentialsObject" -Value $(
+                [pscustomobject][ordered]@{
+                    UserName    = $($Cred.UserName)
+                    Password    = $($Cred.CredentialBlob)
+                    Target      = $($Cred.TargetName.Substring($Cred.TargetName.IndexOf("=")+1))
+                    Updated     = "$([String]::Format('{0:yyyy-MM-dd HH:mm:ss}', $Cred.LastWritten.ToUniversalTime())) UTC"
+                    Comment     = $($Cred.Comment)
+                }
+            )
+
+            return $AddedCredentialsObject
+     }
+    #endregion
+
+    #region Reading all credentials
+     if ($ShoCred) {
+      # may be [PsUtils.CredMan+Credential[]] or [Management.Automation.ErrorRecord]
+      [Object]$Creds = Enum-Creds
+      if ($Creds -split [Array] -and 0 -eq $Creds.Length) {
+       Write-Host "No Credentials found for $($Env:UserName)"
+       return
+      }
+      if ($Creds -is [Management.Automation.ErrorRecord]) {
+       return $Creds
+      }
+
+            $ArrayOfCredObjects = @()
+      foreach($Cred in $Creds) {
+                New-Variable -Name "AddedCredentialsObject" -Value $(
+                    [pscustomobject][ordered]@{
+                        UserName    = $($Cred.UserName)
+                        Password    = $($Cred.CredentialBlob)
+                        Target      = $($Cred.TargetName.Substring($Cred.TargetName.IndexOf("=")+1))
+                        Updated     = "$([String]::Format('{0:yyyy-MM-dd HH:mm:ss}', $Cred.LastWritten.ToUniversalTime())) UTC"
+                        Comment     = $($Cred.Comment)
+                    }
+                ) -Force
+
+                $AddedCredentialsObject | Add-Member -MemberType NoteProperty -Name "Alias" -Value "$($Cred.TargetAlias)"
+                $AddedCredentialsObject | Add-Member -MemberType NoteProperty -Name "AttribCnt" -Value "$($Cred.AttributeCount)"
+                $AddedCredentialsObject | Add-Member -MemberType NoteProperty -Name "Attribs" -Value "$($Cred.Attributes)"
+                $AddedCredentialsObject | Add-Member -MemberType NoteProperty -Name "Flags" -Value "$($Cred.Flags)"
+                $AddedCredentialsObject | Add-Member -MemberType NoteProperty -Name "PwdSize" -Value "$($Cred.CredentialBlobSize)"
+                $AddedCredentialsObject | Add-Member -MemberType NoteProperty -Name "Storage" -Value "$($Cred.Persist)"
+                $AddedCredentialsObject | Add-Member -MemberType NoteProperty -Name "Type" -Value "$($Cred.Type)"
+
+                $ArrayOfCredObjects +=, $AddedCredentialsObject
+      }
+      return $ArrayOfCredObjects
+     }
+    #endregion
+
+    #region Run basic diagnostics
+     if($RunTests) {
+      [PsUtils.CredMan]::Main()
+     }
+    #endregion
+    }
+    #endregion
+
+    CredManMain
+}
+
+
+<#
+    .SYNOPSIS
+        This function creates a new SSH User/Client key pair and has the Vault Server sign the Public Key,
+        returning a '-cert.pub' file that can be used for Public Key Certificate SSH Authentication.
+
+    .DESCRIPTION
+        See .SYNOPSIS
+
+    .NOTES
+
+    .PARAMETER VaultServerBaseUri
+        This parameter is MANDATORY.
+
+        This parameter takes a string that represents a Uri referencing the location of the Vault Server
+        on your network. Example: "https://vaultserver.zero.lab:8200/v1"
+
+    .PARAMETER DomainCredentialsWithAccessToVault
+        This parameter is OPTIONAL, however, either -DomainCredentialsWIthAccessToVault or -VaultAuthToken are REQUIRED.
+
+        This parameter takes a PSCredential. Example:
+        $Creds = [pscredential]::new("zero\zeroadmin",$(Read-Host "Please enter the password for 'zero\zeroadmin'" -AsSecureString))
+
+    .PARAMETER VaultAuthToken
+        This parameter is OPTIONAL, however, either -DomainCredentialsWIthAccessToVault or -VaultAuthToken are REQUIRED.
+
+        This parameter takes a string that represents a Token for a Vault User that has (root) permission to
+        lookup Tokens using the Vault Server REST API.
+
+    .PARAMETER NewSSHKeyName
+        This parameter is MANDATORY.
+
+        This parameter takes a string that represents the file name that you would like to give to the new
+        SSH User/Client Keys.
+
+    .PARAMETER NewSSHKeyPurpose
+        This parameter is OPTIONAL.
+
+        This parameter takes a string that represents a very brief description of what the new SSH Keys
+        will be used for. This description will be added to the Comment section when the new keys are
+        created.
+
+    .PARAMETER NewSSHKeyPwd
+        This parameter is OPTIONAL.
+
+        This parameter takes a SecureString that represents the password used to protect the new
+        Private Key file that is created.
+
+    .PARAMETER BlankSSHPrivateKeyPwd
+        This parameter is OPTIONAL.
+
+        This parameter is a switch. Use it to ensure that the newly created Private Key is NOT password
+        protected.
+
+    .PARAMETER AddToSSHAgent
+        This parameter is OPTIONAL, but recommended.
+
+        This parameter is a switch. If used, the new SSH Key Pair will be added to the ssh-agent service.
+
+    .PARAMETER RemovePrivateKey
+        This parameter is OPTIONAL. This parameter should only be used in conjunction with the
+        -AddtoSSHAgent switch.
+
+        This parameter is a switch. If used, the newly created Private Key will be added to the ssh-agent
+        and deleted from the filesystem.
+
+    .EXAMPLE
+        # Open an elevated PowerShell Session, import the module, and -
+
+        PS C:\Users\zeroadmin> $NewSSHCredentialsSplatParams = @{
+            VaultServerBaseUri      = $VaultServerBaseUri
+            VaultAuthToken          = $VaultAuthToken
+            NewSSHKeyName           = $NewSSHKeyName
+            AddToSSHAgent           = $True
+        }
+        PS C:\Users\zeroadmin> $NewSSHCredsResult = New-SSHCredentials @NewSSHCredentialsSplatParams
+        
+#>
+function New-SSHCredentials {
+    [CmdletBinding()]
+    Param (
+        [Parameter(Mandatory=$True)]
+        [ValidatePattern("\/v1$")]
+        [string]$VaultServerBaseUri,
+
+        [Parameter(Mandatory=$False)]
+        [pscredential]$DomainCredentialsWithAccessToVault,
+
+        [Parameter(Mandatory=$False)]
+        [string]$VaultAuthToken,
+
+        [Parameter(Mandatory=$True)]
+        [string]$NewSSHKeyName,
+
+        [Parameter(Mandatory=$False)]
+        [ValidatePattern("^\w*$")] # No spaces allowed
+        [string]$NewSSHKeyPurpose,
+
+        [Parameter(Mandatory=$False)]
+        [System.Security.SecureString]$NewSSHKeyPwd,
+
+        [Parameter(Mandatory=$False)]
+        [switch]$BlankSSHPrivateKeyPwd,
+
+        [Parameter(Mandatory=$False)]
+        [switch]$AddToSSHAgent,
+
+        [Parameter(Mandatory=$False)]
+        [switch]$RemovePrivateKey
+    )
+
+    if ($(!$VaultAuthToken -and !$DomainCredentialsWithAccessToVault) -or $($VaultAuthToken -and $DomainCredentialsWithAccessToVault)) {
+        Write-Error "The $($MyInvocation.MyCommand.Name) function requires one (no more, no less) of the following parameters: [-DomainCredentialsWithAccessToVault, -VaultAuthToken] Halting!"
+        $global:FunctionResult = "1"
+        return
+    }
+
+    if ($DomainCredentialsWithAccessToVault) {
+        $GetVaultLoginSplatParams = @{
+            VaultServerBaseUri                          = $VaultServerBaseUri
+            DomainCredentialsWithAdminAccessToVault     = $DomainCredentialsWithAccessToVault
+            ErrorAction                                 = "Stop"
+        }
+
+        try {
+            $VaultAuthToken = Get-VaultLogin @GetVaultLoginSplatParams
+            if (!$VaultAuthToken) {throw "The Get-VaultLogin function failed! Halting!"}
+        }
+        catch {
+            Write-Error $_
+            $global:FunctionResult = "1"
+            return
+        }
+    }
+
+    $HeadersParameters = @{
+        "X-Vault-Token" = $VaultAuthToken
+    }
+
+    # Generate an SSH key pair for zeroadmin
+    if (!$(Test-Path "$HOME\.ssh")) {
+        New-Item -ItemType Directory -Path "$HOME\.ssh"
+    }
+
+    Push-Location "$HOME\.ssh"
+
+    $NewSSHKeySplatParams = @{
+        NewSSHKeyName       = $NewSSHKeyName
+        ErrorAction         = "Stop"
+    }
+    if ($NewSSHKeyPurpose) {
+        $NewSSHKeySplatParams.Add("NewSSHKeyPurpose",$NewSSHKeyPurpose)
+    }
+    
+    if ($NewSSHKeyPwd) {
+        $KeyPwd = $NewSSHKeyPwd
+    }
+    if (!$BlankSSHPrivateKeyPwd -and !$NewSSHKeyPwd) {
+        $KeyPwd = Read-Host -Prompt "Please enter a password to protect the new SSH Private Key $NewSSHKeyName"
+    }
+    if ($KeyPwd) {
+        $NewSSHKeySplatParams.Add("NewSSHKeyPwd",$KeyPwd)
+    }
+    
+    try {
+        $NewSSHKeyResult = New-SSHKey @NewSSHKeySplatParams
+        if (!$NewSSHKeyResult) {throw "There was a problem with the New-SSHKey function! Halting!"}
+    }
+    catch {
+        Write-Error $_
+        $global:FunctionResult = "1"
+        return
+    }
+
+    # Have Vault sign the User's New public key
+    if ($DomainCredentialsWithAccessToVault) {
+        $AuthorizedPrincipalUserPrep = $DomainCredentialsWithAccessToVault.UserName -split "\\"
+        $AuthorizedPrincipalString = $AuthorizedPrincipalUserPrep[-1] + "@" + $AuthorizedPrincipalUserPrep[0]
+    }
+    else {
+        $AuthorizedPrincipalString = $($(whoami) -split "\\")[-1] + "@" + $($(whoami) -split "\\")[0]
+    }
+
+    $SignSSHUserPubKeySplatParams = @{
+        VaultSSHClientSigningUrl        = "$VaultServerBaseUri/ssh-client-signer/sign/clientrole"
+        VaultAuthToken                  = $VaultAuthToken
+        AuthorizedUserPrincipals        = @($AuthorizedPrincipalString)
+        PathToSSHUserPublicKeyFile      = $NewSSHKeyResult.PublicKeyFilePath
+        PathToSSHUserPrivateKeyFile     = $NewSSHKeyResult.PrivateKeyFilePath
+        ErrorAction                     = "Stop"
+    }
+    if ($AddToSSHAgent) {
+        $SignSSHUserPubKeySplatParams.Add("AddToSSHAgent",$True)
+    }
+
+    try {
+        $SignSSHUserPublicKeyResult = Sign-SSHUserPublicKey @SignSSHUserPubKeySplatParams
+        if (!$SignSSHUserPublicKeyResult) {throw "There was a problem with the Sign-SSHUserPublicKey function! Halting!"}
+    }
+    catch {
+        Write-Error $_
+        $global:FunctionResult = "1"
+        return
+    }
+
+    if ($RemovePrivateKey -and $SignSSHUserPublicKeyResult.AddedToSSHAgent) {
+        Remove-Item $NewSSHKeyResult.PrivateKeyFilePath -Force
+    }
+
+    # Next, pull the Vault Host Signing CA Public Key and Vault Client (User) Signing CA Public Key into the necessary config files
+    # NOTE: The Add-CAPubKeyToSSHAndSSHDConfig function will NOT do anything if it doesn't need to
+    $AddCAPubKeyToSSHAndSSHDConfigSplatParams = @{
+        PublicKeyOfCAUsedToSignUserKeysVaultUrl     = "$VaultServerBaseUri/ssh-client-signer/public_key"
+        PublicKeyOfCAUsedToSignHostKeysVaultUrl     = "$VaultServerBaseUri/ssh-host-signer/public_key"
+        AuthorizedUserPrincipals                    = @($AuthorizedPrincipalString)
+        ErrorAction                                 = "Stop"
+    }
+
+    try {
+        $AddCAPubKeyResult = Add-CAPubKeyToSSHAndSSHDConfig @AddCAPubKeyToSSHAndSSHDConfigSplatParams
+    }
+    catch {
+        Write-Warning "There was a problem with the Add-CAPubKeyToSSHAndSSHDConfig function! The problem is as follows:"
+        Write-Warning "$($_ | Out-String)"
+        Write-Warning "SSH Cert Authentication may still work..."
+    }
+
+    # Finally, figure out the most efficient ssh command to use to remote into the remote host.
+    Get-SSHClientAuthSanity -SSHKeyFilePath $NewSSHKeyResult.PublicKeyFilePath -AuthMethod PublicKeyCertificate
+
+    Pop-Location
+
+}
+
+
+<#
+    .SYNOPSIS
+        This function revokes the Vault Token for the specified User.
+
+    .DESCRIPTION
+        See .SYNOPSIS
+
+    .NOTES
+
+    .PARAMETER VaultServerBaseUri
+        This parameter is MANDATORY.
+
+        This parameter takes a string that represents a Uri referencing the location of the Vault Server
+        on your network. Example: "https://vaultserver.zero.lab:8200/v1"
+
+    .PARAMETER VaultAuthToken
+        This parameter is MANDATORY.
+
+        This parameter takes a string that represents a Token for a Vault User that has (root) permission to
+        lookup and delete Tokens using the Vault Server REST API.
+
+    .PARAMETER VaultUserToDelete
+        This parameter is MANDATORY.
+
+        This parameter takes a string that represents the name of the user that you would like to revoke Tokens
+        for. The UserName should match the .meta.username property from objects returned by the
+        Get-VaultAccessorLookup function - which itself should match the Basic UserName in Active Directory.
+        (For example, if the Domain User is 'zero\jsmith' the "Basic UserName" is 'jsmith', which
+        is the value that you should supply to this paramter)
+
+        IMPORTANT NOTE: ALL tokens granted to the specified user will be revoked.
+
+    .EXAMPLE
+        # Open an elevated PowerShell Session, import the module, and -
+
+        PS C:\Users\zeroadmin> $SplatParams = @{
+            VaultServerBaseUri      = $VaultServerBaseUri
+            VaultAuthToken          = $ZeroAdminToken
+            VaultuserToDelete       = "jsmith"
+        }
+        PS C:\Users\zeroadmin> Revoke-VaultToken @SplatParams
+        
+#>
+function Revoke-VaultToken {
+    [CmdletBinding()]
+    Param(
+        [Parameter(Mandatory=$True)]
+        [string]$VaultServerBaseUri, # Should be something like "http://192.168.2.12:8200/v1"
+
+        [Parameter(Mandatory=$True)]
+        [string]$VaultAuthToken, # Should be something like 'myroot' or '434f37ca-89ae-9073-8783-087c268fd46f'
+
+        [Parameter(Mandatory=$True)]
+        [string[]]$VaultUserToDelete # Should match .meta.username for the Accessor Lookup
+    )
+
+    # Make sure $VaultServerBaseUri is a valid Url
+    try {
+        $UriObject = [uri]$VaultServerBaseUri
+    }
+    catch {
+        Write-Error $_
+        $global:FunctionResult = "1"
+        return
+    }
+    if (![bool]$($UriObject.Scheme -match "http")) {
+        Write-Error "'$VaultServerBaseUri' does not appear to be a URL! Halting!"
+        $global:FunctionResult = "1"
+        return
+    }
+
+    # If $VaultServerBaseUri ends in '/', remove it
+    if ($VaultServerBaseUri[-1] -eq "/") {
+        $VaultServerBaseUri = $VaultServerBaseUri.Substring(0,$VaultServerBaseUri.Length-1)
+    }
+
+    try {
+        $AccessorInfo = Get-VaultAccessorLookup -VaultServerBaseUri $VaultServerBaseUri -VaultAuthToken $ZeroAdminToken -ErrorAction Stop
+        if (!$AccessorInfo) {throw "Ther Get-VaultAccessorLookup function failed! Halting!"}
+    }
+    catch {
+        Write-Error $_
+        $global:FunctionResult = "1"
+        return
+    }
+
+    $AccessorToDelete = $($AccessorInfo | Where-Object {$_.meta.username -eq $VaultUserToDelete}).accessor
+    if (!$AccessorToDelete) {
+        Write-Error "Unable to find Accessor matching username $VaultUserToDelete! Halting!"
+        $global:FunctionResult = "1"
+        return
+    }
+
+    $jsonRequest = @"
+{
+    "accessor": "$AccessorToDelete"
+}
+"@
+    try {
+        # Validate JSON
+        $JsonRequestAsSingleLineString = $jsonRequest | ConvertFrom-Json -EA Stop | ConvertTo-Json -Compress -EA Stop
+    }
+    catch {
+        Write-Error "There was a problem with the JSON for deleting an accessor! Halting!"
+    }
+    $IWRSplatParams = @{
+        Uri         = "$VaultServerBaseUri/auth/token/revoke-accessor"
+        Headers     = @{"X-Vault-Token" = "$VaultAuthToken"}
+        Body        = $JsonRequestAsSingleLineString
+        Method      = "Post"
+    }
+    $RevokeTokenResult = Invoke-RestMethod @IWRSplatParams
+    # NOTE: Revoking a Token does Not produce output, to $RevokeJSmithTokenResult should be $null
+
+    # Make sure it no longer exists
+    try {
+        $AccessorInfo = Get-VaultAccessorLookup -VaultServerBaseUri $VaultServerBaseUri -VaultAuthToken $ZeroAdminToken -ErrorAction Stop
+        if (!$AccessorInfo) {throw "Ther Get-VaultAccessorLookup function failed! Halting!"}
+    }
+    catch {
+        Write-Error $_
+        $global:FunctionResult = "1"
+        return
+    }
+
+    $AccessorStillExists = $($AccessorInfo | Where-Object {$_.meta.username -eq $VaultUserToDelete}).accessor
+    if ($AccessorStillExists) {
+        Write-Error "There was a problem deleting the accessor $AccessorToDelete for user $VaultUserToDelete! Halting!"
+        $global:FunctionResult = '1'
+        return
+    }
+
+    "Success"
+}
+
+
+<#
+    .SYNOPSIS
+        This function (via teh Vault Server REST API) asks the Vault Server to sign the Local Host's
+        SSH Host Key (i.e. 'C:\ProgramData\ssh\ssh_host_rsa_key.pub', resulting in output
+        'C:\ProgramData\ssh\ssh_host_rsa_key-cert.pub').
+
+    .DESCRIPTION
+        See .SYNOPSIS
+
+    .NOTES
+
+    .PARAMETER VaultSSHHostSigningUrl
+        This parameter is MANDATORY.
+
+        This parameter takes a string that represents the Vault Server REST API endpoint responsible
+        for signing Host/Machine SSH Keys. The Url should be something like:
+            https://vaultserver.zero.lab:8200/v1/ssh-host-signer/sign/hostrole
+
+    .PARAMETER VaultAuthToken
+        This parameter is MANDATORY.
+
+        This parameter takes a string that represents a Vault Authentication Token that has
+        permission to request SSH Host Key Signing via the Vault Server REST API.
+
+    .EXAMPLE
+        # Open an elevated PowerShell Session, import the module, and -
+
+        PS C:\Users\zeroadmin> Sign-SSHHostPublicKey -VaultSSHHostSigningUrl $VaultSSHHostSigningUrl -VaultAuthToken $ZeroAdminToken
+        
+#>
+function Sign-SSHHostPublicKey {
+    [CmdletBinding()]
+    Param(
+        [Parameter(Mandatory=$True)]
+        [string]$VaultSSHHostSigningUrl, # Should be something like "http://192.168.2.12:8200/v1/ssh-host-signer/sign/hostrole"
+
+        [Parameter(Mandatory=$True)]
+        [string]$VaultAuthToken # Should be something like 'myroot' or '434f37ca-89ae-9073-8783-087c268fd46f'
+    )
+
+    # Make sure sshd service is installed and running. If it is, we shouldn't need to use
+    # the New-SSHD server function
+    if (![bool]$(Get-Service sshd -ErrorAction SilentlyContinue)) {
+        if (![bool]$(Get-Service ssh-agent -ErrorAction SilentlyContinue)) {
+            $InstallWinSSHSplatParams = @{
+                GiveWinSSHBinariesPathPriority  = $True
+                ConfigureSSHDOnLocalHost        = $True
+                DefaultShell                    = "powershell"
+                GitHubInstall                   = $True
+                ErrorAction                     = "SilentlyContinue"
+                ErrorVariable                   = "IWSErr"
+            }
+
+            try {
+                $InstallWinSSHResults = Install-WinSSH @InstallWinSSHSplatParams -ErrorAction Stop
+                if (!$InstallWinSSHResults) {throw "There was a problem with the Install-WinSSH function! Halting!"}
+            }
+            catch {
+                Write-Error $_
+                Write-Host "Errors for the Install-WinSSH function are as follows:"
+                Write-Error $($IWSErr | Out-String)
+                $global:FunctionResult = "1"
+                return
+            }
+        }
+        else {
+            $NewSSHDServerSplatParams = @{
+                ErrorAction         = "SilentlyContinue"
+                ErrorVariable       = "SSHDErr"
+                DefaultShell        = "powershell"
+            }
+            
+            try {
+                $NewSSHDServerResult = New-SSHDServer @NewSSHDServerSplatParams
+                if (!$NewSSHDServerResult) {throw "There was a problem with the New-SSHDServer function! Halting!"}
+            }
+            catch {
+                Write-Error $_
+                Write-Host "Errors for the New-SSHDServer function are as follows:"
+                Write-Error $($SSHDErr | Out-String)
+                $global:FunctionResult = "1"
+                return
+            }
+        }
+    }
+
+    if (Test-Path "$env:ProgramData\ssh") {
+        $sshdir = "$env:ProgramData\ssh"
+    }
+    elseif (Test-Path "$env:ProgramFiles\OpenSSH-Win64") {
+        $sshdir = "$env:ProgramFiles\OpenSSH-Win64"
+    }
+    if (!$sshdir) {
+        Write-Error "Unable to find ssh directory at '$env:ProgramData\ssh' or '$env:ProgramFiles\OpenSSH-Win64'! Halting!"
+        $global:FunctionResult = "1"
+        return
+    }
+
+    $PathToSSHHostPublicKeyFile = "$sshdir\ssh_host_rsa_key.pub"
+
+    if (!$(Test-Path $PathToSSHHostPublicKeyFile)) {
+        Write-Error "Unable to find the SSH RSA Host Key for $env:ComputerName at path '$sshdir\ssh_host_rsa_key.pub'! Halting!"
+        $global:FunctionResult = "1"
+        return
+    }
+    
+    $SignedPubKeyCertFilePath = $PathToSSHHostPublicKeyFile -replace "\.pub","-cert.pub"
+
+    # Make sure $VaultSSHHostSigningUrl is a valid Url
+    try {
+        $UriObject = [uri]$VaultSSHHostSigningUrl
+    }
+    catch {
+        Write-Error $_
+        $global:FunctionResult = "1"
+        return
+    }
+
+    if (![bool]$($UriObject.Scheme -match "http")) {
+        Write-Error "'$VaultSSHHostSigningUrl' does not appear to be a URL! Halting!"
+        $global:FunctionResult = "1"
+        return
+    }
+
+    # If $VaultSSHHostSigningUrl ends in '/', remove it
+    if ($VaultSSHHostSigningUrl[-1] -eq "/") {
+        $VaultSSHHostSigningUrl = $VaultSSHHostSigningUrl.Substring(0,$VaultSSHHostSigningUrl.Length-1)
+    }
+
+    ##### BEGIN Main Body #####
+
+    # HTTP API Request
+    # The below removes 'comment' text from the Host Public key because sometimes it can cause problems
+    # with the below json
+    $PubKeyContent = $($(Get-Content $PathToSSHHostPublicKeyFile) -split "[\s]")[0..1] -join " "
+
+    $jsonRequest = @"
+{
+    "cert_type": "host",
+    "extension": {
+      "permit-pty": "",
+      "permit-agent-forwarding": ""
+    },
+    "public_key": "$PubKeyContent"
   }
- }
+"@
+    $JsonRequestAsSingleLineString = $jsonRequest | ConvertFrom-Json | ConvertTo-Json -Compress
+
+    $HeadersParameters = @{
+        "X-Vault-Token" = $VaultAuthToken
+    }
+    $IWRSplatParams = @{
+        Uri         = $VaultSSHHostSigningUrl
+        Headers     = $HeadersParameters
+        Body        = $JsonRequestAsSingleLineString
+        Method      = "Post"
+    }
+
+    $SignedSSHClientPubKeyCertResponse = Invoke-WebRequest @IWRSplatParams
+    Set-Content -Value $($SignedSSHClientPubKeyCertResponse.Content | ConvertFrom-Json).data.signed_key.Trim() -Path $SignedPubKeyCertFilePath
+
+    # Make sure permissions on "$sshdir/ssh_host_rsa_key-cert.pub" are set properly
+    if ($PSVersionTable.PSEdition -eq "Core") {
+        Invoke-WinCommand -ComputerName localhost -ScriptBlock {
+            $SecurityDescriptor = Get-NTFSSecurityDescriptor -Path $args[0]
+            $SecurityDescriptor | Disable-NTFSAccessInheritance -RemoveInheritedAccessRules
+            $SecurityDescriptor | Clear-NTFSAccess
+            $SecurityDescriptor | Add-NTFSAccess -Account "NT AUTHORITY\SYSTEM" -AccessRights "FullControl" -AppliesTo ThisFolderSubfoldersAndFiles
+            $SecurityDescriptor | Add-NTFSAccess -Account "Administrators" -AccessRights "FullControl" -AppliesTo ThisFolderSubfoldersAndFiles
+            $SecurityDescriptor | Add-NTFSAccess -Account "NT AUTHORITY\Authenticated Users" -AccessRights "ReadAndExecute, Synchronize" -AppliesTo ThisFolderSubfoldersAndFiles
+            $SecurityDescriptor | Set-NTFSSecurityDescriptor
+        } -ArgumentList $SignedPubKeyCertFilePath
+    }
+    else {
+        $SecurityDescriptor = Get-NTFSSecurityDescriptor -Path $SignedPubKeyCertFilePath
+        $SecurityDescriptor | Disable-NTFSAccessInheritance -RemoveInheritedAccessRules
+        $SecurityDescriptor | Clear-NTFSAccess
+        $SecurityDescriptor | Add-NTFSAccess -Account "NT AUTHORITY\SYSTEM" -AccessRights "FullControl" -AppliesTo ThisFolderSubfoldersAndFiles
+        $SecurityDescriptor | Add-NTFSAccess -Account "Administrators" -AccessRights "FullControl" -AppliesTo ThisFolderSubfoldersAndFiles
+        $SecurityDescriptor | Add-NTFSAccess -Account "NT AUTHORITY\Authenticated Users" -AccessRights "ReadAndExecute, Synchronize" -AppliesTo ThisFolderSubfoldersAndFiles
+        $SecurityDescriptor | Set-NTFSSecurityDescriptor
+    }
+
+    # Update sshd_config
+    [System.Collections.ArrayList]$sshdContent = Get-Content $sshdConfigPath
+
+    # Determine if sshd_config already has the 'HostCertificate' option active
+    $ExistingHostCertificateOption = $sshdContent -match "HostCertificate" | Where-Object {$_ -notmatch "#"}
+    $HostCertificatePathWithForwardSlashes = "$sshdir\ssh_host_rsa_key-cert.pub" -replace "\\","/"
+    $HostCertificateOptionLine = "HostCertificate $HostCertificatePathWithForwardSlashes"
+    
+    if (!$ExistingHostCertificateOption) {
+        try {
+            $LineNumberToInsertOn = $sshdContent.IndexOf($($sshdContent -match "HostKey __PROGRAMDATA__/ssh/ssh_host_rsa_key")) + 1
+            [System.Collections.ArrayList]$sshdContent.Insert($LineNumberToInsertOn, $HostCertificateOptionLine)
+            Set-Content -Value $sshdContent -Path $sshdConfigPath
+            $SSHDConfigContentChanged = $True
+            [System.Collections.ArrayList]$sshdContent = Get-Content $sshdConfigPath
+        }
+        catch {
+            Write-Error $_
+            $global:FunctionResult = "1"
+            return
+        }
+    }
+    else {
+        if ($ExistingHostCertificateOption -ne $HostCertificateOptionLine) {
+            $UpdatedSSHDConfig = $sshdContent -replace [regex]::Escape($ExistingHostCertificateOption),"$HostCertificateOptionLine"
+
+            try {
+                Set-Content -Value $UpdatedSSHDConfig -Path $sshdConfigPath
+                $SSHDConfigContentChanged = $True
+                [System.Collections.ArrayList]$sshdContent = Get-Content $sshdConfigPath
+            }
+            catch {
+                Write-Error $_
+                $global:FunctionResult = "1"
+                return
+            }
+        }
+        else {
+            Write-Warning "The specified 'HostCertificate' option is already active in the the sshd_config file. No changes made."
+        }
+    }
+
+    [pscustomobject]@{
+        SignedPubKeyCertFile        = Get-Item $SignedPubKeyCertFilePath
+        SSHDConfigContentChanged    = if ($SSHDConfigContentChanged) {$True} else {$False}
+        SSHDContentThatWasAdded     = if ($SSHDConfigContentChanged) {$HostCertificateOptionLine}
+    }
+}
+
+
+<#
+    .SYNOPSIS
+        This function signs an SSH Client/User Public Key (for example, "$HOME\.ssh\id_rsa.pub") resulting
+        in a Public Certificate (for example, "$HOME\.ssh\id_rsa-cert.pub"). This Public Certificate can
+        then be used for Public Key Certificate SSH Authentication.
+
+    .DESCRIPTION
+        See .SYNOPSIS
+
+    .NOTES
+
+    .PARAMETER VaultSSHClientSigningUrl
+        This parameter is MANDATORY.
+
+        This parameter takes a string that represents the Vault Server REST API endpoint responsible
+        for signing Client/User SSH Keys. The Url should be something like:
+            https://vaultserver.zero.lab:8200/v1/ssh-client-signer/sign/clientrole
+
+    .PARAMETER VaultAuthToken
+        This parameter is MANDATORY.
+
+        This parameter takes a string that represents a Vault Authentication Token that has
+        permission to request SSH User/Client Key Signing via the Vault Server REST API.
+
+    .PARAMETER AuthorizedUserPrincipals
+        This parameter is MANDATORY.
+
+        This parameter takes a string or array of strings that represent the User or Users that will
+        be using the Public Key Certificate to SSH into remote machines.
+
+        Local User Accounts MUST be in the format <UserName>@<LocalHostComputerName> and
+        Domain User Accounts MUST be in the format <UserName>@<DomainPrefix>. (To clarify DomainPrefix: if your
+        domain is, for example, 'zero.lab', your DomainPrefix would be 'zero').
+
+    .PARAMETER PathToSSHUserPublicKeyFile
+        This parameter is MANDATORY.
+
+        This parameter takes a string that represents the full path to the SSH Public Key that you would like
+        the Vault Server to sign. Example: "$HOME\.ssh\id_rsa.pub"
+
+    .PARAMETER PathToSSHUserPrivateKeyFile
+        This parameter is OPTIONAL, but becomes MANDATORY if you want to add the signed Public Key Certificate to
+        the ssh-agent service.
+
+        This parameter takes a string that represents a full path to the SSH User/Client private key file.
+
+    .PARAMETER AddToSSHAgent
+        This parameter is OPTIONAL.
+
+        This parameter is a switch. If used, the signed Public Key Certificate will be added to the ssh-agent service. 
+
+    .EXAMPLE
+        # Open an elevated PowerShell Session, import the module, and -
+
+        PS C:\Users\zeroadmin> $SplatParams = @{
+            VaultSSHClientSigningUrl    = $VaultSSHClientSigningUrl
+            VaultAuthToken              = $ZeroAdminToken
+            AuthorizedUserPrincipals    = @("zeroadmin@zero")
+            PathToSSHUserPublicKeyFile  = "$HOME\.ssh\zeroadmin_id_rsa.pub"
+            PathToSSHUserPrivateKeyFile = "$HOME\.ssh\zeroadmin_id_rsa"
+            AddToSSHAgent               = $True
+        }
+        PS C:\Users\zeroadmin> Sign-SSHUserPublicKey @SplatParams
+        
+#>
+function Sign-SSHUserPublicKey {
+    [CmdletBinding()]
+    Param(
+        [Parameter(Mandatory=$True)]
+        [string]$VaultSSHClientSigningUrl, # Should be something like "http://192.168.2.12:8200/v1/ssh-client-signer/sign/clientrole"
+
+        [Parameter(Mandatory=$True)]
+        [string]$VaultAuthToken, # Should be something like 'myroot' or '434f37ca-89ae-9073-8783-087c268fd46f'
+
+        [Parameter(Mandatory=$True)]
+        [ValidatePattern("[\w]+@[\w]+")]
+        [string[]]$AuthorizedUserPrincipals, # Should be in format <User>@<HostNameOrDomainPrefix> - and can be an array of strings
+
+        [Parameter(Mandatory=$True)]
+        [ValidatePattern("\.pub")]
+        [string]$PathToSSHUserPublicKeyFile,
+
+        [Parameter(Mandatory=$False)]
+        [string]$PathToSSHUserPrivateKeyFile,
+
+        [Parameter(Mandatory=$False)]
+        [switch]$AddToSSHAgent
+    )
+
+    if (!$(Test-Path $PathToSSHUserPublicKeyFile)) {
+        Write-Error "The path '$PathToSSHUserPublicKeyFile' was not found! Halting!"
+        $global:FunctionResult = "1"
+        return
+    }
+
+    if ($PathToSSHUserPrivateKeyFile) {
+        $CorrespondingPrivateKeyPath = $PathToSSHUserPrivateKeyFile
+    }
+    else {
+        $CorrespondingPrivateKeyPath = $PathToSSHUserPublicKeyFile -replace "\.pub",""
+    }
+
+    if (!$(Test-Path $CorrespondingPrivateKeyPath)) {
+        Write-Error "Unable to find expected path to corresponding private key, i.e. '$CorrespondingPrivateKeyPath'! Halting!"
+        $global:FunctionResult = "1"
+        return
+    }
+
+    $SignedPubKeyCertFilePath = $PathToSSHUserPublicKeyFile -replace "\.pub","-cert.pub"
+    
+    # Check to make sure the user private key isn't password protected. If it is, things break
+    # with current Windows OpenSSH implementation
+    try {
+        $ValidateSSHPrivateKeyResult = Validate-SSHPrivateKey -PathToPrivateKeyFile $CorrespondingPrivateKeyPath -ErrorAction Stop
+        if (!$ValidateSSHPrivateKeyResult) {throw "There was a problem with the Validate-SSHPrivateKey function! Halting!"}
+
+        if (!$ValidateSSHPrivateKeyResult.ValidSSHPrivateKeyFormat) {
+            throw "'$CorrespondingPrivateKeyPath' is not in a valid format! Double check with: ssh-keygen -y -f `"$CorrespondingPrivateKeyPath`""
+        }
+        if ($ValidateSSHPrivateKeyResult.PasswordProtected) {
+            throw "'$CorrespondingPrivateKeyPath' is password protected! This breaks the current implementation of OpenSSH on Windows. Halting!"
+        }
+    }
+    catch {
+        Write-Error $_
+        $global:FunctionResult = "1"
+        return
+    }
+
+    # Make sure $VaultSSHClientSigningUrl is a valid Url
+    try {
+        $UriObject = [uri]$VaultSSHClientSigningUrl
+    }
+    catch {
+        Write-Error $_
+        $global:FunctionResult = "1"
+        return
+    }
+
+    if (![bool]$($UriObject.Scheme -match "http")) {
+        Write-Error "'$VaultSSHClientSigningUrl' does not appear to be a URL! Halting!"
+        $global:FunctionResult = "1"
+        return
+    }
+
+    # If $VaultSSHClientSigningUrl ends in '/', remove it
+    if ($VaultSSHClientSigningUrl[-1] -eq "/") {
+        $VaultSSHClientSigningUrl = $VaultSSHClientSigningUrl.Substring(0,$VaultSSHClientSigningUrl.Length-1)
+    }
+
+    ##### BEGIN Main Body #####
+
+    # HTTP API Request
+    # The below removes 'comment' text from the Host Public key because sometimes it can cause problems
+    # with the below json
+    $PubKeyContent = $($(Get-Content $PathToSSHUserPublicKeyFile) -split "[\s]")[0..1] -join " "
+    $ValidPrincipalsCommaSeparated = $AuthorizedUserPrincipals -join ','
+    # In the below JSON, <HostNameOrDomainPre> - Use the HostName if user is a Local Account and the DomainPre if the user
+    # is a Domain Account
+    $jsonRequest = @"
+{
+    "cert_type": "user",
+    "valid_principals": "$ValidPrincipalsCommaSeparated",
+    "extension": {
+        "permit-pty": "",
+        "permit-agent-forwarding": ""
+    },
+    "public_key": "$PubKeyContent"
+}
+"@
+    $JsonRequestAsSingleLineString = $jsonRequest | ConvertFrom-Json | ConvertTo-Json -Compress
+
+    $HeadersParameters = @{
+        "X-Vault-Token" = $VaultAuthToken
+    }
+    $IWRSplatParams = @{
+        Uri         = $VaultSSHClientSigningUrl
+        Headers     = $HeadersParameters
+        Body        = $JsonRequestAsSingleLineString
+        Method      = "Post"
+    }
+
+    $SignedSSHClientPubKeyCertResponse = Invoke-WebRequest @IWRSplatParams
+    Set-Content -Value $($SignedSSHClientPubKeyCertResponse.Content | ConvertFrom-Json).data.signed_key.Trim() -Path $SignedPubKeyCertFilePath
+
+    if ($AddToSSHAgent) {
+        # Push/Pop-Location probably aren't necessary...but just in case...
+        Push-Location $($CorrespondingPrivateKeyPath | Split-Path -Parent)
+        ssh-add "$CorrespondingPrivateKeyPath"
+        Pop-Location
+        $AddedToSSHAgent = $True
+    }
+
+    $Output = @{
+        SignedCertFile      = $(Get-Item $SignedPubKeyCertFilePath)
+    }
+    if ($AddedToSSHAgent) {
+        $Output.Add("AddedToSSHAgent",$True)
+    }
+
+    [pscustomobject]$Output
 }
 
 
 [System.Collections.ArrayList]$script:FunctionsForSBUse = @(
-    ${Function:NewCryptographyKey}.Ast.Extent.Text 
-    ${Function:DecryptFile}.Ast.Extent.Text
-    ${Function:EncryptFile}.Ast.Extent.Text
+    ${Function:ConvertFromHCLToPrintF}.Ast.Extent.Text 
+    ${Function:GetCurrentuser}.Ast.Extent.Text
+    ${Function:GetDomainController}.Ast.Extent.Text
+    ${Function:GetElevation}.Ast.Extent.Text
+    ${Function:GetGroupObjectsInLDAP}.Ast.Extent.Text
+    ${Function:GetModuleDependencies}.Ast.Extent.Text
+    ${Function:GetNativePath}.Ast.Extent.Text
+    ${Function:GetUserObjectsInLDAP}.Ast.Extent.Text
+    ${Function:InvokeModuleDependencies}.Ast.Extent.Text
+    ${Function:InvokePSCompatibility}.Ast.Extent.Text
+    ${Function:NewUniqueString}.Ast.Extent.Text
+    ${Function:PauseForWarning}.Ast.Extent.Text
+    ${Function:ResolveHost}.Ast.Extent.Text
+    ${Function:TestIsValidIPAddress}.Ast.Extent.Text
+    ${Function:TestLDAP}.Ast.Extent.Text
+    ${Function:TestPort}.Ast.Extent.Text
     ${Function:UnzipFile}.Ast.Extent.Text
-    ${Function:Get-DecryptedContent}.Ast.Extent.Text
-    ${Function:Extract-PfxCerts}.Ast.Extent.Text
-    ${Function:Get-EncryptionCert}.Ast.Extent.Text
-    ${Function:Get-PfxCertificateBetter}.Ast.Extent.Text
-    ${Function:Get-PrivatekeyProperty}.Ast.Extent.Text
-    ${Function:New-EncryptedFile}.Ast.Extent.Text
-    ${Function:New-SelfSignedCertificateEx}.Ast.Extent.Text
+    ${Function:Add-CAPubKeyToSSHAndSSHDConfig}.Ast.Extent.Text
+    ${Function:Configure-VaultServerForLDAPAuth}.Ast.Extent.Text
+    ${Function:ConfigureVaultServerForSSHManagement}.Ast.Extent.Text
+    ${Function:Get-LDAPCert}.Ast.Extent.Text
+    ${Function:Get-VaultAccessorLookup}.Ast.Extent.Text
+    ${Function:Get-VaultLogin}.Ast.Extent.Text
+    ${Function:Get-VaultTokenAccessors}.Ast.Extent.Text
+    ${Function:Get-VaultTokens}.Ast.Extent.Text
+    ${Function:Manage-StoredCredentials}.Ast.Extent.Text
+    ${Function:New-SSHCredentials}.Ast.Extent.Text
+    ${Function:Revoke-VaultToken}.Ast.Extent.Text
+    ${Function:Sign-SSHHostPublicKey}.Ast.Extent.Text
+    ${Function:Sign-SSHUserPublicKey}.Ast.Extent.Text
 )
 
 # Below $opensslkeysource from http://www.jensign.com/opensslkey/index.html
-$opensslkeysource = @'
+$script:opensslkeysource = @'
 
 //**********************************************************************************
 //
@@ -4342,8 +5405,8 @@ if(Win32.CertStrToName(X509_ASN_ENCODING, DN, CERT_X500_NAME_STR, IntPtr.Zero, n
 # SIG # Begin signature block
 # MIIMiAYJKoZIhvcNAQcCoIIMeTCCDHUCAQExCzAJBgUrDgMCGgUAMGkGCisGAQQB
 # gjcCAQSgWzBZMDQGCisGAQQBgjcCAR4wJgIDAQAABBAfzDtgWUsITrck0sYpfvNR
-# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUXXhuQdeo3FyKDkUZ+eKAnpl/
-# jwKgggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
+# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUKwf/AXjKhm58eJBwNAgZ1y38
+# dKygggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
 # 9w0BAQsFADAwMQwwCgYDVQQGEwNMQUIxDTALBgNVBAoTBFpFUk8xETAPBgNVBAMT
 # CFplcm9EQzAxMB4XDTE3MDkyMDIxMDM1OFoXDTE5MDkyMDIxMTM1OFowPTETMBEG
 # CgmSJomT8ixkARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMT
@@ -4400,11 +5463,11 @@ if(Win32.CertStrToName(X509_ASN_ENCODING, DN, CERT_X500_NAME_STR, IntPtr.Zero, n
 # ARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMTB1plcm9TQ0EC
 # E1gAAAH5oOvjAv3166MAAQAAAfkwCQYFKw4DAhoFAKB4MBgGCisGAQQBgjcCAQwx
 # CjAIoAKAAKECgAAwGQYJKoZIhvcNAQkDMQwGCisGAQQBgjcCAQQwHAYKKwYBBAGC
-# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFOvlS8MrsIaw3H1w
-# yntZhlCzNEoNMA0GCSqGSIb3DQEBAQUABIIBAKoOA2iD0SfNR5TXqHDls1AtHwIY
-# x4WUXwv4HzlOu9Dtu/x5tHtz/mu0u/oRiCfgSH1L2VtvgoPIxlM7Rd/+eqUYZpcH
-# +BSsKLdqLACDV6MRIbmi3VRXPoImisWsKG32W8/uTcY1ikryuXeZJ+xpvLu7Ux5d
-# +24IOcrBNZtZIa1pEc8hg43a/L61ltSl617JHK47c5jPWn8m/85F5n6PbTXBpO5y
-# qFruMomhtMHr8HrQJBAGgPG/Tx8FA68/ZI9KnavqQQjVO0IJN7oyX+F2Tzbl8Qix
-# LOGjeQSuSVe1Q39hhoFtxA+2hmdZ2v9ZjaRfDObmOSdr/pZ7VnZuwnf61xU=
+# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFF/ldT5Xuk4ATWvb
+# kJamGcdHuK7kMA0GCSqGSIb3DQEBAQUABIIBAFn20iqAwMYILyPnUEPwrT9uMbJS
+# dTKMO9/hZnidrPFtAQDQPZjQMRakxUjtxzijY8D+Fncv/doNyg683y0yg0dz5xS3
+# FsicwtSCXmSigyxsy8xuIFL3IPM+YslYiFlLsygYSMIuzYKIdN19N5/1m0m5wTFJ
+# pS4L4KV9seXiMB91NOIRRufouhmbD9/ji5RHaOcU7KbWtSVNiB7QCHfOfvGNHkcT
+# Ckl4DUYXeLasCBhlQz+owSXKgbhvSSkVx2rC+i/i7rtpBw6Sg3aMoNZKM1IY12v9
+# aBJTWcMJNH484QE8zyh+srZvcU0IJiWruKz0NwE8EkB4AeqZHIqyhPX12hg=
 # SIG # End signature block
