@@ -1,6 +1,6 @@
 # Change log
 
-## 0.8.0 (July 14, 2018)
+## 0.8.0 (July 17, 2018)
 
-- Created
+- Initial commit
 
