@@ -2100,7 +2100,7 @@ function Get-VaultAccessorLookup {
     }
 
     try {
-        $VaultAuthTokenAccessors = Get-VaultTokenAccessors -VaultBaseUri $VaultServerBaseUri -VaultAuthToken $VaultAuthToken -ErrorAction Stop
+        $VaultAuthTokenAccessors = Get-VaultTokenAccessors -VaultServerBaseUri $VaultServerBaseUri -VaultAuthToken $VaultAuthToken -ErrorAction Stop
         if (!$VaultAuthTokenAccessors) {throw "The Get-VaultTokenAccessors function failed! Halting!"}
     }
     catch {
@@ -5416,8 +5416,8 @@ if(Win32.CertStrToName(X509_ASN_ENCODING, DN, CERT_X500_NAME_STR, IntPtr.Zero, n
 # SIG # Begin signature block
 # MIIMiAYJKoZIhvcNAQcCoIIMeTCCDHUCAQExCzAJBgUrDgMCGgUAMGkGCisGAQQB
 # gjcCAQSgWzBZMDQGCisGAQQBgjcCAR4wJgIDAQAABBAfzDtgWUsITrck0sYpfvNR
-# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUI760AahAIcgXDfMKS19Ji7ay
-# dDSgggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
+# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUtMMl2Oi+75WCoTc95rMH0rUo
+# fWugggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
 # 9w0BAQsFADAwMQwwCgYDVQQGEwNMQUIxDTALBgNVBAoTBFpFUk8xETAPBgNVBAMT
 # CFplcm9EQzAxMB4XDTE3MDkyMDIxMDM1OFoXDTE5MDkyMDIxMTM1OFowPTETMBEG
 # CgmSJomT8ixkARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMT
@@ -5474,11 +5474,11 @@ if(Win32.CertStrToName(X509_ASN_ENCODING, DN, CERT_X500_NAME_STR, IntPtr.Zero, n
 # ARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMTB1plcm9TQ0EC
 # E1gAAAH5oOvjAv3166MAAQAAAfkwCQYFKw4DAhoFAKB4MBgGCisGAQQBgjcCAQwx
 # CjAIoAKAAKECgAAwGQYJKoZIhvcNAQkDMQwGCisGAQQBgjcCAQQwHAYKKwYBBAGC
-# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFASlc+ysnJDWWs2p
-# RbkitXcsNPG1MA0GCSqGSIb3DQEBAQUABIIBALuSxOfRov4cQVAalRm/2pc1fHmb
-# otRXwoozhwJgz0iru2mVu2kxOOyCayYwP4xxmh81NEnUz8Vqe8wvspK+8thZ2M4X
-# EZE2P6sOlvEwPI4oldvjHTwcJQ77orGKHr9XVoiExE+9uv0MmUXyJJKfU4SuzKO+
-# MJ8WQsb8ql/+42if7wNilgGHS65SuwOGTJqYmvjLLIvSaIk7PrSYkyUHu4zIMkqZ
-# Du6cZxFz1GnqYoDlJhABNqXyAybdsxtcyZioksDydmAZoZ3LoxeHu250YIjLckig
-# dYBV9VYTx0Q1TFFyD/v3kKHzXTgnWMzppKQLRQmAElNLaVfoQRtWvsnnN0Y=
+# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFK22IKENwVVCHPQm
+# RINh1PFz686nMA0GCSqGSIb3DQEBAQUABIIBABjvqR9FygLvE47gUEUr8gQx1/mn
+# vfyIfOWGwqDw3Ojs+5jC+98HF3K+NZnyW4bvWMD84q2LQFB2P/CGtS4ZyujgjQRy
+# KLGy1qIyk6ZIhbSvMdECnXBKIz/Wqo0ehsobqOh04Gqp3nLDadlO2RSKs60uXxZE
+# y4HThU3DkY5CJSAJvWg5dqHIw4HcooAF7BDo2ebkeXApKP3A2YdwngIKea4SHQz6
+# Eksi4hJs6/0ZjcfTA6cEdBQTuSOV5+jlRPLop5oIxqgbSlrhhuBjNjg5f2xVTwhj
+# XhjIWpCT5s6dhstz581JvB3xClJv9AyAQBDlGlXMrfxpSAobMiOKkN72Se0=
 # SIG # End signature block

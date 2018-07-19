@@ -1,5 +1,9 @@
 # Change log
 
+## 0.8.3 (July 19, 2018)
+
+- Fixed issue with Get-VaultAccessorLookup function
+
 ## 0.8.2 (July 18, 2018)
 
 - Updated GetModuleDependencies Private function to help Module load faster in PSCore

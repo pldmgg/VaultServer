@@ -53,7 +53,7 @@ function Get-VaultAccessorLookup {
     }
 
     try {
-        $VaultAuthTokenAccessors = Get-VaultTokenAccessors -VaultBaseUri $VaultServerBaseUri -VaultAuthToken $VaultAuthToken -ErrorAction Stop
+        $VaultAuthTokenAccessors = Get-VaultTokenAccessors -VaultServerBaseUri $VaultServerBaseUri -VaultAuthToken $VaultAuthToken -ErrorAction Stop
         if (!$VaultAuthTokenAccessors) {throw "The Get-VaultTokenAccessors function failed! Halting!"}
     }
     catch {
@@ -91,8 +91,8 @@ function Get-VaultAccessorLookup {
 # SIG # Begin signature block
 # MIIMiAYJKoZIhvcNAQcCoIIMeTCCDHUCAQExCzAJBgUrDgMCGgUAMGkGCisGAQQB
 # gjcCAQSgWzBZMDQGCisGAQQBgjcCAR4wJgIDAQAABBAfzDtgWUsITrck0sYpfvNR
-# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUsLEkHVKb7SxfNzijhBRSG1zw
-# IECgggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
+# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUUIaaauAuL27v6nqVK5jAW9Xj
+# 4Zugggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
 # 9w0BAQsFADAwMQwwCgYDVQQGEwNMQUIxDTALBgNVBAoTBFpFUk8xETAPBgNVBAMT
 # CFplcm9EQzAxMB4XDTE3MDkyMDIxMDM1OFoXDTE5MDkyMDIxMTM1OFowPTETMBEG
 # CgmSJomT8ixkARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMT
@@ -149,11 +149,11 @@ function Get-VaultAccessorLookup {
 # ARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMTB1plcm9TQ0EC
 # E1gAAAH5oOvjAv3166MAAQAAAfkwCQYFKw4DAhoFAKB4MBgGCisGAQQBgjcCAQwx
 # CjAIoAKAAKECgAAwGQYJKoZIhvcNAQkDMQwGCisGAQQBgjcCAQQwHAYKKwYBBAGC
-# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFIOZzkgyMAqTJJej
-# UiwqCdOM6v7NMA0GCSqGSIb3DQEBAQUABIIBAKFvohEGVs+V9KdS7BXO3s/R9rCm
-# fwQNQ4m0SY63ODEMY1o2i1zTEQnTvJzbY4hylNvl+N1a5F1chHvqy7kWRxBXxPps
-# A17pm54O3fYZpO8GG5evuz1cORN7dxO4VbKdoLk7/mUH1Um8LiZ3e2BwTMvRR+Mn
-# PP73FgUmjRCAt+K8PMLRK2jVpYHd8mELRVZ9zvgl6OZlmV9SbAlrBzIhzzetuCMf
-# 8bXmzeb2B6Zpv701Eyk/HXg9OP5PAfvJs0Mbh9KEPcNuRMJ7GG7yuqFHBayw7VeI
-# 25gZWcWSxekiRRyey37AkKX2xmV8ewwcZ4RgJL8AqkbjOCWE54MN50b7nYA=
+# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFKEhHWHdSzws4z+k
+# /A9cARyVlU5wMA0GCSqGSIb3DQEBAQUABIIBAKAdKCj+SwnVVhaNXKXcMwALfbLD
+# N+MDpBZgJevXzT4lKirz70U5Bv7F9MXFrgslBxEq+bwonuSnpilGnopTc3UQnInZ
+# 67p8MJLhEOKF5Xo2XsB2MztHJ9bOjpeYXAsF+YnCjUnDABYNHrOxwdAVESiJu5Qn
+# cVmhVLLizgYWJWf6MOytg51Hd9psJc7EKMbWe4sYoSNswi37T1qIKMABfJXHIhU1
+# +tqT8YTRE7S7u/DtGml1kR9S6pJvAX0VFFEE9f6zPyD4eu1oQR3WuewpTGFhpJFr
+# PXcG/LcjXZgbyHRbJG80/6pJ1GZWrILxd6YMWKk/Yt3DZxH7kfBrAD6Eqr8=
 # SIG # End signature block
