@@ -1,5 +1,9 @@
 # Change log
 
+## 0.8.4 (July 23, 2018)
+
+- Updated InvokeModuleDependencies and InvokePSCompatibility Private functions to ensure Module Dependencies are installed even when function names overlap
+
 ## 0.8.3 (July 19, 2018)
 
 - Fixed issue with Get-VaultAccessorLookup function
