@@ -56,6 +56,7 @@ Describe -Name "General Project Validation: $env:BHProjectName" -Tag 'Validation
         $Commands = $Module.ExportedCommands.Keys
         $Commands -contains 'AddWinRMTrustLocalHost' | Should Be $False
         $Commands -contains 'ConvertFromHCLToPrintF' | Should Be $False
+        $Commands -contains 'GetComputerObjectsInLDAP' | Should Be $False
         $Commands -contains 'GetCurrentUser' | Should Be $False
         $Commands -contains 'GetDomainController' | Should Be $False
         $Commands -contains 'GetElevation' | Should Be $False
@@ -65,6 +66,7 @@ Describe -Name "General Project Validation: $env:BHProjectName" -Tag 'Validation
         $Commands -contains 'GetUserObjectsInLDAP' | Should Be $False
         $Commands -contains 'InvokeModuleDependencies' | Should Be $False
         $Commands -contains 'InvokePSCompatibility' | Should Be $False
+        $Commands -contains 'ManualPSGalleryModuleInstall' | Should Be $False
         $Commands -contains 'NewUniqueString' | Should Be $False
         $Commands -contains 'PauseForWarning' | Should Be $False
         $Commands -contains 'ResolveHost' | Should Be $False
@@ -92,12 +94,14 @@ Describe -Name "General Project Validation: $env:BHProjectName" -Tag 'Validation
         $Module = Get-Module $env:BHProjectName
         [bool]$Module.Invoke({Get-Item function:AddWinRMTrustLocalHost}) | Should Be $True
         [bool]$Module.Invoke({Get-Item function:ConvertFromHCLToPrintF}) | Should Be $True
+        [bool]$Module.Invoke({Get-Item function:GetComputerObjectsInLDAP}) | Should Be $True
         [bool]$Module.Invoke({Get-Item function:GetCurrentUser}) | Should Be $True
         [bool]$Module.Invoke({Get-Item function:GetDomainController}) | Should Be $True
         [bool]$Module.Invoke({Get-Item function:GetElevation}) | Should Be $True
         [bool]$Module.Invoke({Get-Item function:GetGroupObjectsInLDAP}) | Should Be $True
         [bool]$Module.Invoke({Get-Item function:GetModuleDependencies}) | Should Be $True
         [bool]$Module.Invoke({Get-Item function:InvokePSCompatibility}) | Should Be $True
+        [bool]$Module.Invoke({Get-Item function:ManualPSGalleryModuleInstall}) | Should Be $True
         [bool]$Module.Invoke({Get-Item function:NewUniqueString}) | Should Be $True
         [bool]$Module.Invoke({Get-Item function:PauseForWarning}) | Should Be $True
         [bool]$Module.Invoke({Get-Item function:ResolveHost}) | Should Be $True
@@ -111,8 +115,8 @@ Describe -Name "General Project Validation: $env:BHProjectName" -Tag 'Validation
 # SIG # Begin signature block
 # MIIMiAYJKoZIhvcNAQcCoIIMeTCCDHUCAQExCzAJBgUrDgMCGgUAMGkGCisGAQQB
 # gjcCAQSgWzBZMDQGCisGAQQBgjcCAR4wJgIDAQAABBAfzDtgWUsITrck0sYpfvNR
-# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUxrWIwqncBQP0J3LRSFB9mdtC
-# P9ugggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
+# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUW16b7A5ylhk4DxQ1JS+qj7Zb
+# PJygggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
 # 9w0BAQsFADAwMQwwCgYDVQQGEwNMQUIxDTALBgNVBAoTBFpFUk8xETAPBgNVBAMT
 # CFplcm9EQzAxMB4XDTE3MDkyMDIxMDM1OFoXDTE5MDkyMDIxMTM1OFowPTETMBEG
 # CgmSJomT8ixkARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMT
@@ -169,11 +173,11 @@ Describe -Name "General Project Validation: $env:BHProjectName" -Tag 'Validation
 # ARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMTB1plcm9TQ0EC
 # E1gAAAH5oOvjAv3166MAAQAAAfkwCQYFKw4DAhoFAKB4MBgGCisGAQQBgjcCAQwx
 # CjAIoAKAAKECgAAwGQYJKoZIhvcNAQkDMQwGCisGAQQBgjcCAQQwHAYKKwYBBAGC
-# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFNRee7/sybhDUjg+
-# 0lKlBr3JUDEuMA0GCSqGSIb3DQEBAQUABIIBAGUdtBm2ic6WawMnqiDBkbMEDY00
-# +4HfWvusOQx18hy81arFrNydWYod46W53xYgFmJUvfaIpDOsVXH3Ushcv0wJC36L
-# yiQoBPhzFYPYQJkGn9aiDa6MtXo9SjJepIYWfqMAneco4Iae1PpdWwfvkPKeynlQ
-# 1NI3N0m1qso5Qn+Zf5ZBR1ybQvu85onPpcXgczqxiJUFFZGA+vubE6+1GLWYH9pr
-# tH811zSvEPIUxN5urGKf8LvpGqc+EQrb2nkUIkzU6l6/wAV67eJ+7aGQf0GlAMMX
-# TDrEBy/lFku0LELXhjM4kxZg9Mzyt9x8lsUtw4Wn1hXil0xYc3ebFisGFp8=
+# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFPfVNOD7+AtHKKyF
+# f7Fx7Arh4XmvMA0GCSqGSIb3DQEBAQUABIIBAHCwRX3Jmu2tbg1rvywarnFmMSvf
+# kVzcUPvpUtCAAHYYk4ylEUwLGWNzQQCNUjAszm9cln51M/q64HgHeVG1QFFjJKiZ
+# lgZY1BFUiVD+2RMwY759AOl1599/3AsXsokuATasdfN2cwoXSCaZ1ES+EK66IcXt
+# daIOqp8QvyCVTCRBeIijb7uN49XqRgePDXeZdaeMMFQTQukjRaCS/qLCuBBiVyBI
+# G7d+O45Bc6DIJ1pneCh2lH8dsEEka6VTXUI1KBwPOCt6KOQZb1PkpaXgzIWyAQ66
+# gegc6dfLiwPteUkOmPZtvVx6IKszRMDyhD9bzu/NVOnSNJnszA+TOhIpc1A=
 # SIG # End signature block
