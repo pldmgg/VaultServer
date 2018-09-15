@@ -313,7 +313,7 @@ function Add-CAPubKeyToSSHAndSSHDConfig {
                 VaultAuthToken              = $VaultAuthToken
                 ErrorAction                 = "Stop"
             }
-            $SignSSHHostKeyResult = Sign-SSHHostPublicKey @SignSSHHostKeySplatParams
+            $SignSSHHostKeyResult = Sign-SSHHostPublicKey @SignSSHHostKeySplatParams | Where-Object {$_}
             if (!$SignSSHHostKeyResult) {throw "There was a problem with the Sign-SSHHostPublicKey function!"}
             $Output.Add("SignSSHHostKeyResult",$SignSSHHostKeyResult)
         }
@@ -686,8 +686,8 @@ function Add-CAPubKeyToSSHAndSSHDConfig {
 # SIG # Begin signature block
 # MIIMiAYJKoZIhvcNAQcCoIIMeTCCDHUCAQExCzAJBgUrDgMCGgUAMGkGCisGAQQB
 # gjcCAQSgWzBZMDQGCisGAQQBgjcCAR4wJgIDAQAABBAfzDtgWUsITrck0sYpfvNR
-# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUcvjyDcoaHAlC6nmsULMG1RZv
-# qQigggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
+# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUXA246fl9+HssSbf2cbxFjJd8
+# jKCgggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
 # 9w0BAQsFADAwMQwwCgYDVQQGEwNMQUIxDTALBgNVBAoTBFpFUk8xETAPBgNVBAMT
 # CFplcm9EQzAxMB4XDTE3MDkyMDIxMDM1OFoXDTE5MDkyMDIxMTM1OFowPTETMBEG
 # CgmSJomT8ixkARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMT
@@ -744,11 +744,11 @@ function Add-CAPubKeyToSSHAndSSHDConfig {
 # ARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMTB1plcm9TQ0EC
 # E1gAAAH5oOvjAv3166MAAQAAAfkwCQYFKw4DAhoFAKB4MBgGCisGAQQBgjcCAQwx
 # CjAIoAKAAKECgAAwGQYJKoZIhvcNAQkDMQwGCisGAQQBgjcCAQQwHAYKKwYBBAGC
-# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFFSQuZEtj8Hc57L0
-# MgjTpL6KJgOSMA0GCSqGSIb3DQEBAQUABIIBAHl8Shoxvs4orsbqv7jNKC9pboEE
-# UPmPlqtiRZU+SP8YEGC876DKqJRh31scYZrgl8ij3O8NhZ7Y2MVbq+OlN2oSqNPd
-# ijgjdUX5J53ZIGZcD8sD0KXGlggMnI1mmzMSBnLDgYoAodnoj9OCqez4xl3edKs7
-# hpspGHeJ8L+vtt0smmjLGbefBF4KVNltIlqLSUzh0kB0vRamZaIaL0NNyO3WcJxD
-# TGRHk5iimQ7Q5xfRT0iWf6EdbQW4H/oEDpq0p6nLeNvV/k0U3cWVH32RlEYrIiGz
-# 8KebcjkPLGLWmB+wbl+gdc5yUz2DPiKum+dSqMqt6r+JJxj7UNWWa55YTNg=
+# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFA3H/E0lIoRsiD5l
+# 9Psc98u8b7zzMA0GCSqGSIb3DQEBAQUABIIBAEPyexm6f2rnI0adJBC7a62s78cC
+# 0jtBRRuOk0g4O+jwACArHMgsB6MRd6w/1DByHeB/MIHpR/aoRGrxdl5uZYjL4Q56
+# VyMecZSoi1IudefmpS6xDin5xpG5Y9gbPW2Q40QLEQiq774wwZeu02WdMdrktEBS
+# dWWyWT9bopFbbSijzJ9Nmv5U3nD9K1Ia8iEjx5lRPlFlTtRkwubl0BUCS1lrf1/v
+# aN9vtCaSGSIeTp1GoGqAmE7EoL/G5hql6zte2/TvcCC0RH1BnPnuyQ49OtzlnHfB
+# UAQ0Rs0yoTt30kVYROjfVHc0v+0XQj6rzg8ANREvuTVQB6Pq0MF+NhDll5M=
 # SIG # End signature block

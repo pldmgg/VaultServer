@@ -161,7 +161,7 @@ function Sign-SSHHostPublicKey {
 
     # Make sure permissions on "$sshdir/ssh_host_rsa_key-cert.pub" are set properly
     if ($PSVersionTable.PSEdition -eq "Core") {
-        Invoke-WinCommand -ComputerName localhost -ScriptBlock {
+        $null = Invoke-WinCommand -ComputerName localhost -ScriptBlock {
             $SecurityDescriptor = Get-NTFSSecurityDescriptor -Path $args[0]
             $SecurityDescriptor | Disable-NTFSAccessInheritance -RemoveInheritedAccessRules
             $SecurityDescriptor | Clear-NTFSAccess
@@ -173,12 +173,12 @@ function Sign-SSHHostPublicKey {
     }
     else {
         $SecurityDescriptor = Get-NTFSSecurityDescriptor -Path $SignedPubKeyCertFilePath
-        $SecurityDescriptor | Disable-NTFSAccessInheritance -RemoveInheritedAccessRules
-        $SecurityDescriptor | Clear-NTFSAccess
-        $SecurityDescriptor | Add-NTFSAccess -Account "NT AUTHORITY\SYSTEM" -AccessRights "FullControl" -AppliesTo ThisFolderSubfoldersAndFiles
-        $SecurityDescriptor | Add-NTFSAccess -Account "Administrators" -AccessRights "FullControl" -AppliesTo ThisFolderSubfoldersAndFiles
-        $SecurityDescriptor | Add-NTFSAccess -Account "NT AUTHORITY\Authenticated Users" -AccessRights "ReadAndExecute, Synchronize" -AppliesTo ThisFolderSubfoldersAndFiles
-        $SecurityDescriptor | Set-NTFSSecurityDescriptor
+        $null = $SecurityDescriptor | Disable-NTFSAccessInheritance -RemoveInheritedAccessRules
+        $null = $SecurityDescriptor | Clear-NTFSAccess
+        $null = $SecurityDescriptor | Add-NTFSAccess -Account "NT AUTHORITY\SYSTEM" -AccessRights "FullControl" -AppliesTo ThisFolderSubfoldersAndFiles
+        $null = $SecurityDescriptor | Add-NTFSAccess -Account "Administrators" -AccessRights "FullControl" -AppliesTo ThisFolderSubfoldersAndFiles
+        $null = $SecurityDescriptor | Add-NTFSAccess -Account "NT AUTHORITY\Authenticated Users" -AccessRights "ReadAndExecute, Synchronize" -AppliesTo ThisFolderSubfoldersAndFiles
+        $null = $SecurityDescriptor | Set-NTFSSecurityDescriptor
     }
 
     # Update sshd_config
@@ -233,8 +233,8 @@ function Sign-SSHHostPublicKey {
 # SIG # Begin signature block
 # MIIMiAYJKoZIhvcNAQcCoIIMeTCCDHUCAQExCzAJBgUrDgMCGgUAMGkGCisGAQQB
 # gjcCAQSgWzBZMDQGCisGAQQBgjcCAR4wJgIDAQAABBAfzDtgWUsITrck0sYpfvNR
-# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUZajRlotBSytFUYKyHdZKkD8j
-# Eyigggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
+# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUabtkmWu/tmvSfjlLrzSpEoAU
+# V5igggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
 # 9w0BAQsFADAwMQwwCgYDVQQGEwNMQUIxDTALBgNVBAoTBFpFUk8xETAPBgNVBAMT
 # CFplcm9EQzAxMB4XDTE3MDkyMDIxMDM1OFoXDTE5MDkyMDIxMTM1OFowPTETMBEG
 # CgmSJomT8ixkARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMT
@@ -291,11 +291,11 @@ function Sign-SSHHostPublicKey {
 # ARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMTB1plcm9TQ0EC
 # E1gAAAH5oOvjAv3166MAAQAAAfkwCQYFKw4DAhoFAKB4MBgGCisGAQQBgjcCAQwx
 # CjAIoAKAAKECgAAwGQYJKoZIhvcNAQkDMQwGCisGAQQBgjcCAQQwHAYKKwYBBAGC
-# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFPJXGXeplXPfxj1s
-# HulIXMRskVoLMA0GCSqGSIb3DQEBAQUABIIBADbKpkcMAQVUy70b/2o8MW+mkG0/
-# voanlljkokCHYsi9KGJb4FZ77wFn64OGmJuFZCcXv4emsj2ML3rCJE6pVAyJFw6F
-# M63npjGESU7ZcVae2qkvpm5uv1seJXlw1FWfx/yF809GRUAurXXZKPUCTeUzsNHF
-# k+0NpZIUNhytvNLa7okSYFI4qKi8gsfkGilFMql2pNGsaWOWvbRAq/yuN85RY5yL
-# CdFDJcJAKMCAGQapLIFqwYWzErvprW7JExFoyClKpnTFpZJ835akgF1PNfCV4eZm
-# GFIG3cKEMnk6xgbd6AE0RDrFcUEYrSPaHZlbY/y/RF4hpDom0ak+RofL/a8=
+# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFC2zfJ9rI/6+tSuH
+# GNldvBrm9nz3MA0GCSqGSIb3DQEBAQUABIIBAGtDVXNMhPzzRLPQIZiAnMNMy4bo
+# UUTWZzQ98PdORt3sgjbjvpLEVnJKQ1ar/ywIGv4VpKN0f9g15san3EJ9PMt0gll5
+# AUWGo2GwXtNyH1GCWpv4KRfNRKTCjmpuGxlwtrnbFAzDBKRyU9ItezvWWgHy0yYy
+# wKIPPeQqwS3PIQs+30Tv/dPwLqisFtHM/dkZupFGEo5K+HjceK1rE4Quzlg1CFv9
+# lsiPRl7ARuTurEk6JrbKa4ZiLoc7uXkspC09bAIcWqjXHqO6LHA/g2iPdFa5Z9a+
+# wz6AFCaAYQRLHcFjHvPVLmRPFhQrDOVxcAzax9LFkVxicG47kwC7yKoI/I8=
 # SIG # End signature block

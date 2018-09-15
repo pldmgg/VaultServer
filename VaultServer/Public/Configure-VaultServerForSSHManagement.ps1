@@ -58,7 +58,7 @@ function Configure-VaultServerForSSHManagement {
         [string]$VaultAuthToken
     )
 
-    if ($(!$VaultAuthToken -and !$DomainCredentialsWithAccessToVault) -or $($VaultAuthToken -and $DomainCredentialsWithAdminAccessToVault)) {
+    if ($(!$VaultAuthToken -and !$DomainCredentialsWithAdminAccessToVault) -or $($VaultAuthToken -and $DomainCredentialsWithAdminAccessToVault)) {
         Write-Error "The $($MyInvocation.MyCommand.Name) function requires one (no more, no less) of the following parameters: [-DomainCredentialsWithAdminAccessToVault, -VaultAuthToken] Halting!"
         $global:FunctionResult = "1"
         return
@@ -66,9 +66,9 @@ function Configure-VaultServerForSSHManagement {
 
     if ($DomainCredentialsWithAdminAccessToVault) {
         $GetVaultLoginSplatParams = @{
-            VaultServerBaseUri                          = $VaultServerBaseUri
-            DomainCredentialsWithAdminAccessToVault     = $DomainCredentialsWithAdminAccessToVault
-            ErrorAction                                 = "Stop"
+            VaultServerBaseUri                     = $VaultServerBaseUri
+            DomainCredentialsWithAccessToVault     = $DomainCredentialsWithAdminAccessToVault
+            ErrorAction                            = "Stop"
         }
 
         try {
@@ -258,7 +258,7 @@ function Configure-VaultServerForSSHManagement {
         Method      = "Post"
     }
     $TuneHostSSHCertValidityPeriod = Invoke-RestMethod @IWRSplatParams
-    $ConfirmSSHHostSignerTune = $(Invoke-RestMethod -Uri "$VaultServerBaseUri/sys/mounts" -Headers $HeadersParameters -Method Get).'ssh-host-signer/'.config
+    $ConfirmSSHHostSignerTune = $(Invoke-RestMethod -Uri "$VaultServerBaseUri/sys/mounts" -Headers $HeadersParameters -Method Get).data.'ssh-host-signer/'.config
     if ($ConfirmSSHHostSignerTune.max_lease_ttl -ne 315360000) {
         Write-Error "There was a problem tuning the Vault Server to set max_lease_ttl for signed host ssh keys for 10 years. Halting!"
         if ($Output.Count -gt 0) {[pscustomobject]$Output}
@@ -357,8 +357,8 @@ function Configure-VaultServerForSSHManagement {
 # SIG # Begin signature block
 # MIIMiAYJKoZIhvcNAQcCoIIMeTCCDHUCAQExCzAJBgUrDgMCGgUAMGkGCisGAQQB
 # gjcCAQSgWzBZMDQGCisGAQQBgjcCAR4wJgIDAQAABBAfzDtgWUsITrck0sYpfvNR
-# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQU4h7V4Ld7qXuDaOdHVMIYbX+3
-# tZygggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
+# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUYaNtPDOWyC+aGJXlSQUj2xDv
+# 48Ggggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
 # 9w0BAQsFADAwMQwwCgYDVQQGEwNMQUIxDTALBgNVBAoTBFpFUk8xETAPBgNVBAMT
 # CFplcm9EQzAxMB4XDTE3MDkyMDIxMDM1OFoXDTE5MDkyMDIxMTM1OFowPTETMBEG
 # CgmSJomT8ixkARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMT
@@ -415,11 +415,11 @@ function Configure-VaultServerForSSHManagement {
 # ARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMTB1plcm9TQ0EC
 # E1gAAAH5oOvjAv3166MAAQAAAfkwCQYFKw4DAhoFAKB4MBgGCisGAQQBgjcCAQwx
 # CjAIoAKAAKECgAAwGQYJKoZIhvcNAQkDMQwGCisGAQQBgjcCAQQwHAYKKwYBBAGC
-# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFA8tUU+/w4KbT8F4
-# r7/48dMiqaFBMA0GCSqGSIb3DQEBAQUABIIBAHNjC6hHpMlFbg3h2jkplUDdcLYS
-# e4bk0292N1p++2wL8lQD1H+TppZXVzvnPlQS3JuyUnNa2JoQrEOYQU7k9c+dg98s
-# AB7Xhtd5GXMkx9mj4Ip4AovBVPwAquRC/yzO+t/BdJVNm5mTfPhyXQ095Nd+E0wz
-# sI9arCD1jS9jQ+Rgib7iNQGmApA73121aCh3VAG/fzzydlZfbKjvlv3n6crEbutd
-# ZLLW6jwbpEYrn8mI8mZkQE/fvY/lePYbDRoBKKhSfnV/yzTJR/wn4+ncvil6zueO
-# vqgiSpuMSpBrsNt77x4GD0BtcwyGll3fnJC+C7+l2+L2/xNIME02tJmfQcs=
+# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFK+9p35X0th2WXeo
+# MyH9vwLJcQInMA0GCSqGSIb3DQEBAQUABIIBAHswQlVGflHWq0RqhebWpK0gtlS/
+# jgtDea3h9Gyd38+WrwmSKyuEVDWcURv17b/sgboFxdrufigjZErhPIrQDvDeiEDX
+# 7IgiY18vMazX4P9GD35k/z33hde/gICV1tAW+V9yDL/BsdmN9GxKXbcrQ2tnU36T
+# dTVGsPnY2w066JvQMxX8vpfSmWepSuuiIfS9QgFqfgmmgXxqbmR35+5infELdtRF
+# GNftplmB7ZQXDW9yePbOmVI/bIRT5WP0rRccDgY3nqn9JLFV/daxWHVotnhCLYKo
+# ix+SfwPGXSwZPC6ldvJHpwo6xhlQ3ycmSF4DwFBgGLynV0xES9pbodcnB40=
 # SIG # End signature block

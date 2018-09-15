@@ -15,13 +15,13 @@
         on your network. Example: "https://vaultserver.zero.lab:8200/v1"
 
     .PARAMETER DomainCredentialsWithAccessToVault
-        This parameter is OPTIONAL, however, either -DomainCredentialsWIthAccessToVault or -VaultAuthToken are REQUIRED.
+        This parameter is OPTIONAL, however, either -DomainCredentialsWithAccessToVault or -VaultAuthToken are REQUIRED.
 
         This parameter takes a PSCredential. Example:
         $Creds = [pscredential]::new("zero\zeroadmin",$(Read-Host "Please enter the password for 'zero\zeroadmin'" -AsSecureString))
 
     .PARAMETER VaultAuthToken
-        This parameter is OPTIONAL, however, either -DomainCredentialsWIthAccessToVault or -VaultAuthToken are REQUIRED.
+        This parameter is OPTIONAL, however, either -DomainCredentialsWithAccessToVault or -VaultAuthToken are REQUIRED.
 
         This parameter takes a string that represents a Token for a Vault User that has (root) permission to
         lookup Tokens using the Vault Server REST API.
@@ -62,6 +62,13 @@
 
         This parameter is a switch. If used, the newly created Private Key will be added to the ssh-agent
         and deleted from the filesystem.
+
+    .PARAMETER SSHAgentExpiry
+        This parameter is OPTIONAL. This parameter should only be used in conjunction with the
+        -AddtoSSHAgent switch.
+
+        This parameter takes an integer that specifies the number of seconds that the ssh key identity will
+        remain in the ssh-agent - at which point it will expire and be removed from the ssh-agent.
 
     .EXAMPLE
         # Open an elevated PowerShell Session, import the module, and -
@@ -105,7 +112,10 @@ function New-SSHCredentials {
         [switch]$AddToSSHAgent,
 
         [Parameter(Mandatory=$False)]
-        [switch]$RemovePrivateKey
+        [switch]$RemovePrivateKey,
+
+        [Parameter(Mandatory=$False)]
+        [int]$SSHAgentExpiry
     )
 
     if ($(!$VaultAuthToken -and !$DomainCredentialsWithAccessToVault) -or $($VaultAuthToken -and $DomainCredentialsWithAccessToVault)) {
@@ -116,9 +126,9 @@ function New-SSHCredentials {
 
     if ($DomainCredentialsWithAccessToVault) {
         $GetVaultLoginSplatParams = @{
-            VaultServerBaseUri                          = $VaultServerBaseUri
-            DomainCredentialsWithAdminAccessToVault     = $DomainCredentialsWithAccessToVault
-            ErrorAction                                 = "Stop"
+            VaultServerBaseUri                     = $VaultServerBaseUri
+            DomainCredentialsWithAccessToVault     = $DomainCredentialsWithAccessToVault
+            ErrorAction                            = "Stop"
         }
 
         try {
@@ -155,7 +165,7 @@ function New-SSHCredentials {
         $KeyPwd = $NewSSHKeyPwd
     }
     if (!$BlankSSHPrivateKeyPwd -and !$NewSSHKeyPwd) {
-        $KeyPwd = Read-Host -Prompt "Please enter a password to protect the new SSH Private Key $NewSSHKeyName"
+        $KeyPwd = Read-Host -Prompt "Please enter a password to protect the new SSH Private Key $NewSSHKeyName" -AsSecureString
     }
     if ($KeyPwd) {
         $NewSSHKeySplatParams.Add("NewSSHKeyPwd",$KeyPwd)
@@ -190,6 +200,9 @@ function New-SSHCredentials {
     }
     if ($AddToSSHAgent) {
         $SignSSHUserPubKeySplatParams.Add("AddToSSHAgent",$True)
+    }
+    if ($SSHAgentExpiry) {
+        $SignSSHUserPubKeySplatParams.Add("SSHAgentExpiry",$SSHAgentExpiry)
     }
 
     try {
@@ -245,8 +258,8 @@ function New-SSHCredentials {
 # SIG # Begin signature block
 # MIIMiAYJKoZIhvcNAQcCoIIMeTCCDHUCAQExCzAJBgUrDgMCGgUAMGkGCisGAQQB
 # gjcCAQSgWzBZMDQGCisGAQQBgjcCAR4wJgIDAQAABBAfzDtgWUsITrck0sYpfvNR
-# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUgj7HeYniz+mhPJ2p5lpWw2Ga
-# y2agggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
+# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUKu4cBUgPomufhrhs92va1Zm2
+# 0qOgggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
 # 9w0BAQsFADAwMQwwCgYDVQQGEwNMQUIxDTALBgNVBAoTBFpFUk8xETAPBgNVBAMT
 # CFplcm9EQzAxMB4XDTE3MDkyMDIxMDM1OFoXDTE5MDkyMDIxMTM1OFowPTETMBEG
 # CgmSJomT8ixkARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMT
@@ -303,11 +316,11 @@ function New-SSHCredentials {
 # ARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMTB1plcm9TQ0EC
 # E1gAAAH5oOvjAv3166MAAQAAAfkwCQYFKw4DAhoFAKB4MBgGCisGAQQBgjcCAQwx
 # CjAIoAKAAKECgAAwGQYJKoZIhvcNAQkDMQwGCisGAQQBgjcCAQQwHAYKKwYBBAGC
-# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFM6IAsmBaSPwRrMX
-# JQquSIY0zgsDMA0GCSqGSIb3DQEBAQUABIIBAJNZH95yumlfn9eVLfk2bV43eJSd
-# qdCDpadgbLSIX+5CWVt5RAkFYuY81jpy1AwNLltEwyZyrAutXdPvAsqfWR8oz2I5
-# e+YcpTxn/bXMLJEezhimIJ5ytZV4el47GhgVX0E1FO2DkkUfrp8fcbutwK5sFF5z
-# EjLawldrKBf8SJZkAtNpePOB55eYFgHL8rvWcXBZpn+3c33I3bCh8C4kAgNID4PI
-# DQAj+DOB8I7nQfiIZwtJyQKEVAvQ+LThLiPUxFp2mPpX57VEIxllyNcaRjH4lh12
-# 5c/ZeUhFiE2wPJ8Q+GdER0vm7QN1se1WrqnWeTTEtctkDnzQQ9GWuz+emhk=
+# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFMBmo3J2sTcJUEpp
+# m3WbNCH9bJ8EMA0GCSqGSIb3DQEBAQUABIIBAIvyC6MC/P26NftHfFzFM140N0uO
+# LH2j1/JJ6qr5I5ElFwTsXZyx6JojLu6DYlZ36oIhPqtOSpoExNqWBeVscU7FsjmY
+# zd9BlPww1lUyIn7KMd0fkqRH/v70vKAuOxSo4TOxsrwpA2gSqThKsi7SBIvKgvOv
+# g55LWnWeYan/ViR8k6aGFpDXNZJb6yTag96yYqaPs0F0ixp3Zo3ju9MsLCNec8o+
+# dfuJWEXQ3zClo57f15s6HckQdiYwzx6FFLPxIAyhj7Lx0ZU729GetDa46wwrByIh
+# w4uqT/pbG3OBWyfo8QP2qsMhv57Z2iK/KZKvZIBLhtixyS2/zo47Ey+74Aw=
 # SIG # End signature block

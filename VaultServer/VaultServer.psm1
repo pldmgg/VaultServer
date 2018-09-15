@@ -351,7 +351,7 @@ function Add-CAPubKeyToSSHAndSSHDConfig {
                 VaultAuthToken              = $VaultAuthToken
                 ErrorAction                 = "Stop"
             }
-            $SignSSHHostKeyResult = Sign-SSHHostPublicKey @SignSSHHostKeySplatParams
+            $SignSSHHostKeyResult = Sign-SSHHostPublicKey @SignSSHHostKeySplatParams | Where-Object {$_}
             if (!$SignSSHHostKeyResult) {throw "There was a problem with the Sign-SSHHostPublicKey function!"}
             $Output.Add("SignSSHHostKeyResult",$SignSSHHostKeyResult)
         }
@@ -1466,7 +1466,7 @@ function Configure-VaultServerForSSHManagement {
         [string]$VaultAuthToken
     )
 
-    if ($(!$VaultAuthToken -and !$DomainCredentialsWithAccessToVault) -or $($VaultAuthToken -and $DomainCredentialsWithAdminAccessToVault)) {
+    if ($(!$VaultAuthToken -and !$DomainCredentialsWithAdminAccessToVault) -or $($VaultAuthToken -and $DomainCredentialsWithAdminAccessToVault)) {
         Write-Error "The $($MyInvocation.MyCommand.Name) function requires one (no more, no less) of the following parameters: [-DomainCredentialsWithAdminAccessToVault, -VaultAuthToken] Halting!"
         $global:FunctionResult = "1"
         return
@@ -1474,9 +1474,9 @@ function Configure-VaultServerForSSHManagement {
 
     if ($DomainCredentialsWithAdminAccessToVault) {
         $GetVaultLoginSplatParams = @{
-            VaultServerBaseUri                          = $VaultServerBaseUri
-            DomainCredentialsWithAdminAccessToVault     = $DomainCredentialsWithAdminAccessToVault
-            ErrorAction                                 = "Stop"
+            VaultServerBaseUri                     = $VaultServerBaseUri
+            DomainCredentialsWithAccessToVault     = $DomainCredentialsWithAdminAccessToVault
+            ErrorAction                            = "Stop"
         }
 
         try {
@@ -1666,7 +1666,7 @@ function Configure-VaultServerForSSHManagement {
         Method      = "Post"
     }
     $TuneHostSSHCertValidityPeriod = Invoke-RestMethod @IWRSplatParams
-    $ConfirmSSHHostSignerTune = $(Invoke-RestMethod -Uri "$VaultServerBaseUri/sys/mounts" -Headers $HeadersParameters -Method Get).'ssh-host-signer/'.config
+    $ConfirmSSHHostSignerTune = $(Invoke-RestMethod -Uri "$VaultServerBaseUri/sys/mounts" -Headers $HeadersParameters -Method Get).data.'ssh-host-signer/'.config
     if ($ConfirmSSHHostSignerTune.max_lease_ttl -ne 315360000) {
         Write-Error "There was a problem tuning the Vault Server to set max_lease_ttl for signed host ssh keys for 10 years. Halting!"
         if ($Output.Count -gt 0) {[pscustomobject]$Output}
@@ -2139,7 +2139,7 @@ function Get-VaultAccessorLookup {
 <#
     .SYNOPSIS
         This function outputs a Vault Authentication Token granted to the Domain User specified
-        in the -DomainCredentialsWithAccessToVault parameter.
+        in the -DomainCredentialsWithAdminAccessToVault parameter.
 
     .DESCRIPTION
         See .SYNOPSIS
@@ -3368,13 +3368,13 @@ function Manage-StoredCredentials {
         on your network. Example: "https://vaultserver.zero.lab:8200/v1"
 
     .PARAMETER DomainCredentialsWithAccessToVault
-        This parameter is OPTIONAL, however, either -DomainCredentialsWIthAccessToVault or -VaultAuthToken are REQUIRED.
+        This parameter is OPTIONAL, however, either -DomainCredentialsWithAccessToVault or -VaultAuthToken are REQUIRED.
 
         This parameter takes a PSCredential. Example:
         $Creds = [pscredential]::new("zero\zeroadmin",$(Read-Host "Please enter the password for 'zero\zeroadmin'" -AsSecureString))
 
     .PARAMETER VaultAuthToken
-        This parameter is OPTIONAL, however, either -DomainCredentialsWIthAccessToVault or -VaultAuthToken are REQUIRED.
+        This parameter is OPTIONAL, however, either -DomainCredentialsWithAccessToVault or -VaultAuthToken are REQUIRED.
 
         This parameter takes a string that represents a Token for a Vault User that has (root) permission to
         lookup Tokens using the Vault Server REST API.
@@ -3415,6 +3415,13 @@ function Manage-StoredCredentials {
 
         This parameter is a switch. If used, the newly created Private Key will be added to the ssh-agent
         and deleted from the filesystem.
+
+    .PARAMETER SSHAgentExpiry
+        This parameter is OPTIONAL. This parameter should only be used in conjunction with the
+        -AddtoSSHAgent switch.
+
+        This parameter takes an integer that specifies the number of seconds that the ssh key identity will
+        remain in the ssh-agent - at which point it will expire and be removed from the ssh-agent.
 
     .EXAMPLE
         # Open an elevated PowerShell Session, import the module, and -
@@ -3458,7 +3465,10 @@ function New-SSHCredentials {
         [switch]$AddToSSHAgent,
 
         [Parameter(Mandatory=$False)]
-        [switch]$RemovePrivateKey
+        [switch]$RemovePrivateKey,
+
+        [Parameter(Mandatory=$False)]
+        [int]$SSHAgentExpiry
     )
 
     if ($(!$VaultAuthToken -and !$DomainCredentialsWithAccessToVault) -or $($VaultAuthToken -and $DomainCredentialsWithAccessToVault)) {
@@ -3469,9 +3479,9 @@ function New-SSHCredentials {
 
     if ($DomainCredentialsWithAccessToVault) {
         $GetVaultLoginSplatParams = @{
-            VaultServerBaseUri                          = $VaultServerBaseUri
-            DomainCredentialsWithAdminAccessToVault     = $DomainCredentialsWithAccessToVault
-            ErrorAction                                 = "Stop"
+            VaultServerBaseUri                     = $VaultServerBaseUri
+            DomainCredentialsWithAccessToVault     = $DomainCredentialsWithAccessToVault
+            ErrorAction                            = "Stop"
         }
 
         try {
@@ -3508,7 +3518,7 @@ function New-SSHCredentials {
         $KeyPwd = $NewSSHKeyPwd
     }
     if (!$BlankSSHPrivateKeyPwd -and !$NewSSHKeyPwd) {
-        $KeyPwd = Read-Host -Prompt "Please enter a password to protect the new SSH Private Key $NewSSHKeyName"
+        $KeyPwd = Read-Host -Prompt "Please enter a password to protect the new SSH Private Key $NewSSHKeyName" -AsSecureString
     }
     if ($KeyPwd) {
         $NewSSHKeySplatParams.Add("NewSSHKeyPwd",$KeyPwd)
@@ -3543,6 +3553,9 @@ function New-SSHCredentials {
     }
     if ($AddToSSHAgent) {
         $SignSSHUserPubKeySplatParams.Add("AddToSSHAgent",$True)
+    }
+    if ($SSHAgentExpiry) {
+        $SignSSHUserPubKeySplatParams.Add("SSHAgentExpiry",$SSHAgentExpiry)
     }
 
     try {
@@ -3895,7 +3908,7 @@ function Sign-SSHHostPublicKey {
 
     # Make sure permissions on "$sshdir/ssh_host_rsa_key-cert.pub" are set properly
     if ($PSVersionTable.PSEdition -eq "Core") {
-        Invoke-WinCommand -ComputerName localhost -ScriptBlock {
+        $null = Invoke-WinCommand -ComputerName localhost -ScriptBlock {
             $SecurityDescriptor = Get-NTFSSecurityDescriptor -Path $args[0]
             $SecurityDescriptor | Disable-NTFSAccessInheritance -RemoveInheritedAccessRules
             $SecurityDescriptor | Clear-NTFSAccess
@@ -3907,12 +3920,12 @@ function Sign-SSHHostPublicKey {
     }
     else {
         $SecurityDescriptor = Get-NTFSSecurityDescriptor -Path $SignedPubKeyCertFilePath
-        $SecurityDescriptor | Disable-NTFSAccessInheritance -RemoveInheritedAccessRules
-        $SecurityDescriptor | Clear-NTFSAccess
-        $SecurityDescriptor | Add-NTFSAccess -Account "NT AUTHORITY\SYSTEM" -AccessRights "FullControl" -AppliesTo ThisFolderSubfoldersAndFiles
-        $SecurityDescriptor | Add-NTFSAccess -Account "Administrators" -AccessRights "FullControl" -AppliesTo ThisFolderSubfoldersAndFiles
-        $SecurityDescriptor | Add-NTFSAccess -Account "NT AUTHORITY\Authenticated Users" -AccessRights "ReadAndExecute, Synchronize" -AppliesTo ThisFolderSubfoldersAndFiles
-        $SecurityDescriptor | Set-NTFSSecurityDescriptor
+        $null = $SecurityDescriptor | Disable-NTFSAccessInheritance -RemoveInheritedAccessRules
+        $null = $SecurityDescriptor | Clear-NTFSAccess
+        $null = $SecurityDescriptor | Add-NTFSAccess -Account "NT AUTHORITY\SYSTEM" -AccessRights "FullControl" -AppliesTo ThisFolderSubfoldersAndFiles
+        $null = $SecurityDescriptor | Add-NTFSAccess -Account "Administrators" -AccessRights "FullControl" -AppliesTo ThisFolderSubfoldersAndFiles
+        $null = $SecurityDescriptor | Add-NTFSAccess -Account "NT AUTHORITY\Authenticated Users" -AccessRights "ReadAndExecute, Synchronize" -AppliesTo ThisFolderSubfoldersAndFiles
+        $null = $SecurityDescriptor | Set-NTFSSecurityDescriptor
     }
 
     # Update sshd_config
@@ -4014,7 +4027,14 @@ function Sign-SSHHostPublicKey {
     .PARAMETER AddToSSHAgent
         This parameter is OPTIONAL.
 
-        This parameter is a switch. If used, the signed Public Key Certificate will be added to the ssh-agent service. 
+        This parameter is a switch. If used, the signed Public Key Certificate will be added to the ssh-agent service.
+
+    .PARAMETER SSHAgentExpiry
+        This parameter is OPTIONAL. This parameter should only be used in conjunction with the
+        -AddtoSSHAgent switch.
+
+        This parameter takes an integer that specifies the number of seconds that the ssh key identity will
+        remain in the ssh-agent - at which point it will expire and be removed from the ssh-agent.
 
     .EXAMPLE
         # Open an elevated PowerShell Session, import the module, and -
@@ -4051,7 +4071,10 @@ function Sign-SSHUserPublicKey {
         [string]$PathToSSHUserPrivateKeyFile,
 
         [Parameter(Mandatory=$False)]
-        [switch]$AddToSSHAgent
+        [switch]$AddToSSHAgent,
+
+        [Parameter(Mandatory=$False)]
+        [int]$SSHAgentExpiry
     )
 
     if (!$(Test-Path $PathToSSHUserPublicKeyFile)) {
@@ -4124,6 +4147,7 @@ function Sign-SSHUserPublicKey {
     $ValidPrincipalsCommaSeparated = $AuthorizedUserPrincipals -join ','
     # In the below JSON, <HostNameOrDomainPre> - Use the HostName if user is a Local Account and the DomainPre if the user
     # is a Domain Account
+    <#
     $jsonRequest = @"
 {
     "cert_type": "user",
@@ -4135,6 +4159,23 @@ function Sign-SSHUserPublicKey {
     "public_key": "$PubKeyContent"
 }
 "@
+    #>
+
+    $jsonRequest = @"
+{
+    "cert_type": "user",
+    "valid_principals": "$ValidPrincipalsCommaSeparated",
+    "extension": {
+        "permit-pty": "",
+        "permit-agent-forwarding": "",
+        "permit-X11-forwarding": "",
+        "permit-port-forwarding": "",
+        "permit-user-rc": ""
+    },
+    "public_key": "$PubKeyContent"
+}
+"@
+
     $JsonRequestAsSingleLineString = $jsonRequest | ConvertFrom-Json | ConvertTo-Json -Compress
 
     $HeadersParameters = @{
@@ -4153,13 +4194,21 @@ function Sign-SSHUserPublicKey {
     if ($AddToSSHAgent) {
         # Push/Pop-Location probably aren't necessary...but just in case...
         Push-Location $($CorrespondingPrivateKeyPath | Split-Path -Parent)
-        ssh-add "$CorrespondingPrivateKeyPath"
+
+        if (!$SSHAgentExpiry) {    
+            ssh-add "$CorrespondingPrivateKeyPath"
+        }
+        else {
+            ssh-add "$CorrespondingPrivateKeyPath"
+            ssh-add -t $SSHAgentExpiry
+        }
+
         Pop-Location
         $AddedToSSHAgent = $True
     }
 
     $Output = @{
-        SignedCertFile      = $(Get-Item $SignedPubKeyCertFilePath)
+        SignedCertFile = $(Get-Item $SignedPubKeyCertFilePath)
     }
     if ($AddedToSSHAgent) {
         $Output.Add("AddedToSSHAgent",$True)
@@ -5419,8 +5468,8 @@ if(Win32.CertStrToName(X509_ASN_ENCODING, DN, CERT_X500_NAME_STR, IntPtr.Zero, n
 # SIG # Begin signature block
 # MIIMiAYJKoZIhvcNAQcCoIIMeTCCDHUCAQExCzAJBgUrDgMCGgUAMGkGCisGAQQB
 # gjcCAQSgWzBZMDQGCisGAQQBgjcCAR4wJgIDAQAABBAfzDtgWUsITrck0sYpfvNR
-# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQU78Ga5SmXhnLYJ2pmTTleZiDm
-# aFGgggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
+# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQU0HiA5/tyAVs0sqTLI4u7L954
+# 1/Cgggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
 # 9w0BAQsFADAwMQwwCgYDVQQGEwNMQUIxDTALBgNVBAoTBFpFUk8xETAPBgNVBAMT
 # CFplcm9EQzAxMB4XDTE3MDkyMDIxMDM1OFoXDTE5MDkyMDIxMTM1OFowPTETMBEG
 # CgmSJomT8ixkARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMT
@@ -5477,11 +5526,11 @@ if(Win32.CertStrToName(X509_ASN_ENCODING, DN, CERT_X500_NAME_STR, IntPtr.Zero, n
 # ARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMTB1plcm9TQ0EC
 # E1gAAAH5oOvjAv3166MAAQAAAfkwCQYFKw4DAhoFAKB4MBgGCisGAQQBgjcCAQwx
 # CjAIoAKAAKECgAAwGQYJKoZIhvcNAQkDMQwGCisGAQQBgjcCAQQwHAYKKwYBBAGC
-# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFGYLZNvCKPDfNc3B
-# 5ruAr8KTo0NFMA0GCSqGSIb3DQEBAQUABIIBALcw2sPw0pmpkCtBrgybRyOQv2Tt
-# cAkXNf4g34666xPjkL6RcOzO5GQq0PEi/XNOP7ubf3Atz/RFcIbfimI8OJAXxxs/
-# FzjUdEeG6Iyh8xt7JL1x0/FuFYijTbAQp4CpujwWfwDxhwo5vUkKl6gKCuqrJZsL
-# wF3VHl7H+q/kFwvvGlU1aezv2u3rhhV52BCBkKvxjGuun6idD3sYk7JoVQajEY/0
-# lw2BIvw+vVhkef04i6UwWca+FIiA//FzS/WG6Kgg4whze6V9ErbkaX6wVgi67hKV
-# uvcvfqjs4qw5YOzVpJboFsyuHFBuZXprL1Kxtyrj04h+hdZ4oCMXNNhWq9Y=
+# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFJnBrYNBEri3IP6G
+# 96r+me7Y0rm8MA0GCSqGSIb3DQEBAQUABIIBAE3+lJUdY+JB6tjoPbOegYauIwUP
+# tpdo7PPLuZiLXPNGA93R3zHatyHCAxoJD1XYcDDiSj6KvvzuYD6sbHYF/GlVSVps
+# ySC5cktTuDMnMpdSTyQuC2wE3lcwsSRXdEFZ0Cxpd5HlnJHwVR3hBWQMhDOprs7q
+# brvDBDfKI01f9VSGAE1i33h8hG+hxom8j81EUzHMbxdMjrF2q2MdRs4qzD/9x3kz
+# p6cMLbfim6zcJNclDK1l8UCqp4G9VkoHlYt0nTjOKkN6Vv+7ILin1ZPh1gXhcQwM
+# sLYf9U2Ubczdo2YOCKjgVa/tt32agUEj2fShkxeZ/djA7BlH168FWBcT5JY=
 # SIG # End signature block

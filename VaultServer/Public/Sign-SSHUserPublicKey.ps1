@@ -47,7 +47,14 @@
     .PARAMETER AddToSSHAgent
         This parameter is OPTIONAL.
 
-        This parameter is a switch. If used, the signed Public Key Certificate will be added to the ssh-agent service. 
+        This parameter is a switch. If used, the signed Public Key Certificate will be added to the ssh-agent service.
+
+    .PARAMETER SSHAgentExpiry
+        This parameter is OPTIONAL. This parameter should only be used in conjunction with the
+        -AddtoSSHAgent switch.
+
+        This parameter takes an integer that specifies the number of seconds that the ssh key identity will
+        remain in the ssh-agent - at which point it will expire and be removed from the ssh-agent.
 
     .EXAMPLE
         # Open an elevated PowerShell Session, import the module, and -
@@ -84,7 +91,10 @@ function Sign-SSHUserPublicKey {
         [string]$PathToSSHUserPrivateKeyFile,
 
         [Parameter(Mandatory=$False)]
-        [switch]$AddToSSHAgent
+        [switch]$AddToSSHAgent,
+
+        [Parameter(Mandatory=$False)]
+        [int]$SSHAgentExpiry
     )
 
     if (!$(Test-Path $PathToSSHUserPublicKeyFile)) {
@@ -157,6 +167,7 @@ function Sign-SSHUserPublicKey {
     $ValidPrincipalsCommaSeparated = $AuthorizedUserPrincipals -join ','
     # In the below JSON, <HostNameOrDomainPre> - Use the HostName if user is a Local Account and the DomainPre if the user
     # is a Domain Account
+    <#
     $jsonRequest = @"
 {
     "cert_type": "user",
@@ -168,6 +179,23 @@ function Sign-SSHUserPublicKey {
     "public_key": "$PubKeyContent"
 }
 "@
+    #>
+
+    $jsonRequest = @"
+{
+    "cert_type": "user",
+    "valid_principals": "$ValidPrincipalsCommaSeparated",
+    "extension": {
+        "permit-pty": "",
+        "permit-agent-forwarding": "",
+        "permit-X11-forwarding": "",
+        "permit-port-forwarding": "",
+        "permit-user-rc": ""
+    },
+    "public_key": "$PubKeyContent"
+}
+"@
+
     $JsonRequestAsSingleLineString = $jsonRequest | ConvertFrom-Json | ConvertTo-Json -Compress
 
     $HeadersParameters = @{
@@ -186,13 +214,21 @@ function Sign-SSHUserPublicKey {
     if ($AddToSSHAgent) {
         # Push/Pop-Location probably aren't necessary...but just in case...
         Push-Location $($CorrespondingPrivateKeyPath | Split-Path -Parent)
-        ssh-add "$CorrespondingPrivateKeyPath"
+
+        if (!$SSHAgentExpiry) {    
+            ssh-add "$CorrespondingPrivateKeyPath"
+        }
+        else {
+            ssh-add "$CorrespondingPrivateKeyPath"
+            ssh-add -t $SSHAgentExpiry
+        }
+
         Pop-Location
         $AddedToSSHAgent = $True
     }
 
     $Output = @{
-        SignedCertFile      = $(Get-Item $SignedPubKeyCertFilePath)
+        SignedCertFile = $(Get-Item $SignedPubKeyCertFilePath)
     }
     if ($AddedToSSHAgent) {
         $Output.Add("AddedToSSHAgent",$True)
@@ -204,8 +240,8 @@ function Sign-SSHUserPublicKey {
 # SIG # Begin signature block
 # MIIMiAYJKoZIhvcNAQcCoIIMeTCCDHUCAQExCzAJBgUrDgMCGgUAMGkGCisGAQQB
 # gjcCAQSgWzBZMDQGCisGAQQBgjcCAR4wJgIDAQAABBAfzDtgWUsITrck0sYpfvNR
-# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUdUdTS9dI3akclciEfi1L0AYf
-# uDOgggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
+# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQU6hxdR12D+KBPIHobMElXlOZh
+# qQigggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
 # 9w0BAQsFADAwMQwwCgYDVQQGEwNMQUIxDTALBgNVBAoTBFpFUk8xETAPBgNVBAMT
 # CFplcm9EQzAxMB4XDTE3MDkyMDIxMDM1OFoXDTE5MDkyMDIxMTM1OFowPTETMBEG
 # CgmSJomT8ixkARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMT
@@ -262,11 +298,11 @@ function Sign-SSHUserPublicKey {
 # ARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMTB1plcm9TQ0EC
 # E1gAAAH5oOvjAv3166MAAQAAAfkwCQYFKw4DAhoFAKB4MBgGCisGAQQBgjcCAQwx
 # CjAIoAKAAKECgAAwGQYJKoZIhvcNAQkDMQwGCisGAQQBgjcCAQQwHAYKKwYBBAGC
-# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFCr0Xfak/7m/7ObY
-# azaTyQ7fZivfMA0GCSqGSIb3DQEBAQUABIIBALCdnkqyKS14Ul7q8AYKCwH8bol1
-# ArTQzPYMna94OM8kWV36gs904dmVowyBkRrVGtQauxHwDJRpZ9xoRFAlvqeMcVe1
-# UYBZgDOhlZsGeuiXmExFckZeeXiOvV9sPTIr+OeXF4LQPwXLzX1+BYoLxbAy/c+3
-# KIllvVsVtXuZSUN9Bwwfm6bC0skr5zkI4vIetJSkxPfFzul42nEXcdhfRSZJTC/e
-# EVrXNPJNMscBGsUzd9iafX+bFfMHjwe+pdNMj3vJ6/NMnTtbyKxoD94xHRsAQPGY
-# fM/E+2qflWmtXLTNEaZH7YPCgd9WFuEDFxJqJ3m/F+rw0mC3Q5e9Ci0t7bI=
+# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFBts2GKg8VX/yYHh
+# madVrw+hnQIGMA0GCSqGSIb3DQEBAQUABIIBAAUxyc4COa1pwm7UKkSEyh3ljIbt
+# Q4vfvXYgVPSHTjYRktOsDWo761JhsK5mUWHAbmKPvHTkEDEN3e3PXF7TDjlEI1in
+# MtDpMjMXmx0oVbYf6RNIZeTjpGBKMJa9NUkTrdUlHjwxuiKik+0Luysn6OO0aj7N
+# L01GwC8nInDG5Uaec7txglRyjmwCAhsTdvW1d10IMtGq/2AgG46OuNdsTnwtOaxq
+# 1X7fxKBusq/6qb5GNKsCdewJYTyHZmX0kivqhIxZFt2e2cgfjFgx8E989yRY0zno
+# innL2fq5TS1FcVlRsokcKqiSgkvyateKAqacw0Mg4GW8XpCK6iN1mjMPAVI=
 # SIG # End signature block

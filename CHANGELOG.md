@@ -1,5 +1,9 @@
 # Change log
 
+## 0.8.7 (September 15, 2018)
+
+- Minor updates and fixes to adjust for latest changes to Vault HTTP API
+
 ## 0.8.6 (August 1, 2018)
 
 - Updated WinCompat Functions
