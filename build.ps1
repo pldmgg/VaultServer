@@ -141,6 +141,23 @@ if ($Cert) {
     }
 }
 
+if (!$(Get-Command nuget -ErrorAction SilentlyContinue)) {
+    # Bootstrap nuget if we don't have it
+    if(-not ($NugetPath = (Get-Command 'nuget.exe' -ErrorAction SilentlyContinue).Path)) {
+        $NugetPath = Join-Path $ENV:USERPROFILE nuget.exe
+        if(-not (Test-Path $NugetPath)) {
+            Invoke-WebRequest -uri 'https://dist.nuget.org/win-x86-commandline/latest/nuget.exe' -OutFile $NugetPath
+        }
+        # Update PowerShell $env:Path
+        $NugetParentDir = $NugetPath | Split-Path -Parent
+        [System.Collections.Arraylist][array]$CurrentEnvPathArray = $env:Path -split ';' | Where-Object {![System.String]::IsNullOrWhiteSpace($_)} | Sort-Object | Get-Unique
+        if ($CurrentEnvPathArray -notcontains $NugetParentDir) {
+            $CurrentEnvPathArray.Insert(0,$NugetParentDir)
+            $env:Path = $CurrentEnvPathArray -join ';'
+        }
+    }
+}
+
 if (!$(Get-Module -ListAvailable PSDepend)) {
     & $(Resolve-Path "$PSScriptRoot\*Help*\Install-PSDepend.ps1").Path
 }
@@ -316,8 +333,8 @@ exit ( [int]( -not $psake.build_success ) )
 # SIG # Begin signature block
 # MIIMiAYJKoZIhvcNAQcCoIIMeTCCDHUCAQExCzAJBgUrDgMCGgUAMGkGCisGAQQB
 # gjcCAQSgWzBZMDQGCisGAQQBgjcCAR4wJgIDAQAABBAfzDtgWUsITrck0sYpfvNR
-# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQU3iuyNg2xJnPXn1JDOpkYws0H
-# t3Sgggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
+# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUwXp73xo9pyhUG75qBAJJEcFc
+# rY2gggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
 # 9w0BAQsFADAwMQwwCgYDVQQGEwNMQUIxDTALBgNVBAoTBFpFUk8xETAPBgNVBAMT
 # CFplcm9EQzAxMB4XDTE3MDkyMDIxMDM1OFoXDTE5MDkyMDIxMTM1OFowPTETMBEG
 # CgmSJomT8ixkARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMT
@@ -374,11 +391,11 @@ exit ( [int]( -not $psake.build_success ) )
 # ARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMTB1plcm9TQ0EC
 # E1gAAAH5oOvjAv3166MAAQAAAfkwCQYFKw4DAhoFAKB4MBgGCisGAQQBgjcCAQwx
 # CjAIoAKAAKECgAAwGQYJKoZIhvcNAQkDMQwGCisGAQQBgjcCAQQwHAYKKwYBBAGC
-# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFFfy0uxsIygxcpTF
-# l6LD1ztT1Y7CMA0GCSqGSIb3DQEBAQUABIIBALepDjZVa65WvLnY2695unNrm8XJ
-# wz41j+GPG57TD+eK3oNqIYKtt0dqXoTlBNiROV6R7Khlu33taVXbXY264G1HrZQ1
-# fELSU1xUyKiXnYc+nQQ/Tf+KiRj5k6zJ0JPNgZu0oQ8Ur0jeuE4JQWwtihiTb7Wk
-# TS3UpdN4S80rUVMB/vdNYAPX6twa5yS66LRgts+GdfEXd0mk6/MOxqRuGughspbS
-# BQ07aI2JzMCg+++LAhSwDWMkiNh5Sk15QqB4bzXjieflKxqbfVz6bXROqDmgTXqx
-# VWdxmsZIxg8dKj9KwyCyHk9q5Z7/fySh28NuKYufnbeU4+CagHOhz4nsIfA=
+# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFAxDERBnkzPXkFVb
+# cXjMwW/rPbtCMA0GCSqGSIb3DQEBAQUABIIBAB8eNDI4iek1X3YwKwhxGw0w7/k6
+# 4pw0qenJ3LwVtQvC8PsDwsaVplDUGgWO3G4oo6TB99FdlEo1d8Ysix2TCNSg/olX
+# dakFSUZ4ZEYulKw2R73isNSJTviZGDJ3xN03JisPIfQVOqqyTwA+WX8Rf7+Y/XoB
+# 7pySYM5eQnAM8FzLKWRMYPxCuXzRm1FRTepwxetUL01htkYagJ0qPf3eRcNdj3K9
+# 2mmuwz7msMDr11hA69ECY8931b5rYuw/6JPimftOgyZs7Zo+jebWg17AmhcIQBXy
+# MAidYgsZj10zyhktdIBHHjLVAQo/5pj4Fdzf0Yj6QofYEsEvCh29dnz+D0Q=
 # SIG # End signature block
