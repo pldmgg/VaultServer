@@ -141,6 +141,7 @@ if ($Cert) {
     }
 }
 
+<#
 if (!$(Get-Command nuget -ErrorAction SilentlyContinue)) {
     # Bootstrap nuget if we don't have it
     if(-not ($NugetPath = (Get-Command 'nuget.exe' -ErrorAction SilentlyContinue).Path)) {
@@ -157,6 +158,7 @@ if (!$(Get-Command nuget -ErrorAction SilentlyContinue)) {
         }
     }
 }
+#>
 
 if (!$(Get-Module -ListAvailable PSDepend)) {
     & $(Resolve-Path "$PSScriptRoot\*Help*\Install-PSDepend.ps1").Path
@@ -333,8 +335,8 @@ exit ( [int]( -not $psake.build_success ) )
 # SIG # Begin signature block
 # MIIMiAYJKoZIhvcNAQcCoIIMeTCCDHUCAQExCzAJBgUrDgMCGgUAMGkGCisGAQQB
 # gjcCAQSgWzBZMDQGCisGAQQBgjcCAR4wJgIDAQAABBAfzDtgWUsITrck0sYpfvNR
-# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUwXp73xo9pyhUG75qBAJJEcFc
-# rY2gggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
+# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQU7C2WDVzoSowPaVzaqjNtRlu+
+# njSgggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
 # 9w0BAQsFADAwMQwwCgYDVQQGEwNMQUIxDTALBgNVBAoTBFpFUk8xETAPBgNVBAMT
 # CFplcm9EQzAxMB4XDTE3MDkyMDIxMDM1OFoXDTE5MDkyMDIxMTM1OFowPTETMBEG
 # CgmSJomT8ixkARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMT
@@ -391,11 +393,11 @@ exit ( [int]( -not $psake.build_success ) )
 # ARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMTB1plcm9TQ0EC
 # E1gAAAH5oOvjAv3166MAAQAAAfkwCQYFKw4DAhoFAKB4MBgGCisGAQQBgjcCAQwx
 # CjAIoAKAAKECgAAwGQYJKoZIhvcNAQkDMQwGCisGAQQBgjcCAQQwHAYKKwYBBAGC
-# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFAxDERBnkzPXkFVb
-# cXjMwW/rPbtCMA0GCSqGSIb3DQEBAQUABIIBAB8eNDI4iek1X3YwKwhxGw0w7/k6
-# 4pw0qenJ3LwVtQvC8PsDwsaVplDUGgWO3G4oo6TB99FdlEo1d8Ysix2TCNSg/olX
-# dakFSUZ4ZEYulKw2R73isNSJTviZGDJ3xN03JisPIfQVOqqyTwA+WX8Rf7+Y/XoB
-# 7pySYM5eQnAM8FzLKWRMYPxCuXzRm1FRTepwxetUL01htkYagJ0qPf3eRcNdj3K9
-# 2mmuwz7msMDr11hA69ECY8931b5rYuw/6JPimftOgyZs7Zo+jebWg17AmhcIQBXy
-# MAidYgsZj10zyhktdIBHHjLVAQo/5pj4Fdzf0Yj6QofYEsEvCh29dnz+D0Q=
+# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFFHruK0UjwQqge6Z
+# fE4K1vCKVByzMA0GCSqGSIb3DQEBAQUABIIBAFSFfUjWOr3JcERJ9Kx7ywuUZDlo
+# A5caC5M/Swa0FWNcK8qOYlC8I+U/rQ5DNQdBsc1RU1bMm5IvSEAFVUaCVI7rEi6V
+# gWzWFHFOVFt4AzgPmtlkHIO5oCBBh3ijsZf8L6/z2qq7XJRG1dR+VdvCvkyItVu2
+# F4/7adgbxy8rFuqVCbjBTP/TZBbSDaOBphdKQRAwfl8bbP+278REetLOkUkjSxVJ
+# 9cbi8y2YXHjgN5dnwk3LgA6uzEhj0QKpMT0wyTPUWO9dovvQNuj9dJuzGBdXP/fT
+# rSg89BZmjDv7QZ1pjIziKM4HwUBs4/CdF7k/7YKmjAwyM7QSrE6htNsgcvM=
 # SIG # End signature block

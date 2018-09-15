@@ -214,13 +214,53 @@ function Sign-SSHUserPublicKey {
     if ($AddToSSHAgent) {
         # Push/Pop-Location probably aren't necessary...but just in case...
         Push-Location $($CorrespondingPrivateKeyPath | Split-Path -Parent)
+    
+        #$null = ssh-add "$CorrespondingPrivateKeyPath"
+        $SSHAddArgs = "`"$CorrespondingPrivateKeyPath`""
 
-        if (!$SSHAgentExpiry) {    
-            ssh-add "$CorrespondingPrivateKeyPath"
+        $SSHAddProcessInfo = New-Object System.Diagnostics.ProcessStartInfo
+        $SSHAddProcessInfo.WorkingDirectory = $($(Get-Command ssh-add).Source | Split-Path -Parent)
+        $SSHAddProcessInfo.FileName = "ssh-add.exe"
+        $SSHAddProcessInfo.RedirectStandardError = $true
+        $SSHAddProcessInfo.RedirectStandardOutput = $true
+        $SSHAddProcessInfo.UseShellExecute = $false
+        $SSHAddProcessInfo.Arguments = $SSHAddArgs
+        $SSHAddProcess = New-Object System.Diagnostics.Process
+        $SSHAddProcess.StartInfo = $SSHAddProcessInfo
+        $SSHAddProcess.Start() | Out-Null
+        $SSHAddProcess.WaitForExit()
+        $SSHAddStdout = $SSHAddProcess.StandardOutput.ReadToEnd()
+        $SSHAddStderr = $SSHAddProcess.StandardError.ReadToEnd()
+        $SSHAddAllOutput = $SSHAddStdout + $SSHAddStderr
+        
+        if ($SSHAddAllOutput -match "fail|error") {
+            Write-Error $SSHAddAllOutput
+            Write-Error "The 'ssh-add $($PrivKey.FullName)' command failed!"
         }
-        else {
-            ssh-add "$CorrespondingPrivateKeyPath"
-            ssh-add -t $SSHAgentExpiry
+
+        if ($SSHAgentExpiry) {
+            #$null = ssh-add -t $SSHAgentExpiry
+            $SSHAddArgs = '-t $SSHAgentExpiry'
+
+            $SSHAddProcessInfo = New-Object System.Diagnostics.ProcessStartInfo
+            $SSHAddProcessInfo.WorkingDirectory = $($(Get-Command ssh-add).Source | Split-Path -Parent)
+            $SSHAddProcessInfo.FileName = "ssh-add.exe"
+            $SSHAddProcessInfo.RedirectStandardError = $true
+            $SSHAddProcessInfo.RedirectStandardOutput = $true
+            $SSHAddProcessInfo.UseShellExecute = $false
+            $SSHAddProcessInfo.Arguments = $SSHAddArgs
+            $SSHAddProcess = New-Object System.Diagnostics.Process
+            $SSHAddProcess.StartInfo = $SSHAddProcessInfo
+            $SSHAddProcess.Start() | Out-Null
+            $SSHAddProcess.WaitForExit()
+            $SSHAddStdout = $SSHAddProcess.StandardOutput.ReadToEnd()
+            $SSHAddStderr = $SSHAddProcess.StandardError.ReadToEnd()
+            $SSHAddAllOutput = $SSHAddStdout + $SSHAddStderr
+            
+            if ($SSHAddAllOutput -match "fail|error") {
+                Write-Error $SSHAddAllOutput
+                Write-Error "The 'ssh-add $($PrivKey.FullName)' command failed!"
+            }
         }
 
         Pop-Location
@@ -240,8 +280,8 @@ function Sign-SSHUserPublicKey {
 # SIG # Begin signature block
 # MIIMiAYJKoZIhvcNAQcCoIIMeTCCDHUCAQExCzAJBgUrDgMCGgUAMGkGCisGAQQB
 # gjcCAQSgWzBZMDQGCisGAQQBgjcCAR4wJgIDAQAABBAfzDtgWUsITrck0sYpfvNR
-# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQU6hxdR12D+KBPIHobMElXlOZh
-# qQigggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
+# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQU5IS/T069HrHnE8dUnpKFe+81
+# ttWgggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
 # 9w0BAQsFADAwMQwwCgYDVQQGEwNMQUIxDTALBgNVBAoTBFpFUk8xETAPBgNVBAMT
 # CFplcm9EQzAxMB4XDTE3MDkyMDIxMDM1OFoXDTE5MDkyMDIxMTM1OFowPTETMBEG
 # CgmSJomT8ixkARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMT
@@ -298,11 +338,11 @@ function Sign-SSHUserPublicKey {
 # ARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMTB1plcm9TQ0EC
 # E1gAAAH5oOvjAv3166MAAQAAAfkwCQYFKw4DAhoFAKB4MBgGCisGAQQBgjcCAQwx
 # CjAIoAKAAKECgAAwGQYJKoZIhvcNAQkDMQwGCisGAQQBgjcCAQQwHAYKKwYBBAGC
-# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFBts2GKg8VX/yYHh
-# madVrw+hnQIGMA0GCSqGSIb3DQEBAQUABIIBAAUxyc4COa1pwm7UKkSEyh3ljIbt
-# Q4vfvXYgVPSHTjYRktOsDWo761JhsK5mUWHAbmKPvHTkEDEN3e3PXF7TDjlEI1in
-# MtDpMjMXmx0oVbYf6RNIZeTjpGBKMJa9NUkTrdUlHjwxuiKik+0Luysn6OO0aj7N
-# L01GwC8nInDG5Uaec7txglRyjmwCAhsTdvW1d10IMtGq/2AgG46OuNdsTnwtOaxq
-# 1X7fxKBusq/6qb5GNKsCdewJYTyHZmX0kivqhIxZFt2e2cgfjFgx8E989yRY0zno
-# innL2fq5TS1FcVlRsokcKqiSgkvyateKAqacw0Mg4GW8XpCK6iN1mjMPAVI=
+# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFL90b2+cy7cjdsUg
+# +41M5l0NXupZMA0GCSqGSIb3DQEBAQUABIIBAJq02hHvTFv2gcFfGcGbd7CYKzWM
+# nXWM8PpvnMDWt9bdoe7b+O9TN56KYZAEjd9AqG+3TwX35X7PYmdsx82FMkTibgt+
+# imWdYhIwV0nc0964Mww6OnksT+nwzpW/ogUzcZsNT3ntPyoU8I+X6GXucQ6lv3Qm
+# XFaA71TnrjswxxCBBQO3Hfp/6kaSEvz49NWTbtkVlLMWwF/cpbid3X80X4emhqFn
+# uCvKhs6b4/gEWR/lHUBXGy9HMOO+QpVdYIKx1Y8ob/CeY7B4VQu76uq5zeaaHLMQ
+# tkVPgUoH6kcYfUMXL2mGhXzlFwKS68yoi0BWvOVHxWdGqZVb1gFiatg5G5M=
 # SIG # End signature block
