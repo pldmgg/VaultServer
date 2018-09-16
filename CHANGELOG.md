@@ -1,5 +1,9 @@
 # Change log
 
+## 0.8.8 (September 16, 2018)
+
+- Suppressed ssh-add output and fixed related issues
+
 ## 0.8.7 (September 15, 2018)
 
 - Minor updates and fixes to adjust for latest changes to Vault HTTP API
