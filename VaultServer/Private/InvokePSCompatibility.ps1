@@ -117,15 +117,17 @@ function InvokePSCompatibility {
         if ($GetModDepsSplatParams.Keys.Count -gt 0) {
             $RequiredLocallyAvailableModulesScan = GetModuleDependencies @GetModDepsSplatParams
 
-            # Scan the Private Functions as well...
-            $PrivateFunctions = Get-ChildItem -Path $PSScriptRoot -File
-            foreach ($FileItem in $PrivateFunctions) {
-                $RequiredLocallyAvailableModulesScanPrivate = GetModuleDependencies -PathToScriptFile  $FileItem.FullName
-                foreach ($PSObj in $RequiredLocallyAvailableModulesScanPrivate.WinPSModuleDependencies) {
-                    $null = $RequiredLocallyAvailableModulesScan.WinPSModuleDependencies.Add($PSObj)
-                }
-                foreach ($PSObj in $RequiredLocallyAvailableModulesScanPrivate.PSCoreModuleDependencies) {
-                    $null = $RequiredLocallyAvailableModulesScan.PSCoreModuleDependencies.Add($PSObj)
+            if ($($PSScriptRoot | Split-Path -Leaf) -eq "Private") {
+                # Scan the Private Functions as well...
+                $PrivateFunctions = Get-ChildItem -Path $PSScriptRoot -File
+                foreach ($FileItem in $PrivateFunctions) {
+                    $RequiredLocallyAvailableModulesScanPrivate = GetModuleDependencies -PathToScriptFile  $FileItem.FullName
+                    foreach ($PSObj in $RequiredLocallyAvailableModulesScanPrivate.WinPSModuleDependencies) {
+                        $null = $RequiredLocallyAvailableModulesScan.WinPSModuleDependencies.Add($PSObj)
+                    }
+                    foreach ($PSObj in $RequiredLocallyAvailableModulesScanPrivate.PSCoreModuleDependencies) {
+                        $null = $RequiredLocallyAvailableModulesScan.PSCoreModuleDependencies.Add($PSObj)
+                    }
                 }
             }
         }
@@ -690,8 +692,8 @@ function InvokePSCompatibility {
 # SIG # Begin signature block
 # MIIMiAYJKoZIhvcNAQcCoIIMeTCCDHUCAQExCzAJBgUrDgMCGgUAMGkGCisGAQQB
 # gjcCAQSgWzBZMDQGCisGAQQBgjcCAR4wJgIDAQAABBAfzDtgWUsITrck0sYpfvNR
-# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUc/M3j8qYbHVboYwaTU1pynif
-# EJSgggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
+# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUwjDxEIdxeEHUdF+SgIkDA9Va
+# Ygegggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
 # 9w0BAQsFADAwMQwwCgYDVQQGEwNMQUIxDTALBgNVBAoTBFpFUk8xETAPBgNVBAMT
 # CFplcm9EQzAxMB4XDTE3MDkyMDIxMDM1OFoXDTE5MDkyMDIxMTM1OFowPTETMBEG
 # CgmSJomT8ixkARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMT
@@ -748,11 +750,11 @@ function InvokePSCompatibility {
 # ARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMTB1plcm9TQ0EC
 # E1gAAAH5oOvjAv3166MAAQAAAfkwCQYFKw4DAhoFAKB4MBgGCisGAQQBgjcCAQwx
 # CjAIoAKAAKECgAAwGQYJKoZIhvcNAQkDMQwGCisGAQQBgjcCAQQwHAYKKwYBBAGC
-# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFNUZilxLe/i8yA/j
-# eD8peIoCUSbFMA0GCSqGSIb3DQEBAQUABIIBAHrkLMhnuO1v4Iplebc12X5HOKKE
-# 7Zn4WQZP1O5jgwv1ZjSOjqSRxLpBjHX1qcay35bvueS+o0+gr51NEZcde44s0UEM
-# zmTb/kJMoz6RQbXooxTYFhAmaeGJkSXX0f2DDQl0PH4JIpbO8VlA663key2rOfuV
-# Vl6HDBychqGdt5BmURXysYia4zFKtyCqOyHbYI0L7MX6QJQg1TjyX7bccBbucB0N
-# g2xkgzEtpXbrukdInQ1m9cn8eIthb3bkOjwOFlrMqvCgsZjLs9ezGqjR73RfDT+6
-# vJref35xnlO8SQnZa0Vnjiroeo05fP+RJIrNaXKBLAdu6VKlmHjOuVgnz88=
+# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFKyMr7axSyJlPcOl
+# +bfy0bvN+m17MA0GCSqGSIb3DQEBAQUABIIBAGY/Q5RcTChbYsgbxzHQnRs+hi+5
+# NbO5jg+8NXHfKQrEnIQqkgjHfXeY/xb/04NSmzo2v+xd4Qab0HHIpVs1al7uHkgu
+# U16uUC05nS8Q1HU70RTrFsAH9skA1Za5avQx2uQlTGrNyQSb09wXE94YjkuCuXUl
+# 8U3yXycFx9qaIPpld/ov6xR9yeWxijBD9+sq8kSneWaHRqJc3D76hBlzusFppq+n
+# jexFHZU0jak9BnPATFASC9ydjnk8EHuo5SNU85EmayRt1VDb+wfs7B2rS6FLcE9h
+# WuGxqSfh7W/G6lOKHqstTmAL4P2Dn+glAEo0JfDLFlDxKSKWtcfVUfPlqko=
 # SIG # End signature block
