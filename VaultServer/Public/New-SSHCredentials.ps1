@@ -118,6 +118,17 @@ function New-SSHCredentials {
         [int]$SSHAgentExpiry
     )
 
+    if ($PSVersionTable.Platform -eq "Unix" -or $PSVersionTable.OS -match "Darwin" -and $env:SudoPwdPrompt) {
+        if (GetElevation) {
+            Write-Error "You should not be running the VaultServer Module as root! Halting!"
+            $global:FunctionResult = "1"
+            return
+        }
+        RemoveMySudoPwd
+        NewCronToAddSudoPwd
+        $env:SudoPwdPrompt = $False
+    }
+
     if ($(!$VaultAuthToken -and !$DomainCredentialsWithAccessToVault) -or $($VaultAuthToken -and $DomainCredentialsWithAccessToVault)) {
         Write-Error "The $($MyInvocation.MyCommand.Name) function requires one (no more, no less) of the following parameters: [-DomainCredentialsWithAccessToVault, -VaultAuthToken] Halting!"
         $global:FunctionResult = "1"
@@ -147,11 +158,12 @@ function New-SSHCredentials {
     }
 
     # Generate an SSH key pair for zeroadmin
-    if (!$(Test-Path "$HOME\.ssh")) {
-        New-Item -ItemType Directory -Path "$HOME\.ssh"
+    $UserSSHDir = Join-Path $HOME .ssh
+    if (!$(Test-Path $UserSSHDir)) {
+        New-Item -ItemType Directory -Path $UserSSHDir
     }
 
-    Push-Location "$HOME\.ssh"
+    Push-Location $UserSSHDir
 
     $NewSSHKeySplatParams = @{
         NewSSHKeyName       = $NewSSHKeyName
@@ -165,7 +177,8 @@ function New-SSHCredentials {
         $KeyPwd = $NewSSHKeyPwd
     }
     if (!$BlankSSHPrivateKeyPwd -and !$NewSSHKeyPwd) {
-        $KeyPwd = Read-Host -Prompt "Please enter a password to protect the new SSH Private Key $NewSSHKeyName" -AsSecureString
+        #$KeyPwd = Read-Host -Prompt "Please enter a password to protect the new SSH Private Key $NewSSHKeyName" -AsSecureString
+        $BlankSSHPrivateKeyPwd = $True
     }
     if ($KeyPwd) {
         $NewSSHKeySplatParams.Add("NewSSHKeyPwd",$KeyPwd)
@@ -258,8 +271,8 @@ function New-SSHCredentials {
 # SIG # Begin signature block
 # MIIMiAYJKoZIhvcNAQcCoIIMeTCCDHUCAQExCzAJBgUrDgMCGgUAMGkGCisGAQQB
 # gjcCAQSgWzBZMDQGCisGAQQBgjcCAR4wJgIDAQAABBAfzDtgWUsITrck0sYpfvNR
-# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUKu4cBUgPomufhrhs92va1Zm2
-# 0qOgggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
+# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUfRvtlK1LOFJ4AXYo6OX5y17Q
+# jtSgggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
 # 9w0BAQsFADAwMQwwCgYDVQQGEwNMQUIxDTALBgNVBAoTBFpFUk8xETAPBgNVBAMT
 # CFplcm9EQzAxMB4XDTE3MDkyMDIxMDM1OFoXDTE5MDkyMDIxMTM1OFowPTETMBEG
 # CgmSJomT8ixkARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMT
@@ -316,11 +329,11 @@ function New-SSHCredentials {
 # ARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMTB1plcm9TQ0EC
 # E1gAAAH5oOvjAv3166MAAQAAAfkwCQYFKw4DAhoFAKB4MBgGCisGAQQBgjcCAQwx
 # CjAIoAKAAKECgAAwGQYJKoZIhvcNAQkDMQwGCisGAQQBgjcCAQQwHAYKKwYBBAGC
-# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFMBmo3J2sTcJUEpp
-# m3WbNCH9bJ8EMA0GCSqGSIb3DQEBAQUABIIBAIvyC6MC/P26NftHfFzFM140N0uO
-# LH2j1/JJ6qr5I5ElFwTsXZyx6JojLu6DYlZ36oIhPqtOSpoExNqWBeVscU7FsjmY
-# zd9BlPww1lUyIn7KMd0fkqRH/v70vKAuOxSo4TOxsrwpA2gSqThKsi7SBIvKgvOv
-# g55LWnWeYan/ViR8k6aGFpDXNZJb6yTag96yYqaPs0F0ixp3Zo3ju9MsLCNec8o+
-# dfuJWEXQ3zClo57f15s6HckQdiYwzx6FFLPxIAyhj7Lx0ZU729GetDa46wwrByIh
-# w4uqT/pbG3OBWyfo8QP2qsMhv57Z2iK/KZKvZIBLhtixyS2/zo47Ey+74Aw=
+# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFOnLivUvLCwSE++7
+# 2w3uGKg82pqyMA0GCSqGSIb3DQEBAQUABIIBADqO+BLWZynpM4I/5xX4Nj6kYtqJ
+# EzryM4Mwa4ZiDKC9ZAoUVpfrroCt+Eq9ThQ9XS4cedxMotB8r1cVoBESxhf1LT85
+# kcNe7PB7po3zWUiYVm4hw/0e5rzyNIA93Bhw9fk6kp6DMfVcG8iIP5j7an/v+oEc
+# FwTbcbMzlvagDN+rsfS9GasKVj9rml5SqHjqOPd/CcsoNftSM6PAWeQErIJu+Sue
+# CHU2LXkl4Mw8shuuQ+92maHxQ8rmgtoNean1Kuw1vid3vDaIHpRCJYrfwYD7O7Ft
+# zFQAs5vdUwhRoJ6CYpehnGdxPiEglV1pFXky7TKF5bSRY1LYB4pY7XB9Zn0=
 # SIG # End signature block

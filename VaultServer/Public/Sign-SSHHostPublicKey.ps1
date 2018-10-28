@@ -38,73 +38,101 @@ function Sign-SSHHostPublicKey {
         [string]$VaultAuthToken # Should be something like 'myroot' or '434f37ca-89ae-9073-8783-087c268fd46f'
     )
 
-    # Make sure sshd service is installed and running. If it is, we shouldn't need to use
-    # the New-SSHD server function
-    if (![bool]$(Get-Service sshd -ErrorAction SilentlyContinue)) {
-        if (![bool]$(Get-Service ssh-agent -ErrorAction SilentlyContinue)) {
-            $InstallWinSSHSplatParams = @{
-                GiveWinSSHBinariesPathPriority  = $True
-                ConfigureSSHDOnLocalHost        = $True
-                DefaultShell                    = "powershell"
-                GitHubInstall                   = $True
-                ErrorAction                     = "SilentlyContinue"
-                ErrorVariable                   = "IWSErr"
-            }
+    #region >> Prep
 
-            try {
-                $InstallWinSSHResults = Install-WinSSH @InstallWinSSHSplatParams -ErrorAction Stop
-                if (!$InstallWinSSHResults) {throw "There was a problem with the Install-WinSSH function! Halting!"}
+    if ($PSVersionTable.Platform -eq "Unix" -or $PSVersionTable.OS -match "Darwin" -and $env:SudoPwdPrompt) {
+        if (GetElevation) {
+            Write-Error "You should not be running the VaultServer Module as root! Halting!"
+            $global:FunctionResult = "1"
+            return
+        }
+        RemoveMySudoPwd
+        NewCronToAddSudoPwd
+        $env:SudoPwdPrompt = $False
+    }
+
+    if (!$PSVersionTable.Platform -or $PSVersionTable.Platform -eq "Win32NT") {
+        # Make sure sshd service is installed and running. If it is, we shouldn't need to use
+        # the New-SSHD server function
+        if (![bool]$(Get-Service sshd -ErrorAction SilentlyContinue)) {
+            if (![bool]$(Get-Service ssh-agent -ErrorAction SilentlyContinue)) {
+                $InstallWinSSHSplatParams = @{
+                    GiveWinSSHBinariesPathPriority  = $True
+                    ConfigureSSHDOnLocalHost        = $True
+                    DefaultShell                    = "pwsh"
+                    ErrorAction                     = "SilentlyContinue"
+                    ErrorVariable                   = "IWSErr"
+                }
+
+                try {
+                    $InstallWinSSHResults = Install-WinSSH @InstallWinSSHSplatParams -ErrorAction Stop
+                    if (!$InstallWinSSHResults) {throw "There was a problem with the Install-WinSSH function! Halting!"}
+                }
+                catch {
+                    Write-Error $_
+                    Write-Host "Errors for the Install-WinSSH function are as follows:"
+                    Write-Error $($IWSErr | Out-String)
+                    $global:FunctionResult = "1"
+                    return
+                }
             }
-            catch {
-                Write-Error $_
-                Write-Host "Errors for the Install-WinSSH function are as follows:"
-                Write-Error $($IWSErr | Out-String)
-                $global:FunctionResult = "1"
-                return
+            else {
+                $NewSSHDServerSplatParams = @{
+                    ErrorAction         = "SilentlyContinue"
+                    ErrorVariable       = "SSHDErr"
+                    DefaultShell        = "powershell"
+                }
+                
+                try {
+                    $NewSSHDServerResult = New-SSHDServer @NewSSHDServerSplatParams
+                    if (!$NewSSHDServerResult) {throw "There was a problem with the New-SSHDServer function! Halting!"}
+                }
+                catch {
+                    Write-Error $_
+                    Write-Host "Errors for the New-SSHDServer function are as follows:"
+                    Write-Error $($SSHDErr | Out-String)
+                    $global:FunctionResult = "1"
+                    return
+                }
             }
         }
-        else {
-            $NewSSHDServerSplatParams = @{
-                ErrorAction         = "SilentlyContinue"
-                ErrorVariable       = "SSHDErr"
-                DefaultShell        = "powershell"
-            }
-            
-            try {
-                $NewSSHDServerResult = New-SSHDServer @NewSSHDServerSplatParams
-                if (!$NewSSHDServerResult) {throw "There was a problem with the New-SSHDServer function! Halting!"}
-            }
-            catch {
-                Write-Error $_
-                Write-Host "Errors for the New-SSHDServer function are as follows:"
-                Write-Error $($SSHDErr | Out-String)
-                $global:FunctionResult = "1"
-                return
-            }
+
+        if (Test-Path "$env:ProgramData\ssh") {
+            $sshdir = "$env:ProgramData\ssh"
         }
-    }
+        elseif (Test-Path "$env:ProgramFiles\OpenSSH-Win64") {
+            $sshdir = "$env:ProgramFiles\OpenSSH-Win64"
+        }
+        if (!$sshdir) {
+            Write-Error "Unable to find ssh directory at '$env:ProgramData\ssh' or '$env:ProgramFiles\OpenSSH-Win64'! Halting!"
+            $global:FunctionResult = "1"
+            return
+        }
 
-    if (Test-Path "$env:ProgramData\ssh") {
-        $sshdir = "$env:ProgramData\ssh"
-    }
-    elseif (Test-Path "$env:ProgramFiles\OpenSSH-Win64") {
-        $sshdir = "$env:ProgramFiles\OpenSSH-Win64"
-    }
-    if (!$sshdir) {
-        Write-Error "Unable to find ssh directory at '$env:ProgramData\ssh' or '$env:ProgramFiles\OpenSSH-Win64'! Halting!"
-        $global:FunctionResult = "1"
-        return
-    }
+        $PathToSSHHostPublicKeyFile = "$sshdir\ssh_host_rsa_key.pub"
+        $sshdConfigPath = "$sshdir\sshd_config"
 
-    $PathToSSHHostPublicKeyFile = "$sshdir\ssh_host_rsa_key.pub"
-
-    if (!$(Test-Path $PathToSSHHostPublicKeyFile)) {
-        Write-Error "Unable to find the SSH RSA Host Key for $env:ComputerName at path '$sshdir\ssh_host_rsa_key.pub'! Halting!"
-        $global:FunctionResult = "1"
-        return
+        if (!$(Test-Path $PathToSSHHostPublicKeyFile)) {
+            Write-Error "Unable to find the SSH RSA Host Key for $env:ComputerName at path '$PathToSSHHostPublicKeyFile'! Halting!"
+            $global:FunctionResult = "1"
+            return
+        }
+        
+        $SignedPubKeyCertFilePath = $PathToSSHHostPublicKeyFile -replace "\.pub","-cert.pub"
     }
-    
-    $SignedPubKeyCertFilePath = $PathToSSHHostPublicKeyFile -replace "\.pub","-cert.pub"
+    elseif ($PSVersionTable.Platform -eq "Unix" -or $PSVersionTable.OS -match "Darwin") {
+        $sshdir = "/etc/ssh"
+        $sshdConfigPath = "$sshdir/sshd_config"
+        $PathToSSHHostPublicKeyFile = "$sshdir/ssh_host_rsa_key.pub"
+
+        if (!$(Test-Path $PathToSSHHostPublicKeyFile)) {
+            Write-Error "Unable to find the SSH RSA Host Key for $env:HostName at path '$PathToSSHHostPublicKeyFile'! Halting!"
+            $global:FunctionResult = "1"
+            return
+        }
+        
+        $SignedPubKeyCertFilePath = $PathToSSHHostPublicKeyFile -replace "\.pub","-cert.pub"
+    }
 
     # Make sure $VaultSSHHostSigningUrl is a valid Url
     try {
@@ -127,7 +155,9 @@ function Sign-SSHHostPublicKey {
         $VaultSSHHostSigningUrl = $VaultSSHHostSigningUrl.Substring(0,$VaultSSHHostSigningUrl.Length-1)
     }
 
-    ##### BEGIN Main Body #####
+    #endregion >> Prep
+
+    #region >> Main
 
     # HTTP API Request
     # The below removes 'comment' text from the Host Public key because sometimes it can cause problems
@@ -160,7 +190,7 @@ function Sign-SSHHostPublicKey {
     Set-Content -Value $($SignedSSHClientPubKeyCertResponse.Content | ConvertFrom-Json).data.signed_key.Trim() -Path $SignedPubKeyCertFilePath
 
     # Make sure permissions on "$sshdir/ssh_host_rsa_key-cert.pub" are set properly
-    if ($PSVersionTable.PSEdition -eq "Core") {
+    if ($PSVersionTable.PSEdition -eq "Core" -and $PSVersionTable.Platform -eq "Win32NT") {
         $null = Invoke-WinCommand -ComputerName localhost -ScriptBlock {
             $SecurityDescriptor = Get-NTFSSecurityDescriptor -Path $args[0]
             $SecurityDescriptor | Disable-NTFSAccessInheritance -RemoveInheritedAccessRules
@@ -171,7 +201,7 @@ function Sign-SSHHostPublicKey {
             $SecurityDescriptor | Set-NTFSSecurityDescriptor
         } -ArgumentList $SignedPubKeyCertFilePath
     }
-    else {
+    elseif ($PSVersionTable.PSEdition -eq "Desktop") {
         $SecurityDescriptor = Get-NTFSSecurityDescriptor -Path $SignedPubKeyCertFilePath
         $null = $SecurityDescriptor | Disable-NTFSAccessInheritance -RemoveInheritedAccessRules
         $null = $SecurityDescriptor | Clear-NTFSAccess
@@ -180,18 +210,21 @@ function Sign-SSHHostPublicKey {
         $null = $SecurityDescriptor | Add-NTFSAccess -Account "NT AUTHORITY\Authenticated Users" -AccessRights "ReadAndExecute, Synchronize" -AppliesTo ThisFolderSubfoldersAndFiles
         $null = $SecurityDescriptor | Set-NTFSSecurityDescriptor
     }
+    elseif ($PSVersionTable.Platform -eq "Unix" -or $PSVersionTable.OS -match "Darwin") {
+        chmod 644 "$SignedPubKeyCertFilePath"
+    }
 
     # Update sshd_config
     [System.Collections.ArrayList]$sshdContent = Get-Content $sshdConfigPath
 
     # Determine if sshd_config already has the 'HostCertificate' option active
     $ExistingHostCertificateOption = $sshdContent -match "HostCertificate" | Where-Object {$_ -notmatch "#"}
-    $HostCertificatePathWithForwardSlashes = "$sshdir\ssh_host_rsa_key-cert.pub" -replace "\\","/"
+    $HostCertificatePath =  $PathToSSHHostPublicKeyFile -replace "\.pub","-cert.pub"
     $HostCertificateOptionLine = "HostCertificate $HostCertificatePathWithForwardSlashes"
     
     if (!$ExistingHostCertificateOption) {
         try {
-            $LineNumberToInsertOn = $sshdContent.IndexOf($($sshdContent -match "HostKey __PROGRAMDATA__/ssh/ssh_host_rsa_key")) + 1
+            $LineNumberToInsertOn = $sshdContent.IndexOf($($sshdContent -match "HostKey .*ssh_host_rsa_key$")) + 1
             [System.Collections.ArrayList]$sshdContent.Insert($LineNumberToInsertOn, $HostCertificateOptionLine)
             Set-Content -Value $sshdContent -Path $sshdConfigPath
             $SSHDConfigContentChanged = $True
@@ -228,13 +261,15 @@ function Sign-SSHHostPublicKey {
         SSHDConfigContentChanged    = if ($SSHDConfigContentChanged) {$True} else {$False}
         SSHDContentThatWasAdded     = if ($SSHDConfigContentChanged) {$HostCertificateOptionLine}
     }
+
+    #endregion >> Main
 }
 
 # SIG # Begin signature block
 # MIIMiAYJKoZIhvcNAQcCoIIMeTCCDHUCAQExCzAJBgUrDgMCGgUAMGkGCisGAQQB
 # gjcCAQSgWzBZMDQGCisGAQQBgjcCAR4wJgIDAQAABBAfzDtgWUsITrck0sYpfvNR
-# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUabtkmWu/tmvSfjlLrzSpEoAU
-# V5igggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
+# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQU1U5OowM9h13E1KAuV2Cy7OVI
+# Mq6gggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
 # 9w0BAQsFADAwMQwwCgYDVQQGEwNMQUIxDTALBgNVBAoTBFpFUk8xETAPBgNVBAMT
 # CFplcm9EQzAxMB4XDTE3MDkyMDIxMDM1OFoXDTE5MDkyMDIxMTM1OFowPTETMBEG
 # CgmSJomT8ixkARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMT
@@ -291,11 +326,11 @@ function Sign-SSHHostPublicKey {
 # ARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMTB1plcm9TQ0EC
 # E1gAAAH5oOvjAv3166MAAQAAAfkwCQYFKw4DAhoFAKB4MBgGCisGAQQBgjcCAQwx
 # CjAIoAKAAKECgAAwGQYJKoZIhvcNAQkDMQwGCisGAQQBgjcCAQQwHAYKKwYBBAGC
-# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFC2zfJ9rI/6+tSuH
-# GNldvBrm9nz3MA0GCSqGSIb3DQEBAQUABIIBAGtDVXNMhPzzRLPQIZiAnMNMy4bo
-# UUTWZzQ98PdORt3sgjbjvpLEVnJKQ1ar/ywIGv4VpKN0f9g15san3EJ9PMt0gll5
-# AUWGo2GwXtNyH1GCWpv4KRfNRKTCjmpuGxlwtrnbFAzDBKRyU9ItezvWWgHy0yYy
-# wKIPPeQqwS3PIQs+30Tv/dPwLqisFtHM/dkZupFGEo5K+HjceK1rE4Quzlg1CFv9
-# lsiPRl7ARuTurEk6JrbKa4ZiLoc7uXkspC09bAIcWqjXHqO6LHA/g2iPdFa5Z9a+
-# wz6AFCaAYQRLHcFjHvPVLmRPFhQrDOVxcAzax9LFkVxicG47kwC7yKoI/I8=
+# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFCfs7INJvPMSQt+n
+# UQhnuRN64q5rMA0GCSqGSIb3DQEBAQUABIIBADbJKIwXnFzoiIj6R4JfTy6NDSXo
+# tDJrtqo8sh22lHSqA1je8LzdhnY+J1tBQfIdKtdr2XRJhWV3LG+tb2KFzMIuEHgQ
+# 4sUYsMTee52BZlRzwXJq5h3ikOGENYevUUh//9V94eKMUEsxHD4Rfq0HrfLgp7ju
+# PzVpop4lKI4BBowqCkzbwBnaHVa5gdSNB4URhjBU37EoaCJODV74/y+hxG9BvV6F
+# 3v5NH6dai0eysqqHnc6G0/voyycpYWjF/Rxakv2UHB4uBOZQ6iLgUgc+U5NIiWBa
+# M6ZM2dXBr2yOEaylEfOzmAkdwS/JBVCg6amzVb938g5qBsGi/WTEptLz0q8=
 # SIG # End signature block

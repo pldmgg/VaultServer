@@ -97,6 +97,27 @@ function Sign-SSHUserPublicKey {
         [int]$SSHAgentExpiry
     )
 
+    #region >> Prep
+
+    if ($PSVersionTable.Platform -eq "Unix" -or $PSVersionTable.OS -match "Darwin" -and $env:SudoPwdPrompt) {
+        if (GetElevation) {
+            Write-Error "You should not be running the VaultServer Module as root! Halting!"
+            $global:FunctionResult = "1"
+            return
+        }
+        RemoveMySudoPwd
+        NewCronToAddSudoPwd
+        $env:SudoPwdPrompt = $False
+    }
+
+    if ($AddedToSSHAgent) {
+        if (!$(Get-Command ssh-add -ErrorAction SilentlyContinue)) {
+            Write-Error "Unable to find ssh-add! Halting!"
+            $global:FunctionResult = "1"
+            return
+        }
+    }
+    
     if (!$(Test-Path $PathToSSHUserPublicKeyFile)) {
         Write-Error "The path '$PathToSSHUserPublicKeyFile' was not found! Halting!"
         $global:FunctionResult = "1"
@@ -110,31 +131,38 @@ function Sign-SSHUserPublicKey {
         $CorrespondingPrivateKeyPath = $PathToSSHUserPublicKeyFile -replace "\.pub",""
     }
 
-    if (!$(Test-Path $CorrespondingPrivateKeyPath)) {
-        Write-Error "Unable to find expected path to corresponding private key, i.e. '$CorrespondingPrivateKeyPath'! Halting!"
-        $global:FunctionResult = "1"
-        return
+    if ($PathToSSHUserPrivateKeyFile) {
+        if (!$(Test-Path $CorrespondingPrivateKeyPath)) {
+            Write-Error "Unable to find expected path to corresponding private key, i.e. '$CorrespondingPrivateKeyPath'! Halting!"
+            $global:FunctionResult = "1"
+            return
+        }
     }
 
     $SignedPubKeyCertFilePath = $PathToSSHUserPublicKeyFile -replace "\.pub","-cert.pub"
     
-    # Check to make sure the user private key isn't password protected. If it is, things break
-    # with current Windows OpenSSH implementation
-    try {
-        $ValidateSSHPrivateKeyResult = Validate-SSHPrivateKey -PathToPrivateKeyFile $CorrespondingPrivateKeyPath -ErrorAction Stop
-        if (!$ValidateSSHPrivateKeyResult) {throw "There was a problem with the Validate-SSHPrivateKey function! Halting!"}
+    if ($PathToSSHUserPrivateKeyFile) {
+        # Check to make sure the user private key isn't password protected. If it is, things break
+        # with current Windows OpenSSH implementation
+        try {
+            $ValidateSSHPrivateKeyResult = Validate-SSHPrivateKey -PathToPrivateKeyFile $CorrespondingPrivateKeyPath -ErrorAction Stop
+            if (!$ValidateSSHPrivateKeyResult) {throw "There was a problem with the Validate-SSHPrivateKey function! Halting!"}
 
-        if (!$ValidateSSHPrivateKeyResult.ValidSSHPrivateKeyFormat) {
-            throw "'$CorrespondingPrivateKeyPath' is not in a valid format! Double check with: ssh-keygen -y -f `"$CorrespondingPrivateKeyPath`""
+            if (!$ValidateSSHPrivateKeyResult.ValidSSHPrivateKeyFormat) {
+                throw "'$CorrespondingPrivateKeyPath' is not in a valid format! Double check with: ssh-keygen -y -f `"$CorrespondingPrivateKeyPath`""
+            }
+            if ($ValidateSSHPrivateKeyResult.PasswordProtected) {
+                $KeysCurrentlyInAgent = ssh-add -L
+                if (![bool]$($KeysCurrentlyInAgent -match $CorrespondingPrivateKeyPath)) {
+                    throw "'$CorrespondingPrivateKeyPath' is password protected and it has not been loaded into the ssh-agent! This means there will be a prompt! Halting!"
+                }
+            }
         }
-        if ($ValidateSSHPrivateKeyResult.PasswordProtected) {
-            throw "'$CorrespondingPrivateKeyPath' is password protected! This breaks the current implementation of OpenSSH on Windows. Halting!"
+        catch {
+            Write-Error $_
+            $global:FunctionResult = "1"
+            return
         }
-    }
-    catch {
-        Write-Error $_
-        $global:FunctionResult = "1"
-        return
     }
 
     # Make sure $VaultSSHClientSigningUrl is a valid Url
@@ -158,7 +186,9 @@ function Sign-SSHUserPublicKey {
         $VaultSSHClientSigningUrl = $VaultSSHClientSigningUrl.Substring(0,$VaultSSHClientSigningUrl.Length-1)
     }
 
-    ##### BEGIN Main Body #####
+    #endregion >> Prep
+
+    #region >> Main
 
     # HTTP API Request
     # The below removes 'comment' text from the Host Public key because sometimes it can cause problems
@@ -212,58 +242,18 @@ function Sign-SSHUserPublicKey {
     Set-Content -Value $($SignedSSHClientPubKeyCertResponse.Content | ConvertFrom-Json).data.signed_key.Trim() -Path $SignedPubKeyCertFilePath
 
     if ($AddToSSHAgent) {
-        # Push/Pop-Location probably aren't necessary...but just in case...
-        Push-Location $($CorrespondingPrivateKeyPath | Split-Path -Parent)
-    
-        #$null = ssh-add "$CorrespondingPrivateKeyPath"
-        $SSHAddArgs = "`"$CorrespondingPrivateKeyPath`""
-
-        $SSHAddProcessInfo = New-Object System.Diagnostics.ProcessStartInfo
-        $SSHAddProcessInfo.WorkingDirectory = $($(Get-Command ssh-add).Source | Split-Path -Parent)
-        $SSHAddProcessInfo.FileName = "ssh-add.exe"
-        $SSHAddProcessInfo.RedirectStandardError = $true
-        $SSHAddProcessInfo.RedirectStandardOutput = $true
-        $SSHAddProcessInfo.UseShellExecute = $false
-        $SSHAddProcessInfo.Arguments = $SSHAddArgs
-        $SSHAddProcess = New-Object System.Diagnostics.Process
-        $SSHAddProcess.StartInfo = $SSHAddProcessInfo
-        $SSHAddProcess.Start() | Out-Null
-        $SSHAddProcess.WaitForExit()
-        $SSHAddStdout = $SSHAddProcess.StandardOutput.ReadToEnd()
-        $SSHAddStderr = $SSHAddProcess.StandardError.ReadToEnd()
-        $SSHAddAllOutput = $SSHAddStdout + $SSHAddStderr
-        
-        if ($SSHAddAllOutput -match "fail|error") {
-            Write-Error $SSHAddAllOutput
-            Write-Error "The 'ssh-add $($PrivKey.FullName)' command failed!"
+        $null = [scriptblock]::Create("ssh-add `"$CorrespondingPrivateKeyPath`"").InvokeReturnAsIs()
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warning $Error[0].Exception.Message
         }
 
         if ($SSHAgentExpiry) {
-            #$null = ssh-add -t $SSHAgentExpiry
-            $SSHAddArgs = '-t $SSHAgentExpiry'
-
-            $SSHAddProcessInfo = New-Object System.Diagnostics.ProcessStartInfo
-            $SSHAddProcessInfo.WorkingDirectory = $($(Get-Command ssh-add).Source | Split-Path -Parent)
-            $SSHAddProcessInfo.FileName = "ssh-add.exe"
-            $SSHAddProcessInfo.RedirectStandardError = $true
-            $SSHAddProcessInfo.RedirectStandardOutput = $true
-            $SSHAddProcessInfo.UseShellExecute = $false
-            $SSHAddProcessInfo.Arguments = $SSHAddArgs
-            $SSHAddProcess = New-Object System.Diagnostics.Process
-            $SSHAddProcess.StartInfo = $SSHAddProcessInfo
-            $SSHAddProcess.Start() | Out-Null
-            $SSHAddProcess.WaitForExit()
-            $SSHAddStdout = $SSHAddProcess.StandardOutput.ReadToEnd()
-            $SSHAddStderr = $SSHAddProcess.StandardError.ReadToEnd()
-            $SSHAddAllOutput = $SSHAddStdout + $SSHAddStderr
-            
-            if ($SSHAddAllOutput -match "fail|error") {
-                Write-Error $SSHAddAllOutput
-                Write-Error "The 'ssh-add $($PrivKey.FullName)' command failed!"
+            $null = [scriptblock]::Create("ssh-add -t $SSHAgentExpiry").InvokeReturnAsIs()
+            if ($LASTEXITCODE -ne 0) {
+                Write-Warning $Error[0].Exception.Message
             }
         }
-
-        Pop-Location
+        
         $AddedToSSHAgent = $True
     }
 
@@ -275,13 +265,15 @@ function Sign-SSHUserPublicKey {
     }
 
     [pscustomobject]$Output
+
+    #endregion >> Main
 }
 
 # SIG # Begin signature block
 # MIIMiAYJKoZIhvcNAQcCoIIMeTCCDHUCAQExCzAJBgUrDgMCGgUAMGkGCisGAQQB
 # gjcCAQSgWzBZMDQGCisGAQQBgjcCAR4wJgIDAQAABBAfzDtgWUsITrck0sYpfvNR
-# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQU5IS/T069HrHnE8dUnpKFe+81
-# ttWgggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
+# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUCT3e5F36N5Ay4oSxsbXMJ8+z
+# cXigggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
 # 9w0BAQsFADAwMQwwCgYDVQQGEwNMQUIxDTALBgNVBAoTBFpFUk8xETAPBgNVBAMT
 # CFplcm9EQzAxMB4XDTE3MDkyMDIxMDM1OFoXDTE5MDkyMDIxMTM1OFowPTETMBEG
 # CgmSJomT8ixkARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMT
@@ -338,11 +330,11 @@ function Sign-SSHUserPublicKey {
 # ARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMTB1plcm9TQ0EC
 # E1gAAAH5oOvjAv3166MAAQAAAfkwCQYFKw4DAhoFAKB4MBgGCisGAQQBgjcCAQwx
 # CjAIoAKAAKECgAAwGQYJKoZIhvcNAQkDMQwGCisGAQQBgjcCAQQwHAYKKwYBBAGC
-# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFL90b2+cy7cjdsUg
-# +41M5l0NXupZMA0GCSqGSIb3DQEBAQUABIIBAJq02hHvTFv2gcFfGcGbd7CYKzWM
-# nXWM8PpvnMDWt9bdoe7b+O9TN56KYZAEjd9AqG+3TwX35X7PYmdsx82FMkTibgt+
-# imWdYhIwV0nc0964Mww6OnksT+nwzpW/ogUzcZsNT3ntPyoU8I+X6GXucQ6lv3Qm
-# XFaA71TnrjswxxCBBQO3Hfp/6kaSEvz49NWTbtkVlLMWwF/cpbid3X80X4emhqFn
-# uCvKhs6b4/gEWR/lHUBXGy9HMOO+QpVdYIKx1Y8ob/CeY7B4VQu76uq5zeaaHLMQ
-# tkVPgUoH6kcYfUMXL2mGhXzlFwKS68yoi0BWvOVHxWdGqZVb1gFiatg5G5M=
+# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFMyoBSy3L/2+0ZoR
+# 8DjTIrJY2DUeMA0GCSqGSIb3DQEBAQUABIIBAEpRXUlohM7Jam3RQs9rtvZvTCDQ
+# qJ6Q8WD3mAGPusKY/YgDHMu/4RdrsO0XHpMym/i3me6l0lNwR5T1zAp6KHNjWW2b
+# sNkF4o7M3Zelyd2f6gnP78eIQnD446hsuZpnv2gBOge4qDt5qtagDmntLnVwsyE3
+# u6QxC11XeRQ3dYiVI7uZVNyAboviM7YZDH98Cav8Utju4e+OT/AEeEN3lF9K7URl
+# 1+iMMvSOMo5ML0lFKVOhzEp2CLvMHEOJCYYuoGi7rYq4pnpUVscWuiB2/SLtpK+Y
+# eNKPq8VH0kixTGxeeymJfI3pEu1Dj36J3BRGAUNwmT0qpkVKOrrJ9t7AMWg=
 # SIG # End signature block

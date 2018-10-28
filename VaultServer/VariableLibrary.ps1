@@ -1,37 +1,55 @@
 [System.Collections.ArrayList]$script:FunctionsForSBUse = @(
+    ${Function:AddMySudoPwd}.Ast.Extent.Text
+    ${Function:AddWinRMTrustedHost}.Ast.Extent.Text
     ${Function:AddWinRMTrustLocalHost}.Ast.Extent.Text
     ${Function:ConvertFromHCLToPrintF}.Ast.Extent.Text
+    ${Function:DownloadNuGetPackage}.Ast.Extent.Text
     ${Function:GetComputerObjectsInLDAP}.Ast.Extent.Text
-    ${Function:GetCurrentuser}.Ast.Extent.Text
+    ${Function:GetCurrentUser}.Ast.Extent.Text
     ${Function:GetDomainController}.Ast.Extent.Text
+    ${Function:GetDomainName}.Ast.Extent.Text
     ${Function:GetElevation}.Ast.Extent.Text
     ${Function:GetGroupObjectsInLDAP}.Ast.Extent.Text
+    ${Function:GetLDAPGroupAndUsers}.Ast.Extent.Text
+    ${Function:GetLDAPUserAndGroups}.Ast.Extent.Text
+    ${Function:GetLinuxOctalPermissions}.Ast.Extent.Text
+    ${Function:GetLocalGroupAndUsers}.Ast.Extent.Text
+    ${Function:GetLocalUserAndGroups}.Ast.Extent.Text
     ${Function:GetModuleDependencies}.Ast.Extent.Text
-    ${Function:GetNativePath}.Ast.Extent.Text
+    ${Function:GetMySudoStatus}.Ast.Extent.Text
     ${Function:GetUserObjectsInLDAP}.Ast.Extent.Text
+    ${Function:InstallLinuxPackage}.Ast.Extent.Text
     ${Function:InvokeModuleDependencies}.Ast.Extent.Text
     ${Function:InvokePSCompatibility}.Ast.Extent.Text
     ${Function:ManualPSGalleryModuleInstall}.Ast.Extent.Text
+    ${Function:NewCronToAddSudoPwd}.Ast.Extent.Text
     ${Function:NewUniqueString}.Ast.Extent.Text
-    ${Function:PauseForWarning}.Ast.Extent.Text
+    ${Function:RemoveMySudoPwd}.Ast.Extent.Text
     ${Function:ResolveHost}.Ast.Extent.Text
     ${Function:TestIsValidIPAddress}.Ast.Extent.Text
     ${Function:TestLDAP}.Ast.Extent.Text
     ${Function:TestPort}.Ast.Extent.Text
     ${Function:UnzipFile}.Ast.Extent.Text
     ${Function:Add-CAPubKeyToSSHAndSSHDConfig}.Ast.Extent.Text
+    ${Function:Add-PublicKeyToRemoteHost}.Ast.Extent.Text
     ${Function:Configure-VaultServerForLDAPAuth}.Ast.Extent.Text
     ${Function:ConfigureVaultServerForSSHManagement}.Ast.Extent.Text
+    ${Function:Generate-AuthorizedPrincipalsFile}.Ast.Extent.Text
+    ${Function:Generate-SSHUserDirFileInfo}.Ast.Extent.Text
     ${Function:Get-LDAPCert}.Ast.Extent.Text
+    ${Function:Get-SSHClientAuthSanity}.Ast.Extent.Text
+    ${Function:Get-SSHFileInfo}.Ast.Extent.Text
     ${Function:Get-VaultAccessorLookup}.Ast.Extent.Text
     ${Function:Get-VaultLogin}.Ast.Extent.Text
     ${Function:Get-VaultTokenAccessors}.Ast.Extent.Text
     ${Function:Get-VaultTokens}.Ast.Extent.Text
     ${Function:Manage-StoredCredentials}.Ast.Extent.Text
     ${Function:New-SSHCredentials}.Ast.Extent.Text
+    ${Function:New-SSHKey}.Ast.Extent.Text
     ${Function:Revoke-VaultToken}.Ast.Extent.Text
     ${Function:Sign-SSHHostPublicKey}.Ast.Extent.Text
     ${Function:Sign-SSHUserPublicKey}.Ast.Extent.Text
+    ${Function:Validate-SSHPrivateKey}.Ast.Extent.Text
 )
 
 # Below $opensslkeysource from http://www.jensign.com/opensslkey/index.html
@@ -1248,8 +1266,8 @@ if(Win32.CertStrToName(X509_ASN_ENCODING, DN, CERT_X500_NAME_STR, IntPtr.Zero, n
 # SIG # Begin signature block
 # MIIMiAYJKoZIhvcNAQcCoIIMeTCCDHUCAQExCzAJBgUrDgMCGgUAMGkGCisGAQQB
 # gjcCAQSgWzBZMDQGCisGAQQBgjcCAR4wJgIDAQAABBAfzDtgWUsITrck0sYpfvNR
-# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUi3JO26NLvUcRBru6FNwSvLid
-# H32gggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
+# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUDnQ6UBaFKAApBz6AwzV7lBwZ
+# gIKgggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
 # 9w0BAQsFADAwMQwwCgYDVQQGEwNMQUIxDTALBgNVBAoTBFpFUk8xETAPBgNVBAMT
 # CFplcm9EQzAxMB4XDTE3MDkyMDIxMDM1OFoXDTE5MDkyMDIxMTM1OFowPTETMBEG
 # CgmSJomT8ixkARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMT
@@ -1306,11 +1324,11 @@ if(Win32.CertStrToName(X509_ASN_ENCODING, DN, CERT_X500_NAME_STR, IntPtr.Zero, n
 # ARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMTB1plcm9TQ0EC
 # E1gAAAH5oOvjAv3166MAAQAAAfkwCQYFKw4DAhoFAKB4MBgGCisGAQQBgjcCAQwx
 # CjAIoAKAAKECgAAwGQYJKoZIhvcNAQkDMQwGCisGAQQBgjcCAQQwHAYKKwYBBAGC
-# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFPXCu1P10aWPWD+U
-# D6Yqh5d2es1aMA0GCSqGSIb3DQEBAQUABIIBAFx8jBFRhH17VUrjHM6kfY4gFPsF
-# JnGu6svPbnaeoLHCcfh453Zj+FRH7rIQszmIg6hq6qUaRfJXfjTY1RzKV8SRj0XA
-# cE812HhrsvVi6ic8v3yUUbkeU6WhXSngIy1RrNFEf5jcSNCMEBgtPti8QxzRJ4tR
-# 5MBJSg8SjkeFJeDscYi/Caf5q704HJB9TsI6qjkwuP1O1VUCyzOMs+8cr6jRZUBm
-# WJ7U6/wyV3+E4WfnGEF+xW0gKmmlgTWZZGamQoRblgsDxduDsL7qh7NfRImP88zj
-# /ZVXEOHf9cbceXuuNDRPEofy+Kk7c6W3EH9uhLeVG4S2fPWJXNiC9uJ1uF4=
+# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFI+AUD02s3UvMMVc
+# UxXBs5AvGkt1MA0GCSqGSIb3DQEBAQUABIIBACKbLd9RrLIKX4V3pd0RSsf8tnqX
+# bJp4IaSf6hFiap91XqyzNEzeYA9Ow8DWVSWQ2cNSLVJ5Zl9Ppy4zAVouJp2uzKh5
+# 9CjujO1mCopzWh02SETj0sL9NK5VwGvcesN/WtxELFeK/NdINvwPcC9DNlWYfAnq
+# ebM0zbRc6RS8H3lFcegZA5LxWrNoeied/3sHXUoFiEPJOhgqSCvS/x6WWWALbit+
+# NKRSIu2X7vr6M8W7Y9LW0t/mH0SQfVtiERKUocuKIcz6Ta8NGCzK1PpJQqeJg3uR
+# 4NH2Mf0ThwoHTZRwy7nuCuUNCtkoQ9luE4+HKdA0g4QYYnI7Dz0RgV400Lk=
 # SIG # End signature block

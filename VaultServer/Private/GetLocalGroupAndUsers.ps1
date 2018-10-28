@@ -1,70 +1,99 @@
-function GetComputerObjectsInLDAP {
+function GetLocalGroupAndUsers {
     [CmdletBinding()]
     Param()
 
-    # Below $LDAPInfo Output is PSCustomObject with properties: DirectoryEntryInfo, LDAPBaseUri,
-    # GlobalCatalogConfigured3268, GlobalCatalogConfiguredForSSL3269, Configured389, ConfiguredForSSL636,
-    # PortsThatWork
-    try {
-        $DomainControllerInfo = GetDomainController -ErrorAction Stop
-        $LDAPInfo = TestLDAP -ADServerHostNameOrIP $DomainControllerInfo.PrimaryDomainController -ErrorAction Stop
-        if (!$DomainControllerInfo) {throw "Problem with GetDomainController function! Halting!"}
-        if (!$LDAPInfo) {throw "Problem with TestLDAP function! Halting!"}
-    }
-    catch {
-        Write-Error $_
-        $global:FunctionResult = "1"
-        return
-    }
+    if (!$PSVersionTable.Platform -or $PSVersionTable.Platform -eq "Win32NT") {
+        $AllLocalUsers = Get-LocalUser
+        $AllLocalGroups = Get-LocalGroup
 
-    if (!$LDAPInfo.PortsThatWork) {
-        Write-Error "Unable to access LDAP on $($DomainControllerInfo.PrimaryDomainController)! Halting!"
-        $global:FunctionResult = "1"
-        return
-    }
+        [System.Collections.ArrayList]$AllLocalGroupMembership = @()
+        foreach ($Group in $AllLocalGroups) {
+            $Users = Get-LocalGroupMember $Group | Where-Object {$_.PrincipalSource -eq "Local"} | foreach {
+                if ($_.Name -match '\\') {
+                    $($_.Name -split '\\')[-1]
+                }
+                else {
+                    $_.Name
+                }
+            }
+            if ($Users) {
+                $PSObject = [pscustomobject]@{
+                    Group   = $Group.Name
+                    Users   = @($Users)
+                }
+                $null = $AllLocalGroupMembership.Add($PSObject)
+            }
+        }
 
-    if ($LDAPInfo.PortsThatWork -contains "389") {
-        $LDAPUri = $LDAPInfo.LDAPBaseUri + ":389"
+        $AllLocalGroupMembership
     }
-    elseif ($LDAPInfo.PortsThatWork -contains "3268") {
-        $LDAPUri = $LDAPInfo.LDAPBaseUri + ":3268"
-    }
-    elseif ($LDAPInfo.PortsThatWork -contains "636") {
-        $LDAPUri = $LDAPInfo.LDAPBaseUri + ":636"
-    }
-    elseif ($LDAPInfo.PortsThatWork -contains "3269") {
-        $LDAPUri = $LDAPInfo.LDAPBaseUri + ":3269"
-    }
+    
+    if ($PSVersionTable.Platform -eq "Unix" -or $PSVersionTable.OS -match "Darwin") {
+        $AllUsers = $(bash -c "getent passwd") | foreach {$($_ -split ':')[0]}
+        $AllGroups = $(bash -c "getent group") | foreach {$($_ -split ':')[0]}
+        [System.Collections.ArrayList]$UserAndGroups = foreach ($User in $AllUsers) {
+            $Groups = $(bash -c "getent group | grep $User") | foreach {$($_ -split ':')[0]}
+            [pscustomobject]@{
+                User    = $User
+                Groups  = [System.Collections.ArrayList]@($Groups)
+            }
+        }
 
-    <#
-    $LDAPSearchRoot = [System.DirectoryServices.DirectoryEntry]::new($LDAPUri)
-    $LDAPSearcher = [System.DirectoryServices.DirectorySearcher]::new($LDAPSearchRoot)
-    $LDAPSearcher.Filter = "(&(objectCategory=Group))"
-    $LDAPSearcher.SizeLimit = 0
-    $LDAPSearcher.PageSize = 250
-    $GroupObjectsInLDAP = $LDAPSearcher.FindAll() | foreach {$_.GetDirectoryEntry()}
-    #>
+        [System.Collections.ArrayList]$GroupAndUsers = foreach ($Group in $AllGroups) {
+            $Users = foreach ($UserObj in $UserAndGroups) {
+                if ($UserObj.Groups -contains $Group) {
+                    $UserObj.User
+                }
+            }
+            [pscustomobject]@{
+                Group   = $Group
+                Users   = [System.Collections.ArrayList]@($Users)
+            }
+        }
 
-    $LDAPSearchRoot = [System.DirectoryServices.DirectoryEntry]::new($LDAPUri)
-    $LDAPSearcher = [System.DirectoryServices.DirectorySearcher]::new($LDAPSearchRoot)
-    $LDAPSearcher.Filter = "(objectClass=computer)"
-    $LDAPSearcher.SizeLimit = 0
-    $LDAPSearcher.PageSize = 250
-    $ComputerObjectsInLDAP = $LDAPSearcher.FindAll() | foreach {$_.GetDirectoryEntry()}
-    <#
-    $null = $LDAPSearcher.PropertiesToLoad.Add("name")
-    [System.Collections.ArrayList]$ServerList = $($LDAPSearcher.FindAll().Properties.GetEnumerator()).name
-    $null = $ServerList.Insert(0,"Please Select a Server")
-    #>
+        $ActualSudoUsersPrep = foreach ($User in $AllUsers) {
+            bash -c "sudo -l -U $User"
+        }
+        $ActualSudoUsers = $ActualSudoUsersPrep -match "User.*may run .*:" | foreach {$($_ -replace 'User ','' -split ' may')[0]}
+        $PSObject = [pscustomobject]@{
+            Group   = "sudousers"
+            Users   = $ActualSudoUsers
+        }
+        $null = $GroupAndUsers.Add($PSObject)
 
-    $ComputerObjectsInLDAP
+        $HumanUsersPrep = bash -c "awk -F: '`$3 >= 1000 && `$1 != `"nobody`" {print `$1}' /etc/passwd"
+        $HumanUsers = $HumanUsersPrep | Where-Object {$_ -notmatch "nobody"}
+        $PSObject = [pscustomobject]@{
+            Group   = "humanusers"
+            Users   = $HumanUsers
+        }
+        $null = $GroupAndUsers.Add($PSObject)
+
+        foreach ($User in $ActualSudoUsers) {
+            foreach ($obj in $UserAndGroups) {
+                if ($obj.User -eq $User) {
+                    $null = $obj.Groups.Add("sudousers")
+                }
+            }
+        }
+
+        foreach ($User in $HumanUsers) {
+            foreach ($obj in $UserAndGroups) {
+                if ($obj.User -eq $User) {
+                    $null = $obj.Groups.Add("humanusers")
+                }
+            }
+        }
+
+        $GroupAndUsers
+    }
 }
 
 # SIG # Begin signature block
 # MIIMiAYJKoZIhvcNAQcCoIIMeTCCDHUCAQExCzAJBgUrDgMCGgUAMGkGCisGAQQB
 # gjcCAQSgWzBZMDQGCisGAQQBgjcCAR4wJgIDAQAABBAfzDtgWUsITrck0sYpfvNR
-# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUKTp3cWeYwMA35rHO91CCUkR2
-# ebOgggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
+# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUG6Bg76BH/P1RIEW+sQWAU2oD
+# EB+gggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
 # 9w0BAQsFADAwMQwwCgYDVQQGEwNMQUIxDTALBgNVBAoTBFpFUk8xETAPBgNVBAMT
 # CFplcm9EQzAxMB4XDTE3MDkyMDIxMDM1OFoXDTE5MDkyMDIxMTM1OFowPTETMBEG
 # CgmSJomT8ixkARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMT
@@ -121,11 +150,11 @@ function GetComputerObjectsInLDAP {
 # ARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMTB1plcm9TQ0EC
 # E1gAAAH5oOvjAv3166MAAQAAAfkwCQYFKw4DAhoFAKB4MBgGCisGAQQBgjcCAQwx
 # CjAIoAKAAKECgAAwGQYJKoZIhvcNAQkDMQwGCisGAQQBgjcCAQQwHAYKKwYBBAGC
-# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFBqp6Z2cKOR+8nV7
-# zMRZQdIRfkdjMA0GCSqGSIb3DQEBAQUABIIBAAyuviaiNOguwqZUEkjsxU5A/M7W
-# dOQ6v9urZ9zO1sh0CxA4LROYftyaMVI47mAWXpjahYvD1o9MAF2YjpsjfcY4fOPS
-# 7okSn3oMI3d6sn7yhhhiyXDOTiMamdiSA8BuMAN6Bco4J0Buy/xtLYSQxZL5TQ0i
-# L+DbJ+adjvYNdNd3einn0p39jEMjj0kqOqyyHASe14oXRZgFgZQcK5FOjHgYpJg7
-# 901WWdVGGg5smu2DJXEWPigiNGx+I+TtZvcfiHTJNt8OL3KUvKgQn2QxBbBEQvPS
-# 9wCoiSX29HNCxVX+u6aOen6bqpKSKFvCCP/2qI+nl1yHf3G9yM1aLO54nUA=
+# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFOYmylqF4aN2tysJ
+# 6JfjD3AQORmFMA0GCSqGSIb3DQEBAQUABIIBAE5l8Z15R1CDMgo+1uD6HF8R8En6
+# FFvs36XFY813TuGwugVmQr3+z8qZcOdQKrEg9CNmJo0KxwVkqYnjnfC5DkZruZu/
+# 63nOassmEzR5cUFRh5F79o7xIHfIj0+u2B746DiauGeKbKoQCfQyurD4N/8WhGI4
+# bBiD6g41+7W/5Ps8HJFt/mtFKGezmXG+7say+QyYaTrt4ccSACb8m9S9OxPJULcl
+# OZmyLpFV+nJBqncIIvCLreRK7gtlX8pBM/KXf1xVCixyHNjLtmen74ai1IcqUPOE
+# Jz0BYvaTVPyUxbZdgL0z8uM5pGpc+EHmWffUZj3dRrrNbNMHupp4r5zF8Hs=
 # SIG # End signature block

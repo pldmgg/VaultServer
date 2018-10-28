@@ -1,86 +1,74 @@
-function ManualPSGalleryModuleInstall {
+function NewCronToAddSudoPwd {
     [CmdletBinding()]
-    Param (
-        [Parameter(Mandatory=$True)]
-        [string]$ModuleName,
+    Param()
 
-        [Parameter(Mandatory=$False)]
-        [switch]$PreRelease,
+    #region >> Prep
 
-        [Parameter(Mandatory=$False)]
-        [string]$DownloadDirectory
-    )
-
-    if (!$DownloadDirectory) {
-        $DownloadDirectory = $(Get-Location).Path
-    }
-
-    if (!$(Test-Path $DownloadDirectory)) {
-        Write-Error "The path $DownloadDirectory was not found! Halting!"
+    if ($PSVersionTable.Platform -ne "Unix") {
+        Write-Error "This function is meant for use on Linux! Halting!"
         $global:FunctionResult = "1"
         return
     }
 
-    if (![bool]$($($env:PSModulePath -split ";") -match [regex]::Escape("$HOME\Documents\WindowsPowerShell\Modules"))) {
-        $env:PSModulePath = "$HOME\Documents\WindowsPowerShell\Modules;$env:PSModulePath"
-    }
-    if (!$(Test-Path "$HOME\Documents\WindowsPowerShell\Modules")) {
-        $null = New-Item -ItemType Directory "$HOME\Documents\WindowsPowerShell\Modules" -Force
-    }
-
-    if ($PreRelease) {
-        $searchUrl = "https://www.powershellgallery.com/api/v2/Packages?`$filter=Id eq '$ModuleName'"
+    # 'Get-SudoStatus' cannnot be run as root...
+    if (GetElevation) {
+        $GetElevationAsString = ${Function:GetElevation}.Ast.Extent.Text
+        $GetMySudoStatusAsString = ${Function:GetMySudoStatus}.Ast.Extent.Text
+        $FinalScript = $GetElevationAsString + "`n" + $GetMySudoStatusAsString + "`n" + "GetMySudoStatus"
+        $PwshScriptBytes = [System.Text.Encoding]::Unicode.GetBytes($FinalScript)
+        $EncodedCommand = [Convert]::ToBase64String($PwshScriptBytes)
+        $GetSudoStatusResult = su $env:SUDO_USER -c "pwsh -EncodedCommand $EncodedCommand" | ConvertFrom-Json
     }
     else {
-        $searchUrl = "https://www.powershellgallery.com/api/v2/Packages?`$filter=Id eq '$ModuleName' and IsLatestVersion"
-    }
-    $ModuleInfo = Invoke-RestMethod $searchUrl
-    if (!$ModuleInfo -or $ModuleInfo.Count -eq 0) {
-        Write-Error "Unable to find Module Named $ModuleName! Halting!"
-        $global:FunctionResult = "1"
-        return
-    }
-    if ($PreRelease) {
-        if ($ModuleInfo.Count -gt 1) {
-            $ModuleInfo = $($ModuleInfo | Sort-Object -Property Updated | Where-Object {$_.properties.isPrerelease.'#text' -eq 'true'})[-1]
-        }
+        $GetSudoStatusResult = GetMySudoStatus | ConvertFrom-Json
     }
     
-    $OutFilePath = Join-Path $DownloadDirectory $($ModuleInfo.title.'#text' + $ModuleInfo.properties.version + '.zip')
-    if (Test-Path $OutFilePath) {Remove-Item $OutFilePath -Force}
-
-    try {
-        #Invoke-WebRequest $ModuleInfo.Content.src -OutFile $OutFilePath
-        # Download via System.Net.WebClient is a lot faster than Invoke-WebRequest...
-        $WebClient = [System.Net.WebClient]::new()
-        $WebClient.Downloadfile($ModuleInfo.Content.src, $OutFilePath)
-    }
-    catch {
-        Write-Error $_
+    if (!$GetSudoStatusResult.HasSudoPrivileges) {
+        Write-Error "The user does not appear to have sudo privileges on $env:HOSTNAME! Halting!"
         $global:FunctionResult = "1"
         return
     }
     
-    if (Test-Path "$DownloadDirectory\$ModuleName") {Remove-Item "$DownloadDirectory\$ModuleName" -Recurse -Force}
-    Expand-Archive $OutFilePath -DestinationPath "$DownloadDirectory\$ModuleName"
-
-    if ($DownloadDirectory -ne "$HOME\Documents\WindowsPowerShell\Modules") {
-        if (Test-Path "$HOME\Documents\WindowsPowerShell\Modules\$ModuleName") {
-            Remove-Item "$HOME\Documents\WindowsPowerShell\Modules\$ModuleName" -Recurse -Force
-        }
-        Copy-Item -Path "$DownloadDirectory\$ModuleName" -Recurse -Destination "$HOME\Documents\WindowsPowerShell\Modules"
-
-        Remove-Item "$DownloadDirectory\$ModuleName" -Recurse -Force
+    if ($GetSudoStatusResult.PasswordPrompt) {
+        Write-Host "The account '$(whoami)' is already configured to be prompted for a password when running 'sudo pwsh'! No changes made." -ForegroundColor Green
+        return
     }
 
-    Remove-Item $OutFilePath -Force
+    $DomainName = $GetSudoStatusResult.DomainInfo.DomainName
+    $DomainNameShort = $GetSudoStatusResult.DomainInfo.DomainNameShort
+    $UserNameShort = $GetSudoStatusResult.DomainInfo.UserNameShort
+
+    #endregion >> Prep
+
+    #region >> Main
+
+    if ($DomainNameShort) {
+        $RemoveUserString = "grep -Eic '\%$DomainNameShort..$UserNameShort ALL=\(ALL\) NOPASSWD: SUDO_PWSH' > " +
+        "/dev/null && sed -i '/$DomainNameShort..$UserNameShort ALL.*SUDO_PWSH/d' /etc/sudoers"
+    }
+    else {
+        $RemoveUserString = "grep -Eic '$UserNameShort ALL=\(ALL\) NOPASSWD: SUDO_PWSH' > " +
+        "/dev/null && sed -i '/$UserNameShort ALL.*SUDO_PWSH/d' /etc/sudoers"
+    }
+
+    $BashScriptPrep = @(
+        'set -f'
+        "croncmd=\`"sleep 10; ps aux | grep -v grep | grep -Eic '$PID.*pwsh' && echo pwshStillRunning || cat /etc/sudoers.d/pwsh-nosudo.conf | $RemoveUserString && ( crontab -l | grep 'ps aux.*cat /etc/sudoers' ) | crontab -\`""
+        'cronjob=\"* * * * * $croncmd\"'
+        "( crontab -l | grep 'ps aux.*cat /etc/sudoers'; echo \`"`$cronjob\`" ) | crontab -"
+    )
+    $BashScript = $BashScriptPrep -join '; '
+    
+    sudo bash -c "$BashScript"
+
+    #endregion >> Main
 }
 
 # SIG # Begin signature block
 # MIIMiAYJKoZIhvcNAQcCoIIMeTCCDHUCAQExCzAJBgUrDgMCGgUAMGkGCisGAQQB
 # gjcCAQSgWzBZMDQGCisGAQQBgjcCAR4wJgIDAQAABBAfzDtgWUsITrck0sYpfvNR
-# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUKehst4FRbIpIf5iTmu6+Y6IV
-# maigggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
+# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQU4jDWGVJ5YlhWlSSOQmnu49II
+# NTOgggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
 # 9w0BAQsFADAwMQwwCgYDVQQGEwNMQUIxDTALBgNVBAoTBFpFUk8xETAPBgNVBAMT
 # CFplcm9EQzAxMB4XDTE3MDkyMDIxMDM1OFoXDTE5MDkyMDIxMTM1OFowPTETMBEG
 # CgmSJomT8ixkARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMT
@@ -137,11 +125,11 @@ function ManualPSGalleryModuleInstall {
 # ARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMTB1plcm9TQ0EC
 # E1gAAAH5oOvjAv3166MAAQAAAfkwCQYFKw4DAhoFAKB4MBgGCisGAQQBgjcCAQwx
 # CjAIoAKAAKECgAAwGQYJKoZIhvcNAQkDMQwGCisGAQQBgjcCAQQwHAYKKwYBBAGC
-# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFG2P7uvTxEH17rkh
-# 2UG+pv1iX+6bMA0GCSqGSIb3DQEBAQUABIIBAH6Hm5HLF6QPiFfWK06x8u13CjTo
-# L40m7p1UTfu7MxK+pBNxKxa8C3Bn7UpXqS860RVUIFtTjUUDlXeqkjshFZ0EnKzW
-# LQsuq2lUyXqJq9xm/6TX4zg4ybd60LIhmuRkVTY2FoRKz4bc0NAop6wunjAHyh18
-# ZgHdqU9kiqoaqWhFa1VSK8KP/1a6BEIa3jTuTJYlsHtvg2Rfu2+w4w1wHM2JOV3z
-# 7v1gFHmzZHGkFTzrJoSXH78jhB6Ib5jiTvLGf2T7pfrwp3/MdebcvL1Nj0r1x683
-# c/ID7/4sIp6as84dsgljKrXGST8fZq1orFsBm3GgmZctmyZnLou4LOmJewo=
+# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFOR0zE070YVMek8S
+# 230Y0i7GzHqxMA0GCSqGSIb3DQEBAQUABIIBAEZAiG0mElTzuU9rLK8U16kmGJCO
+# k9A+9qgtMGdoOtWHmxkn4mVX4v2OTeKc3CSs2Nrs2o7xGHJLbr105okozVYyYPU9
+# gT42hLVUxdmo+1v6siPH4JKE9hC9kBMg8xQzfacU1k8bArhMBYzfg6PfZIh/OrhX
+# VH2a8FWPvNYB1ogGceyDDOLoh9C0gimspxr2OTnkSoaS+Ak3f7V65Wks8duIhhaT
+# pYRmJYHhGL3QgqNxx3Rq+zcy0D9MNxYrubvyALuuvDHJdpyqBahovmf/dduT5C9f
+# BZbolpIxRCYJX193xuMnw9ef1oiCEsBpEuizNrdQvKCLDA13E8RkeCIW5WA=
 # SIG # End signature block

@@ -69,11 +69,12 @@ PowerShellVersion = '5.1'
 # NestedModules = @()
 
 # Functions to export from this module, for best performance, do not use wildcards and do not delete the entry, use an empty array if there are no functions to export.
-FunctionsToExport = 'Add-CAPubKeyToSSHAndSSHDConfig','Configure-VaultServerForLDAPAuth',
-                    'Configure-VaultServerForSSHManagement','Get-LDAPCert','Get-VaultAccessorLookup',
-                    'Get-VaultLogin','Get-VaultTokenAccessors','Get-VaultTokens',
-                    'Manage-StoredCredentials','New-SSHCredentials','Revoke-VaultToken',
-                    'Sign-SSHHostPublicKey','Sign-SSHUserPublicKey'
+FunctionsToExport = 'Add-CAPubKeyToSSHAndSSHDConfig','Add-PublicKeyToRemoteHost','Configure-VaultServerForLDAPAuth',
+                    'Configure-VaultServerForSSHManagement','Generate-AuthorizedPrincipalsFile',
+                    'Generate-SSHUserDirFileInfo','Get-LDAPCert','Get-SSHClientAuthSanity','Get-SSHFileInfo',
+                    'Get-VaultAccessorLookup','Get-VaultLogin','Get-VaultTokenAccessors','Get-VaultTokens',
+                    'Manage-StoredCredentials','New-SSHCredentials','New-SSHKey','Revoke-VaultToken',
+                    'Sign-SSHHostPublicKey','Sign-SSHUserPublicKey','Validate-SSHPrivateKey'
 
 # Cmdlets to export from this module, for best performance, do not use wildcards and do not delete the entry, use an empty array if there are no cmdlets to export.
 CmdletsToExport = '*'

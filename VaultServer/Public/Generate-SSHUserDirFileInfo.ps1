@@ -1,38 +1,42 @@
 <#
     .SYNOPSIS
-        This function uses the Vault Server REST API to return a list of Vault Token Accessors.
+        This function generates:
+            - An ArrayList of PSCustomObjects that describes the contents of each of the files within the
+            "$HOME\.ssh" directory
+            - An .xml file that can be ingested by the 'Import-CliXml' cmdlet to generate
+            the aforementioned ArrayList of PSCustomObjects in future PowerShell sessions.
+            
+            Each PSCustomObject in the ArrayList contains information similar to:
+
+                File     : C:\Users\zeroadmin\.ssh\PwdProtectedPrivKey
+                FileType : RSAPrivateKey
+                Contents : {-----BEGIN RSA PRIVATE KEY-----, Proc-Type: 4,ENCRYPTED, DEK-Info: AES-128-CBC,27E137C044FC7857DAAC05C408472EF8, ...}
+                Info     : {-----BEGIN RSA PRIVATE KEY-----, Proc-Type: 4,ENCRYPTED, DEK-Info: AES-128-CBC,27E137C044FC7857DAAC05C408472EF8, ...}
+
+        By default, the .xml file is written to "$HOME\.ssh\SSHDirectoryFileInfo.xml"
 
     .DESCRIPTION
         See .SYNOPSIS
 
     .NOTES
 
-    .PARAMETER VaultServerBaseUri
-        This parameter is MANDATORY.
+    .PARAMETER PathToHomeDotSSHDirectory
+        This parameter is OPTIONAL.
 
-        This parameter takes a string that represents a Uri referencing the location of the Vault Server
-        on your network. Example: "https://vaultserver.zero.lab:8200/v1"
-
-    .PARAMETER VaultAuthToken
-        This parameter is MANDATORY.
-
-        This parameter takes a string that represents a Token for a Vault User that has permission to
-        lookup Token Accessors using the Vault Server REST API.
+        This parameter takes a string that represents a full path to the User's .ssh directory. You should
+        only use this parameter if the User's .ssh is NOT under "$HOME\.ssh" for some reason. 
 
     .EXAMPLE
         # Open an elevated PowerShell Session, import the module, and -
 
-        PS C:\Users\zeroadmin> Get-VaultTokenAccessors -VaultServerBaseUri "https://vaultserver.zero.lab:8200/v1" -VaultAuthToken '434f37ca-89ae-9073-8783-087c268fd46f'
+        PS C:\Users\zeroadmin> Generate-SSHUserDirFileInfo
         
 #>
-function Get-VaultTokenAccessors {
+function Generate-SSHUserDirFileInfo {
     [CmdletBinding()]
     Param(
-        [Parameter(Mandatory=$True)]
-        [string]$VaultServerBaseUri, # Should be something like "http://192.168.2.12:8200/v1"
-
-        [Parameter(Mandatory=$True)]
-        [string]$VaultAuthToken # Should be something like 'myroot' or '434f37ca-89ae-9073-8783-087c268fd46f'
+        [Parameter(Mandatory=$False)]
+        [string]$PathToHomeDotSSHDirectory
     )
 
     if ($PSVersionTable.Platform -eq "Unix" -or $PSVersionTable.OS -match "Darwin" -and $env:SudoPwdPrompt) {
@@ -46,36 +50,69 @@ function Get-VaultTokenAccessors {
         $env:SudoPwdPrompt = $False
     }
 
-    # Make sure $VaultServerBaseUri is a valid Url
-    try {
-        $UriObject = [uri]$VaultServerBaseUri
-    }
-    catch {
-        Write-Error $_
-        $global:FunctionResult = "1"
-        return
-    }
-    if (![bool]$($UriObject.Scheme -match "http")) {
-        Write-Error "'$VaultServerBaseUri' does not appear to be a URL! Halting!"
+    # Make sure we have access to ssh binaries
+    if (![bool]$(Get-Command ssh-keygen -ErrorAction SilentlyContinue)) {
+        Write-Error "Unable to find 'ssh-keygen'! Halting!"
         $global:FunctionResult = "1"
         return
     }
 
-    $IWRSplatParams = @{
-        Uri         = "$VaultServerBaseUri/auth/token/accessors"
-        Headers     = @{"X-Vault-Token" = "$VaultAuthToken"}
-        Body        = @{"list" = "true"}
-        Method      = "Get"
+    if (!$PathToHomeDotSSHDirectory) {
+        $PathToHomeDotSSHDirectory = Join-Path $HOME ".ssh"
     }
-    
-    $(Invoke-RestMethod @IWRSplatParams).data.keys
+
+    # Get a list of all files under $HOME\.ssh
+    [array]$SSHHomeFiles = Get-ChildItem -Path $PathToHomeDotSSHDirectory -File | Where-Object {$_.Name -ne "SSHDirectoryFileInfo.xml"}
+
+    if ($SSHHomeFiles.Count -eq 0) {
+        Write-Error "Unable to find any files under '$PathToHomeDotSSHDirectory'! Halting!"
+        $global:FunctionResult = "1"
+        return
+    }
+
+    [System.Collections.ArrayList]$ArrayOfPSObjects = @()
+    foreach ($File in $SSHHomeFiles.FullName) {
+        #Write-Host "Analyzing file '$File' ..."
+        try {
+            $GetSSHFileInfoResult = Get-SSHFileInfo -PathToKeyFile $File -ErrorAction Stop -WarningAction SilentlyContinue
+            if (!$GetSSHFileInfoResult) {
+                #Write-Warning "'$File' is not a valid Public Key, Private Key, or Public Key Certificate!"
+                #Write-Host "Ensuring '$File' is UTF8 encoded and trying again..." -ForegroundColor Yellow
+                Set-Content -Path $File -Value $(Get-Content $File) -Encoding UTF8
+            }
+
+            $GetSSHFileInfoResult = Get-SSHFileInfo -PathToKeyFile $File -ErrorAction Stop -WarningAction SilentlyContinue
+            if (!$GetSSHFileInfoResult) {
+                Write-Verbose "'$File' is definitley not a valid Public Key, Private Key, or Public Key Certificate!"
+            }
+
+            # Sample Output:
+            # NOTE: Possible values for the 'FileType' property are 'RSAPrivateKey','RSAPublicKey', and 'RSAPublicKeyCertificate'
+            <#
+                File     : C:\Users\zeroadmin\.ssh\PwdProtectedPrivKey
+                FileType : RSAPrivateKey
+                Contents : {-----BEGIN RSA PRIVATE KEY-----, Proc-Type: 4,ENCRYPTED, DEK-Info: AES-128-CBC,27E137C044FC7857DAAC05C408472EF8, ...}
+                Info     : {-----BEGIN RSA PRIVATE KEY-----, Proc-Type: 4,ENCRYPTED, DEK-Info: AES-128-CBC,27E137C044FC7857DAAC05C408472EF8, ...}
+            #>
+
+            $null = $ArrayOfPSObjects.Add($GetSSHFileInfoResult)
+        }
+        catch {
+            Write-Error $_
+            $global:FunctionResult = "1"
+            return
+        }
+    }
+
+    $ArrayOfPSObjects
+    $ArrayOfPSObjects | Export-CliXml "$PathToHomeDotSSHDirectory\SSHDirectoryFileInfo.xml"
 }
 
 # SIG # Begin signature block
 # MIIMiAYJKoZIhvcNAQcCoIIMeTCCDHUCAQExCzAJBgUrDgMCGgUAMGkGCisGAQQB
 # gjcCAQSgWzBZMDQGCisGAQQBgjcCAR4wJgIDAQAABBAfzDtgWUsITrck0sYpfvNR
-# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUK6F8vWZ7+/z3LqVXQcV/8UDc
-# fJigggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
+# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUq96s6BnJuRAQjcTUkEokf6Rh
+# c4agggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
 # 9w0BAQsFADAwMQwwCgYDVQQGEwNMQUIxDTALBgNVBAoTBFpFUk8xETAPBgNVBAMT
 # CFplcm9EQzAxMB4XDTE3MDkyMDIxMDM1OFoXDTE5MDkyMDIxMTM1OFowPTETMBEG
 # CgmSJomT8ixkARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMT
@@ -132,11 +169,11 @@ function Get-VaultTokenAccessors {
 # ARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMTB1plcm9TQ0EC
 # E1gAAAH5oOvjAv3166MAAQAAAfkwCQYFKw4DAhoFAKB4MBgGCisGAQQBgjcCAQwx
 # CjAIoAKAAKECgAAwGQYJKoZIhvcNAQkDMQwGCisGAQQBgjcCAQQwHAYKKwYBBAGC
-# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFIRP3A11F4N7VJD4
-# cqtU87BP7Z6OMA0GCSqGSIb3DQEBAQUABIIBAFVonlhQYOGr4BnK2omxAyojtCOc
-# cuDr5ccBsvv1PJ31oJIEXnPzls2uyNt1LEIJtkghHHG6CswmMZAeTh9mlwvA0FKb
-# kgBwDK8q4CDqhUwHR4Gv8MN3OyWnI3ZF3Byd5l1coZrT5sPZZqqXOGgrOwX6DDC/
-# Rmbl9vy8fG3fJAPlIcumqjsyBM9qZI2RsOptO2aM4unwG+FLq/2GpM7iwWROiHzf
-# CGUi4vflfMrsQn3h4vd9Yl6VnguMKfrQxFeOFNkbB3t688Ds+hwjibm5bjjKWWY8
-# TILcfdLDrhrcI3HjIDlmUmr0hijDxRR+vNnVx+RJWF1TCh45tfIUOQguMeI=
+# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFBl4mj8NWmfVCEqG
+# A7DOMbRSHKFlMA0GCSqGSIb3DQEBAQUABIIBALVNjVI7dMgl/b29dpjX2yCoIFLy
+# DMTgSm9puKIsWGrQ0RPKpIO8r8FyBYB/yTPemJO8hJYG6hIU1KKdpdizR88MVyMp
+# pj3LHwjWI4qHGW9BI0MpzVxKYA7+35dtmvXsgqnH+3qooZvyYRF1NRXU9FTdbZwu
+# JbHQGHwOKIbWWDvaXbXsxFPfU9jBFVB8VCNN+ppafvi81+XcyF1baiyGjAYpaCCr
+# EHoCkdyrrIRNXM1Tkvgi6D99ZDOyE5pvDEcaPgu/gA25RT1poJsqzW8lsYwsOzFu
+# Z5NMPcmEaa4+erav/GBxr2rKkua7kQdsjnzfIEjXWfUftwD/R5lg1lfznEE=
 # SIG # End signature block

@@ -1,39 +1,56 @@
 <#
     .SYNOPSIS
-        This function uses the Vault Server REST API to return a list of Vault Token Accessors.
+        This function connects to a Remote Host via ssh and adds the specified User/Client SSH Public Key to
+        the ~/.ssh/authorized_keys file on that Remote Host. As long as you can connect to the Remote Host via
+        ssh, this function will work with both Windows and Linux targets.
 
     .DESCRIPTION
         See .SYNOPSIS
 
     .NOTES
 
-    .PARAMETER VaultServerBaseUri
+    .PARAMETER PublicKeyPath
         This parameter is MANDATORY.
 
-        This parameter takes a string that represents a Uri referencing the location of the Vault Server
-        on your network. Example: "https://vaultserver.zero.lab:8200/v1"
+        This parameter takes a string that represents the full path to the SSH User/Client Public Key that you
+        would like to add to the Remote Host's ~/.ssh/authorized_keys file.
 
-    .PARAMETER VaultAuthToken
+    .PARAMETER RemoteHost
         This parameter is MANDATORY.
 
-        This parameter takes a string that represents a Token for a Vault User that has permission to
-        lookup Token Accessors using the Vault Server REST API.
+        This parameter takes a string that represents an IP Address or DNS-Resolvable name to a remote host
+        running an sshd server.
+
+    .PARAMETER RemoteHostUserName
+        This parameter is MANDATORY,
+
+        This parameter takes a string that represents the User Name you would like to use to ssh
+        into the Remote Host.
 
     .EXAMPLE
         # Open an elevated PowerShell Session, import the module, and -
 
-        PS C:\Users\zeroadmin> Get-VaultTokenAccessors -VaultServerBaseUri "https://vaultserver.zero.lab:8200/v1" -VaultAuthToken '434f37ca-89ae-9073-8783-087c268fd46f'
-        
+        PS C:\Users\zeroadmin> $SplatParams = @{
+            PublicKeyPath       = "$HOME\.ssh\id_rsa.pub"
+            RemoteHost          = "Ubuntu18.zero.lab"
+            RemoteHostUserName  = "zero\zeroadmin"
+        }
+        PS C:\Users\zeroadmin> Add-PublicKeyToRemoteHost @SplatParams
 #>
-function Get-VaultTokenAccessors {
+function Add-PublicKeyToRemoteHost {
     [CmdletBinding()]
     Param(
         [Parameter(Mandatory=$True)]
-        [string]$VaultServerBaseUri, # Should be something like "http://192.168.2.12:8200/v1"
+        [string]$PublicKeyPath,
 
         [Parameter(Mandatory=$True)]
-        [string]$VaultAuthToken # Should be something like 'myroot' or '434f37ca-89ae-9073-8783-087c268fd46f'
+        [string]$RemoteHost,
+
+        [Parameter(Mandatory=$True)]
+        [string]$RemoteHostUserName
     )
+
+    #region >> Prep
 
     if ($PSVersionTable.Platform -eq "Unix" -or $PSVersionTable.OS -match "Darwin" -and $env:SudoPwdPrompt) {
         if (GetElevation) {
@@ -46,36 +63,69 @@ function Get-VaultTokenAccessors {
         $env:SudoPwdPrompt = $False
     }
 
-    # Make sure $VaultServerBaseUri is a valid Url
-    try {
-        $UriObject = [uri]$VaultServerBaseUri
-    }
-    catch {
-        Write-Error $_
-        $global:FunctionResult = "1"
-        return
-    }
-    if (![bool]$($UriObject.Scheme -match "http")) {
-        Write-Error "'$VaultServerBaseUri' does not appear to be a URL! Halting!"
+    if (!$(Test-Path $PublicKeyPath)) {
+        Write-Error "The path $PublicKeyPath was not found! Halting!"
         $global:FunctionResult = "1"
         return
     }
 
-    $IWRSplatParams = @{
-        Uri         = "$VaultServerBaseUri/auth/token/accessors"
-        Headers     = @{"X-Vault-Token" = "$VaultAuthToken"}
-        Body        = @{"list" = "true"}
-        Method      = "Get"
+    try {
+        $RemoteHostNetworkInfo = ResolveHost -HostNameOrIP $RemoteHost -ErrorAction Stop
     }
+    catch {
+        Write-Error "Unable to resolve $RemoteHost! Halting!"
+        $global:FunctionResult = "1"
+        return
+    }    
     
-    $(Invoke-RestMethod @IWRSplatParams).data.keys
+    if (![bool]$(Get-Command ssh -ErrorAction SilentlyContinue)) {
+        Write-Error "Unable to find ssh.exe! Halting!"
+        $global:FunctionResult = "1"
+        return
+    }
+
+    $PubKeyContent = Get-Content $PublicKeyPath
+
+    #endregion >> Prep
+
+
+    #region >> Main
+
+    if ($RemoteHostNetworkInfo.FQDN) {
+        $RemoteHostLocation = $RemoteHostNetworkInfo.FQDN
+    }
+    elseif ($RemoteHostNetworkInfo.HostName) {
+        $RemoteHostLocation = $RemoteHostNetworkInfo.HostName
+    }
+    elseif ($RemoteHostNetworkInfo.IPAddressList[0]) {
+        $RemoteHostLocation = $RemoteHostNetworkInfo.IPAddressList[0]
+    }
+
+    #ssh -t $RemoteHostUserName@$RemoteHostLocation "echo '$PubKeyContent' >> ~/.ssh/authorized_keys"
+    if ($RemoteHostUserName -match "\\|@") {
+        if ($RemoteHostUserName -match "\\") {
+            $DomainPrefix = $($RemoteHostUserName -split "\\")[0]
+        }
+        if ($RemoteHostUserName -match "@") {
+            $DomainPrefix = $($RemoteHostUserName -split "\\")[-1]
+        }
+    }
+
+    if (!$DomainPrefix) {
+        ssh -o "StrictHostKeyChecking=no" -o "BatchMode=yes" -t $RemoteHostUserName@$RemoteHostLocation "echo '$PubKeyContent' >> ~/.ssh/authorized_keys"
+    }
+    else {
+        ssh -o "StrictHostKeyChecking=no" -o "BatchMode=yes" -t $RemoteHostUserName@$DomainPrefix@$RemoteHostLocation "echo '$PubKeyContent' >> ~/.ssh/authorized_keys"
+    }
+
+    #endregion >> Main
 }
 
 # SIG # Begin signature block
 # MIIMiAYJKoZIhvcNAQcCoIIMeTCCDHUCAQExCzAJBgUrDgMCGgUAMGkGCisGAQQB
 # gjcCAQSgWzBZMDQGCisGAQQBgjcCAR4wJgIDAQAABBAfzDtgWUsITrck0sYpfvNR
-# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUK6F8vWZ7+/z3LqVXQcV/8UDc
-# fJigggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
+# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUNZhB4WA4fpPjNeQVeshhyTJs
+# 8qagggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
 # 9w0BAQsFADAwMQwwCgYDVQQGEwNMQUIxDTALBgNVBAoTBFpFUk8xETAPBgNVBAMT
 # CFplcm9EQzAxMB4XDTE3MDkyMDIxMDM1OFoXDTE5MDkyMDIxMTM1OFowPTETMBEG
 # CgmSJomT8ixkARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMT
@@ -132,11 +182,11 @@ function Get-VaultTokenAccessors {
 # ARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMTB1plcm9TQ0EC
 # E1gAAAH5oOvjAv3166MAAQAAAfkwCQYFKw4DAhoFAKB4MBgGCisGAQQBgjcCAQwx
 # CjAIoAKAAKECgAAwGQYJKoZIhvcNAQkDMQwGCisGAQQBgjcCAQQwHAYKKwYBBAGC
-# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFIRP3A11F4N7VJD4
-# cqtU87BP7Z6OMA0GCSqGSIb3DQEBAQUABIIBAFVonlhQYOGr4BnK2omxAyojtCOc
-# cuDr5ccBsvv1PJ31oJIEXnPzls2uyNt1LEIJtkghHHG6CswmMZAeTh9mlwvA0FKb
-# kgBwDK8q4CDqhUwHR4Gv8MN3OyWnI3ZF3Byd5l1coZrT5sPZZqqXOGgrOwX6DDC/
-# Rmbl9vy8fG3fJAPlIcumqjsyBM9qZI2RsOptO2aM4unwG+FLq/2GpM7iwWROiHzf
-# CGUi4vflfMrsQn3h4vd9Yl6VnguMKfrQxFeOFNkbB3t688Ds+hwjibm5bjjKWWY8
-# TILcfdLDrhrcI3HjIDlmUmr0hijDxRR+vNnVx+RJWF1TCh45tfIUOQguMeI=
+# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFKNvv/afkFXRu7hG
+# lBXhy1/1So4jMA0GCSqGSIb3DQEBAQUABIIBAJtfce1nETeP5NLU5yxDpGMGRje3
+# 04M3K3Rk0MCoO+bw/xnnvnw7MdMqmWFvYoOLys/cW76GdQSl6dxD5EFkpcuY4rZj
+# P4tdCsigOf/LF70WVl48TWfZqg9FvLf1NkVH75obnJlASS6bFmyU1xNA49/zZzIL
+# 8HHdB2ep4k9T2CQNAVlkdMX89HfFXEgbZdR8Y71czAyBp67P7AkoC2ITJI2x6DwD
+# UyQV7pNXf91JOelDIMqqM7fyLaJI3+Mg/UtY3fEu4HRdYY3U9S3cXHFmU/Rdwaq3
+# AjPExbEHE+ZxrOPv7dHOTiO+94QCNf3wcJ9wWQfdfI5D6nw3Lsq9IYfogJw=
 # SIG # End signature block

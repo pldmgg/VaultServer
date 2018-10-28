@@ -14,8 +14,7 @@ function InvokePSCompatibility {
 
     #region >> Prep
 
-    if ($PSVersionTable.PSEdition -ne "Core" -or
-    $($PSVersionTable.PSEdition -ne "Core" -and $PSVersionTable.Platform -ne "Win32NT")) {
+    if ($PSVersionTable.PSEdition -ne "Core" -or $PSVersionTable.Platform -ne "Win32NT" -or !$PSVersionTable.Platform) {
         Write-Error "This function is only meant to be used with PowerShell Core on Windows! Halting!"
         $global:FunctionResult = "1"
         return
@@ -117,6 +116,18 @@ function InvokePSCompatibility {
 
         if ($GetModDepsSplatParams.Keys.Count -gt 0) {
             $RequiredLocallyAvailableModulesScan = GetModuleDependencies @GetModDepsSplatParams
+
+            # Scan the Private Functions as well...
+            $PrivateFunctions = Get-ChildItem -Path $PSScriptRoot -File
+            foreach ($FileItem in $PrivateFunctions) {
+                $RequiredLocallyAvailableModulesScanPrivate = GetModuleDependencies -PathToScriptFile  $FileItem.FullName
+                foreach ($PSObj in $RequiredLocallyAvailableModulesScanPrivate.WinPSModuleDependencies) {
+                    $null = $RequiredLocallyAvailableModulesScan.WinPSModuleDependencies.Add($PSObj)
+                }
+                foreach ($PSObj in $RequiredLocallyAvailableModulesScanPrivate.PSCoreModuleDependencies) {
+                    $null = $RequiredLocallyAvailableModulesScan.PSCoreModuleDependencies.Add($PSObj)
+                }
+            }
         }
     }
     catch {
@@ -203,11 +214,29 @@ function InvokePSCompatibility {
                         }
 
                         if ($PreRelease) {
-                            ManualPSGalleryModuleInstall -ModuleName $ModuleName -DownloadDirectory "$HOME\Downloads" -PreRelease -ErrorAction Stop -WarningAction SilentlyContinue
+                            try {
+                                Install-Module $ModuleName -AllowPrerelease -AllowClobber -Force -ErrorAction Stop -WarningAction SilentlyContinue
+                            }
+                            catch {
+                                ManualPSGalleryModuleInstall -ModuleName $ModuleName -DownloadDirectory "$HOME\Downloads" -PreRelease -ErrorAction Stop -WarningAction SilentlyContinue
+                            }
                         }
                         else {
                             Install-Module $ModuleName -AllowClobber -Force -ErrorAction Stop -WarningAction SilentlyContinue
                         }
+
+                        if ($PSVersionTable.Platform -eq "Unix" -or $PSVersionTable.OS -match "Darwin") {
+                            # Make sure the Module Manifest file name and the Module Folder name are exactly the same case
+                            $env:PSModulePath -split ':' | foreach {
+                                Get-ChildItem -Path $_ -Directory | Where-Object {$_ -match $ModuleName}
+                            } | foreach {
+                                $ManifestFileName = $(Get-ChildItem -Path $_ -Recurse -File | Where-Object {$_.Name -match "$ModuleName\.psd1"}).BaseName
+                                if (![bool]$($_.Name -cmatch $ManifestFileName)) {
+                                    Rename-Item $_ $ManifestFileName
+                                }
+                            }
+                        }
+
                         $null = $ModulesSuccessfullyInstalled.Add($ModuleName)
                     }
 
@@ -251,10 +280,27 @@ function InvokePSCompatibility {
                             }
 
                             if ($PreRelease) {
-                                ManualPSGalleryModuleInstall -ModuleName $args[0] -DownloadDirectory "$HOME\Downloads" -PreRelease
+                                try {
+                                    Install-Module $args[0] -AllowPrerelease -AllowClobber -Force -ErrorAction Stop -WarningAction SilentlyContinue
+                                }
+                                catch {
+                                    ManualPSGalleryModuleInstall -ModuleName $args[0] -DownloadDirectory "$HOME\Downloads" -PreRelease
+                                }
                             }
                             else {
                                 Install-Module $args[0] -AllowClobber -Force
+                            }
+
+                            if ($PSVersionTable.Platform -eq "Unix" -or $PSVersionTable.OS -match "Darwin") {
+                                # Make sure the Module Manifest file name and the Module Folder name are exactly the same case
+                                $env:PSModulePath -split ':' | foreach {
+                                    Get-ChildItem -Path $_ -Directory | Where-Object {$_ -match $args[0]}
+                                } | foreach {
+                                    $ManifestFileName = $(Get-ChildItem -Path $_ -Recurse -File | Where-Object {$_.Name -match "$($args[0])\.psd1"}).BaseName
+                                    if (![bool]$($_.Name -cmatch $ManifestFileName)) {
+                                        Rename-Item $_ $ManifestFileName
+                                    }
+                                }
                             }
                         }
                         $(Get-Item $(Get-Module -ListAvailable $args[0]).Path)
@@ -644,8 +690,8 @@ function InvokePSCompatibility {
 # SIG # Begin signature block
 # MIIMiAYJKoZIhvcNAQcCoIIMeTCCDHUCAQExCzAJBgUrDgMCGgUAMGkGCisGAQQB
 # gjcCAQSgWzBZMDQGCisGAQQBgjcCAR4wJgIDAQAABBAfzDtgWUsITrck0sYpfvNR
-# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUfQBMrlM9AY/1axKGvkwqwCAL
-# Vd2gggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
+# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUc/M3j8qYbHVboYwaTU1pynif
+# EJSgggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
 # 9w0BAQsFADAwMQwwCgYDVQQGEwNMQUIxDTALBgNVBAoTBFpFUk8xETAPBgNVBAMT
 # CFplcm9EQzAxMB4XDTE3MDkyMDIxMDM1OFoXDTE5MDkyMDIxMTM1OFowPTETMBEG
 # CgmSJomT8ixkARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMT
@@ -702,11 +748,11 @@ function InvokePSCompatibility {
 # ARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMTB1plcm9TQ0EC
 # E1gAAAH5oOvjAv3166MAAQAAAfkwCQYFKw4DAhoFAKB4MBgGCisGAQQBgjcCAQwx
 # CjAIoAKAAKECgAAwGQYJKoZIhvcNAQkDMQwGCisGAQQBgjcCAQQwHAYKKwYBBAGC
-# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFBrAinzloWS+wNvV
-# LzaDVkDO87WmMA0GCSqGSIb3DQEBAQUABIIBAFPttvG9ZUyHkrzzyBE3txI8yIIh
-# 0loyKSzDTYeZKKQEZKtxAtE0QQy4ClUmWFxGSN3CUrZw0Bjha+A66MRq6ISuj54n
-# 7w6CubT16ydpoXWa0CbzSq6qGJ8nuinIMmAMY1VEpBhPqUjNVAWi3eijwJxcvgxJ
-# GNpot/3/8F6sWYlFNiJn2Zi7qRcCPP7GblQvT2LygLJyqRTi4PUa13eMnUK3Urda
-# d0LwGbxO7MkrI9BDBDQmBiAEum8RQHwWGHSFVjXHMHSX49uErngyHuTP2m68odc3
-# I6IbIxmLjDVqecEwEcTUDrHyJqjiTVEFDeePlK/3GrAsX4t7mxbG3eHJZvY=
+# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFNUZilxLe/i8yA/j
+# eD8peIoCUSbFMA0GCSqGSIb3DQEBAQUABIIBAHrkLMhnuO1v4Iplebc12X5HOKKE
+# 7Zn4WQZP1O5jgwv1ZjSOjqSRxLpBjHX1qcay35bvueS+o0+gr51NEZcde44s0UEM
+# zmTb/kJMoz6RQbXooxTYFhAmaeGJkSXX0f2DDQl0PH4JIpbO8VlA663key2rOfuV
+# Vl6HDBychqGdt5BmURXysYia4zFKtyCqOyHbYI0L7MX6QJQg1TjyX7bccBbucB0N
+# g2xkgzEtpXbrukdInQ1m9cn8eIthb3bkOjwOFlrMqvCgsZjLs9ezGqjR73RfDT+6
+# vJref35xnlO8SQnZa0Vnjiroeo05fP+RJIrNaXKBLAdu6VKlmHjOuVgnz88=
 # SIG # End signature block

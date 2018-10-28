@@ -1,33 +1,56 @@
-function GetNativePath {
+function InstallLinuxPackage {
     [CmdletBinding()]
-    Param( 
+    Param (
         [Parameter(Mandatory=$True)]
-        [string[]]$PathAsStringArray
+        [string[]]$PossiblePackageNames,
+
+        [Parameter(Mandatory=$True)]
+        [string]$CommandName
     )
 
-    $PathAsStringArray = foreach ($pathPart in $PathAsStringArray) {
-        $SplitAttempt = $pathPart -split [regex]::Escape([IO.Path]::DirectorySeparatorChar)
-        
-        if ($SplitAttempt.Count -gt 1) {
-            foreach ($obj in $SplitAttempt) {
-                $obj
+    if (!$(command -v $CommandName)) {
+        foreach ($PackageName in $PossiblePackageNames) {
+            if ($(command -v pacman)) {
+                $null = sudo pacman -S $PackageName --noconfirm *> $null
+            }
+            elseif ($(command -v yum)) {
+                $null = sudo yum -y install $PackageName *> $null
+            }
+            elseif ($(command -v dnf)) {
+                $null = sudo dnf -y install $PackageName *> $null
+            }
+            elseif ($(command -v apt)) {
+                $null = sudo apt-get -y install $PackageName *> $null
+            }
+            elseif ($(command -v zypper)) {
+                $null = sudo zypper install $PackageName --non-interactive *> $null
+            }
+
+            if ($(command -v $CommandName)) {
+                break
             }
         }
+
+        if (!$(command -v $CommandName)) {
+            Write-Error "Unable to find the command $CommandName! Install unsuccessful! Halting!"
+            $global:FunctionResult = "1"
+            return
+        }
         else {
-            $pathPart
+            Write-Host "$PackageName was successfully installed!" -ForegroundColor Green
         }
     }
-    $PathAsStringArray = $PathAsStringArray -join [IO.Path]::DirectorySeparatorChar
-
-    $PathAsStringArray
-
+    else {
+        Write-Warning "The command $CommandName is already available!"
+        return
+    }
 }
 
 # SIG # Begin signature block
 # MIIMiAYJKoZIhvcNAQcCoIIMeTCCDHUCAQExCzAJBgUrDgMCGgUAMGkGCisGAQQB
 # gjcCAQSgWzBZMDQGCisGAQQBgjcCAR4wJgIDAQAABBAfzDtgWUsITrck0sYpfvNR
-# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUWz0HpC0y96Z+QfS+oyjRr4YL
-# WMCgggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
+# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUZIaUVe2SpCHBXY7F1SOcDgc2
+# U9igggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
 # 9w0BAQsFADAwMQwwCgYDVQQGEwNMQUIxDTALBgNVBAoTBFpFUk8xETAPBgNVBAMT
 # CFplcm9EQzAxMB4XDTE3MDkyMDIxMDM1OFoXDTE5MDkyMDIxMTM1OFowPTETMBEG
 # CgmSJomT8ixkARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMT
@@ -84,11 +107,11 @@ function GetNativePath {
 # ARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMTB1plcm9TQ0EC
 # E1gAAAH5oOvjAv3166MAAQAAAfkwCQYFKw4DAhoFAKB4MBgGCisGAQQBgjcCAQwx
 # CjAIoAKAAKECgAAwGQYJKoZIhvcNAQkDMQwGCisGAQQBgjcCAQQwHAYKKwYBBAGC
-# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFEqezeR98d03NqEP
-# aJuH0VKAnkRmMA0GCSqGSIb3DQEBAQUABIIBALqiWuQ+2CVQffMhHYWHkAKTeOIo
-# eUMIjHtz+UuL9GAhLuAWbuqzKU40952Qie3/lQ9nArgEAgnSiIfrcm1b0KdNdRVg
-# Khibx9cErACiYqo4wR8F6MgzgrX4zY9Tl+KXJgp1BdPNimagysd2ydElShe8tJvb
-# XC9X2MySAbQ+cItFH22sHUijVFBZdbx/0Ulrckm+znsSkn5j//tOcPnYZheh8cjb
-# jp2HlGXJYFhTMOfNRdEihxYZpwv9OANoVkG8NkSUWc3Vv4wLTuFhGZGJwdBVVSrt
-# 6MNI1Td87pqhiVQYoJZdb+iThg3fmBrUjbupYHCibnwGVOaPWIRcsYs+JSM=
+# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFP8hrB+4fZ3xI208
+# KKH/fHpkgmLvMA0GCSqGSIb3DQEBAQUABIIBAKkUnlh5ydB3y4yK+w8SMxBtM0Hv
+# lAB1qc+EjrS8jfMsCnC+wTcv19u5atAKAsjF194Z+yvHNOcLzB2WLyCydT59eEm/
+# bFLgbDM/j6fL0TDkzOHyD/jmhqct7FPCwAXIh9zcrbLkM6AV6sY36GQsrZEK7qS+
+# 51Cq6+ZAhQAzlJPo2NDYlwbwQURLdp4Q0gAN6RLF8piXg96+E94Gz1UBaAR3q48B
+# z0v7qO6yMXOLcpVrwZFLT5+khN9tpX1GNtSsLGc5YQRtUe12a3c83Nc8S8CR9SRT
+# xDzv3pFzzcRgX+y/wKZ3ALTYSNB410JVlNb28kqtM1a2RX3iTPCp7UmzRMQ=
 # SIG # End signature block

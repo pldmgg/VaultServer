@@ -1,49 +1,83 @@
-function PauseForWarning {
-    [CmdletBinding()]
-    Param(
-        [Parameter(Mandatory=$True)]
-        [int]$PauseTimeInSeconds,
+<#
+    .SYNOPSIS
+        This function adds an IP or hostname/fqdn to "WSMan:\localhost\Client\TrustedHosts". It also ensures
+        that the WSMan Client is configured to allow for remoting.
 
+    .DESCRIPTION
+        See .SYNOPSIS
+
+    .NOTES
+
+    .PARAMETER NewRemoteHost
+        This parameter is MANDATORY.
+
+        This parameter takes a string that represents the IP Address, HostName, or FQDN of the Remote Host
+        that you would like to PSRemote to.
+
+    .EXAMPLE
+        # Open an elevated PowerShell Session, import the module, and -
+
+        PS C:\Users\zeroadmin> AddWinRMTrustedHost -NewRemoteHost 192.168.2.49
+        
+#>
+function AddWinRMTrustedHost {
+    [CmdletBinding()]
+    Param (
         [Parameter(Mandatory=$True)]
-        $Message
+        [string[]]$NewRemoteHost
     )
 
-    Write-Warning $Message
-    Write-Host "To answer in the affirmative, press 'y' on your keyboard."
-    Write-Host "To answer in the negative, press any other key on your keyboard, OR wait $PauseTimeInSeconds seconds"
-
-    $timeout = New-Timespan -Seconds ($PauseTimeInSeconds - 1)
-    $stopwatch = [diagnostics.stopwatch]::StartNew()
-    while ($stopwatch.elapsed -lt $timeout){
-        if ([Console]::KeyAvailable) {
-            $keypressed = [Console]::ReadKey("NoEcho").Key
-            Write-Host "You pressed the `"$keypressed`" key"
-            if ($keypressed -eq "y") {
-                $Result = $true
-                break
-            }
-            if ($keypressed -ne "y") {
-                $Result = $false
-                break
+    # Make sure WinRM in Enabled and Running on $env:ComputerName
+    try {
+        $null = Enable-PSRemoting -Force -ErrorAction Stop
+    }
+    catch {
+        $NICsWPublicProfile = @(Get-NetConnectionProfile | Where-Object {$_.NetworkCategory -eq 0})
+        if ($NICsWPublicProfile.Count -gt 0) {
+            foreach ($Nic in $NICsWPublicProfile) {
+                Set-NetConnectionProfile -InterfaceIndex $Nic.InterfaceIndex -NetworkCategory 'Private'
             }
         }
 
-        # Check once every 1 second to see if the above "if" condition is satisfied
-        Start-Sleep 1
+        try {
+            $null = Enable-PSRemoting -Force
+        }
+        catch {
+            Write-Error $_
+            Write-Error "Problem with Enabble-PSRemoting WinRM Quick Config! Halting!"
+            $global:FunctionResult = "1"
+            return
+        }
     }
 
-    if (!$Result) {
-        $Result = $false
+    # If $env:ComputerName is not part of a Domain, we need to add this registry entry to make sure WinRM works as expected
+    if (!$(Get-CimInstance Win32_Computersystem).PartOfDomain) {
+        $null = reg add HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System /v LocalAccountTokenFilterPolicy /t REG_DWORD /d 1 /f
     }
-    
-    $Result
+
+    # Add the New Server's IP Addresses to $env:ComputerName's TrustedHosts
+    $CurrentTrustedHosts = $(Get-Item WSMan:\localhost\Client\TrustedHosts).Value
+    [System.Collections.ArrayList][array]$CurrentTrustedHostsAsArray = $CurrentTrustedHosts -split ','
+
+    $HostsToAddToWSMANTrustedHosts = @($NewRemoteHost)
+    foreach ($HostItem in $HostsToAddToWSMANTrustedHosts) {
+        if ($CurrentTrustedHostsAsArray -notcontains $HostItem) {
+            $null = $CurrentTrustedHostsAsArray.Add($HostItem)
+        }
+        else {
+            Write-Warning "Current WinRM Trusted Hosts Config already includes $HostItem"
+            continue
+        }
+    }
+    $UpdatedTrustedHostsString = $($CurrentTrustedHostsAsArray | Where-Object {![string]::IsNullOrWhiteSpace($_)}) -join ','
+    Set-Item WSMan:\localhost\Client\TrustedHosts $UpdatedTrustedHostsString -Force
 }
 
 # SIG # Begin signature block
 # MIIMiAYJKoZIhvcNAQcCoIIMeTCCDHUCAQExCzAJBgUrDgMCGgUAMGkGCisGAQQB
 # gjcCAQSgWzBZMDQGCisGAQQBgjcCAR4wJgIDAQAABBAfzDtgWUsITrck0sYpfvNR
-# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUjgTRVLKG16XLdaXTyfyFJuGV
-# PCOgggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
+# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQULNu0UfWVcMpjSaNi/cwkBhnq
+# lOugggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
 # 9w0BAQsFADAwMQwwCgYDVQQGEwNMQUIxDTALBgNVBAoTBFpFUk8xETAPBgNVBAMT
 # CFplcm9EQzAxMB4XDTE3MDkyMDIxMDM1OFoXDTE5MDkyMDIxMTM1OFowPTETMBEG
 # CgmSJomT8ixkARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMT
@@ -100,11 +134,11 @@ function PauseForWarning {
 # ARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMTB1plcm9TQ0EC
 # E1gAAAH5oOvjAv3166MAAQAAAfkwCQYFKw4DAhoFAKB4MBgGCisGAQQBgjcCAQwx
 # CjAIoAKAAKECgAAwGQYJKoZIhvcNAQkDMQwGCisGAQQBgjcCAQQwHAYKKwYBBAGC
-# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFK5AtqVL5pVeT28Z
-# attid/RZ4VTGMA0GCSqGSIb3DQEBAQUABIIBAEIRWYUsYkNppK1rmrvs828F91Cn
-# D7Geue0OvcG52iHkEcb9FM9rIdb6UmQrdo4RBOnYkTeWD4Ndyo8bIiwybi4nAi6s
-# 7Sis0TUgHZXcUCCeh49TGpZvDroIXnO1VdxCvzoj8iReJ1pwuf50pjOojDtH/9sY
-# BMwaJLAnvZeAFq8KqUqpYOv9kjvS5ntGAy367ItN58zJ6v+s1tHEG9AKuvT9Omur
-# rZAjcvFQShvv/N4yhWRjcWl2CSYLbplP/4XZrqioy1kvo97GR4tK1Df0SnPfPul2
-# Z1qyzf//nasusRPUoNrl/+s0dSgbSuYP8uBN36fTQyWXGmN14eb4yRMLPI0=
+# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFMxqqeXBm5pv11ta
+# Vgk/P5yvYtwUMA0GCSqGSIb3DQEBAQUABIIBAJZAoNDw0o3vysxGfXIhxwuCJgM/
+# 0OCWYCCCtwSRz4ZrbG7sbGiyZhowA4igEh3HR8SjSaX4T9df7vUdg4EYM1yEnPJ/
+# 7ncXc+2weuCTqpW7zmEJUpUi7BL5AGJdWwVHg95OaB8pKVk40UfSUgu71XBFAaSF
+# 4i5YmkNHhLOt3b3eNiC9kCG+RPi/FvDm5QSQqirVEoW3KMWIWImZtiWEbZF1Jv4v
+# hI3C9zi+Gdu+fMtkEEfxNd+u9gNQUzqOO37uV38jRzw2bqrbo2E+8+AWLLnv4m57
+# NfMbCxemkxODMjCx0mhzCGW+rdvI6Cic/Fxil4ZhxDiTFGRZ//7iBABdwrk=
 # SIG # End signature block

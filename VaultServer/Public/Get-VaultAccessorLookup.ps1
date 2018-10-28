@@ -37,6 +37,17 @@ function Get-VaultAccessorLookup {
         [string]$VaultAuthToken # Should be something like 'myroot' or '434f37ca-89ae-9073-8783-087c268fd46f'
     )
 
+    if ($PSVersionTable.Platform -eq "Unix" -or $PSVersionTable.OS -match "Darwin" -and $env:SudoPwdPrompt) {
+        if (GetElevation) {
+            Write-Error "You should not be running the VaultServer Module as root! Halting!"
+            $global:FunctionResult = "1"
+            return
+        }
+        RemoveMySudoPwd
+        NewCronToAddSudoPwd
+        $env:SudoPwdPrompt = $False
+    }
+
     # Make sure $VaultServerBaseUri is a valid Url
     try {
         $UriObject = [uri]$VaultServerBaseUri
@@ -91,8 +102,8 @@ function Get-VaultAccessorLookup {
 # SIG # Begin signature block
 # MIIMiAYJKoZIhvcNAQcCoIIMeTCCDHUCAQExCzAJBgUrDgMCGgUAMGkGCisGAQQB
 # gjcCAQSgWzBZMDQGCisGAQQBgjcCAR4wJgIDAQAABBAfzDtgWUsITrck0sYpfvNR
-# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUUIaaauAuL27v6nqVK5jAW9Xj
-# 4Zugggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
+# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQU52eLBlldH/bsdmZBwKkp8n1V
+# ybWgggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
 # 9w0BAQsFADAwMQwwCgYDVQQGEwNMQUIxDTALBgNVBAoTBFpFUk8xETAPBgNVBAMT
 # CFplcm9EQzAxMB4XDTE3MDkyMDIxMDM1OFoXDTE5MDkyMDIxMTM1OFowPTETMBEG
 # CgmSJomT8ixkARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMT
@@ -149,11 +160,11 @@ function Get-VaultAccessorLookup {
 # ARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMTB1plcm9TQ0EC
 # E1gAAAH5oOvjAv3166MAAQAAAfkwCQYFKw4DAhoFAKB4MBgGCisGAQQBgjcCAQwx
 # CjAIoAKAAKECgAAwGQYJKoZIhvcNAQkDMQwGCisGAQQBgjcCAQQwHAYKKwYBBAGC
-# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFKEhHWHdSzws4z+k
-# /A9cARyVlU5wMA0GCSqGSIb3DQEBAQUABIIBAKAdKCj+SwnVVhaNXKXcMwALfbLD
-# N+MDpBZgJevXzT4lKirz70U5Bv7F9MXFrgslBxEq+bwonuSnpilGnopTc3UQnInZ
-# 67p8MJLhEOKF5Xo2XsB2MztHJ9bOjpeYXAsF+YnCjUnDABYNHrOxwdAVESiJu5Qn
-# cVmhVLLizgYWJWf6MOytg51Hd9psJc7EKMbWe4sYoSNswi37T1qIKMABfJXHIhU1
-# +tqT8YTRE7S7u/DtGml1kR9S6pJvAX0VFFEE9f6zPyD4eu1oQR3WuewpTGFhpJFr
-# PXcG/LcjXZgbyHRbJG80/6pJ1GZWrILxd6YMWKk/Yt3DZxH7kfBrAD6Eqr8=
+# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFJBU0RnUEoh9rvJC
+# AgSkv0p+ouilMA0GCSqGSIb3DQEBAQUABIIBAAK/22+sAeueLE1OEiYa+IC50AWz
+# v+G3TRh4dZIRaUL89NBW9vyouvYww/B//H9fAQnJQXuxrx/n7HpjMbxk0/Qf4Y4l
+# 1vfpznuauAmnRaUgp5htZG8rsS2B9Kb4m91IpzDtluocPg7fi86CeXjl9ZFjy/+E
+# UJ2wQFmzk1RiYtJ6ZqPeakgMbDbRabAhKMhoSPl2yTnLT52A04B7S4Abyu2G2ozp
+# P7Xt/na3TCl0zYAy4K0FGKJoVyBcuKl4xHeeCyYNjP+W7gBiTHienFEne5YD2mEc
+# Voxo68rc81D8k9shaXK7o/AX74JAeJfW2i2gS0HC8qHjkuyge0H9CAZViz0=
 # SIG # End signature block

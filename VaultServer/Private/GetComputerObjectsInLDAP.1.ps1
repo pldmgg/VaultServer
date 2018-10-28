@@ -1,4 +1,4 @@
-function GetGroupObjectsInLDAP {
+function GetComputerObjectsInLDAP {
     [CmdletBinding()]
     Param(
         [Parameter(Mandatory=$False)]
@@ -174,10 +174,10 @@ function GetGroupObjectsInLDAP {
         $BindUserNameForExpect = $BindUserName -replace [regex]::Escape('\'),'\\\'
         $BindPassword = $LDAPCreds.GetNetworkCredential().Password
 
-        $ldapSearchOutput = ldapsearch -x -h $PDC -D $BindUserName -w $BindPassword -b $DomainLDAPContainers -s sub "(objectClass=group)" cn
+        $ldapSearchOutput = ldapsearch -x -h $PDC -D $BindUserName -w $BindPassword -b $DomainLDAPContainers -s sub "(objectClass=computer)" cn
         
         <#
-        $ldapSearchCmdForExpect = "ldapsearch -x -h $PDC -D $BindUserNameForExpect -W -b `"$DomainLDAPContainers`" -s sub `"(objectClass=group)`" cn"
+        $ldapSearchCmdForExpect = "ldapsearch -x -h $PDC -D $BindUserNameForExpect -W -b `"$DomainLDAPContainers`" -s sub `"(objectClass=computer)`" cn"
 
         [System.Collections.ArrayList]$ExpectScriptPrep = @(
             'expect - << EOF'
@@ -203,9 +203,9 @@ function GetGroupObjectsInLDAP {
         $ExpectOutput = $ldapSearchOutput = bash -c "$ExpectScript"
         #>
 
-        $Groups = $ldapSearchOutput -match "cn:" | foreach {$_ -replace 'cn:[\s]+'}
+        $Computers = $ldapSearchOutput -match "cn:" | foreach {$_ -replace 'cn:[\s]+'}
         if ($ObjectCount -gt 0) {
-            $Groups = $Groups[0..$($ObjectCount-1)]
+            $Computers = $Computers[0..$($ObjectCount-1)]
         }
     }
     else {
@@ -219,13 +219,13 @@ function GetGroupObjectsInLDAP {
                 $LDAPSearchRoot = [System.DirectoryServices.DirectoryEntry]::new($LDAPUri)
             }
             $LDAPSearcher = [System.DirectoryServices.DirectorySearcher]::new($LDAPSearchRoot)
-            $LDAPSearcher.Filter = "(&(objectCategory=Group))"
+            $LDAPSearcher.Filter = "(objectClass=computer)"
             $LDAPSearcher.SizeLimit = 0
             $LDAPSearcher.PageSize = 250
-            $Groups = $LDAPSearcher.FindAll() | foreach {$_.GetDirectoryEntry()}
+            $Computers = $LDAPSearcher.FindAll() | foreach {$_.GetDirectoryEntry()}
 
             if ($ObjectCount -gt 0) {
-                $Groups = $Groups[0..$($ObjectCount-1)]
+                $Computers = $Computers[0..$($ObjectCount-1)]
             }
         }
         catch {
@@ -235,7 +235,7 @@ function GetGroupObjectsInLDAP {
         }
     }
 
-    $Groups
+    $Computers
 
     #endregion >> Main
 }
@@ -243,8 +243,8 @@ function GetGroupObjectsInLDAP {
 # SIG # Begin signature block
 # MIIMiAYJKoZIhvcNAQcCoIIMeTCCDHUCAQExCzAJBgUrDgMCGgUAMGkGCisGAQQB
 # gjcCAQSgWzBZMDQGCisGAQQBgjcCAR4wJgIDAQAABBAfzDtgWUsITrck0sYpfvNR
-# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUHv8BwFS7OUMiNkUeyPl2XMfp
-# JO6gggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
+# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQU1bC1u4e8cj4ntM65L0BZBi4o
+# CAOgggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
 # 9w0BAQsFADAwMQwwCgYDVQQGEwNMQUIxDTALBgNVBAoTBFpFUk8xETAPBgNVBAMT
 # CFplcm9EQzAxMB4XDTE3MDkyMDIxMDM1OFoXDTE5MDkyMDIxMTM1OFowPTETMBEG
 # CgmSJomT8ixkARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMT
@@ -301,11 +301,11 @@ function GetGroupObjectsInLDAP {
 # ARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMTB1plcm9TQ0EC
 # E1gAAAH5oOvjAv3166MAAQAAAfkwCQYFKw4DAhoFAKB4MBgGCisGAQQBgjcCAQwx
 # CjAIoAKAAKECgAAwGQYJKoZIhvcNAQkDMQwGCisGAQQBgjcCAQQwHAYKKwYBBAGC
-# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFOdXnHk7ZFf01REM
-# lkHC7LQVq+TkMA0GCSqGSIb3DQEBAQUABIIBACR00ugxWePyGXuswESDFcXaqCOt
-# ucA0+rA9r4nveIwg288VgXNvBhFenb0iu3IDSEHWFZhdR1RVTsKpugcWBSZqLnKT
-# WU+QLLUz6qQqrwe3RiORLekp8LMml5DSC9HpyAAIsYkgrdmg+lVMwtm7KFwU/uSZ
-# aFIfRb3b6l5mdPaomIYSEbOUI6Xay/A1qyy0l9SEdtAhR8m9vrhkGa4zNGdBI+fM
-# dHj0eRl20mLbaSeL+UKxPrrhphfESWOkL+b1XAVlzz5PCcRAv5uEAOyKQwU+nj32
-# QwYpN0yQa4qj93PzvV9Z9cfczFEPRJ7K2FLdzluBtva3uoF3LdyvMfdNfrE=
+# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFKClZTDxxkiVOAu2
+# iNd9sbmQUIK0MA0GCSqGSIb3DQEBAQUABIIBAAlY2aOmtxIc02WCPJ39sUx6Kgc+
+# 8qcBnDayXtA1gykMmxYX5OXgJv/o0+CgmVcx1eZg3+y9iEhY/hDZx4/LWQCEr0aV
+# cRsBTmwt9RFmJIMgAzqy+tU4f9+bynfrPBIGXmI6n8foNSjjlll6tdxKR5UB5tLz
+# 8Y14DERv/dX1RedT7EotFQ43JopPJuS4bvfQwk6ytcSN7CRB+c8jKQbak790Wjqu
+# TaJFD29V9tMAhcwDIZjpEdVnOo6S+i+WA7rhIZW2BF70ZbI1GGni8DVkDWTpJBOW
+# Oz/jE7S8LJmUqxNAA/QxG9vSPr26QkRd0aQ7Vqi6IhbxXyx/Y1a+qiLKTl0=
 # SIG # End signature block

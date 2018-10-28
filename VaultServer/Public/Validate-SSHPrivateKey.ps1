@@ -1,38 +1,35 @@
 <#
     .SYNOPSIS
-        This function uses the Vault Server REST API to return a list of Vault Token Accessors.
+        This function is meant to determine the following:
+            - Whether or not the specified file is, in fact, an SSH Private Key
+            - If the SSH Private Key File is password protected
+        
+        In order to test if we have a valid Private Key, and if that Private Key
+        is password protected, we try and generate a Public Key from it using ssh-keygen.
+        Depending on the output of ssh-keygen, we can make a determination.
 
     .DESCRIPTION
         See .SYNOPSIS
 
     .NOTES
 
-    .PARAMETER VaultServerBaseUri
+    .PARAMETER PathToPrivateKeyFile
         This parameter is MANDATORY.
 
-        This parameter takes a string that represents a Uri referencing the location of the Vault Server
-        on your network. Example: "https://vaultserver.zero.lab:8200/v1"
-
-    .PARAMETER VaultAuthToken
-        This parameter is MANDATORY.
-
-        This parameter takes a string that represents a Token for a Vault User that has permission to
-        lookup Token Accessors using the Vault Server REST API.
+        This parameter takes a string that represents a full path to the file that we believe is
+        a valid SSH Private Key that we want to test.
 
     .EXAMPLE
         # Open an elevated PowerShell Session, import the module, and -
 
-        PS C:\Users\zeroadmin> Get-VaultTokenAccessors -VaultServerBaseUri "https://vaultserver.zero.lab:8200/v1" -VaultAuthToken '434f37ca-89ae-9073-8783-087c268fd46f'
+        PS C:\Users\zeroadmin> Validate-SSHPrivateKey -PathToPrivateKeyFile "$HOME\.ssh\random"
         
 #>
-function Get-VaultTokenAccessors {
+function Validate-SSHPrivateKey {
     [CmdletBinding()]
     Param(
         [Parameter(Mandatory=$True)]
-        [string]$VaultServerBaseUri, # Should be something like "http://192.168.2.12:8200/v1"
-
-        [Parameter(Mandatory=$True)]
-        [string]$VaultAuthToken # Should be something like 'myroot' or '434f37ca-89ae-9073-8783-087c268fd46f'
+        [string]$PathToPrivateKeyFile
     )
 
     if ($PSVersionTable.Platform -eq "Unix" -or $PSVersionTable.OS -match "Darwin" -and $env:SudoPwdPrompt) {
@@ -46,36 +43,69 @@ function Get-VaultTokenAccessors {
         $env:SudoPwdPrompt = $False
     }
 
-    # Make sure $VaultServerBaseUri is a valid Url
-    try {
-        $UriObject = [uri]$VaultServerBaseUri
-    }
-    catch {
-        Write-Error $_
-        $global:FunctionResult = "1"
-        return
-    }
-    if (![bool]$($UriObject.Scheme -match "http")) {
-        Write-Error "'$VaultServerBaseUri' does not appear to be a URL! Halting!"
+    # Make sure we have access to ssh binaries
+    if (![bool]$(Get-Command ssh-keygen -ErrorAction SilentlyContinue)) {
+        Write-Error "Unable to find 'ssh-keygen' binary! Halting!"
         $global:FunctionResult = "1"
         return
     }
 
-    $IWRSplatParams = @{
-        Uri         = "$VaultServerBaseUri/auth/token/accessors"
-        Headers     = @{"X-Vault-Token" = "$VaultAuthToken"}
-        Body        = @{"list" = "true"}
-        Method      = "Get"
+    # Make sure the path exists
+    if (!$(Test-Path $PathToPrivateKeyFile)) {
+        Write-Error "Unable to find the path '$PathToPrivateKeyFile'! Halting!"
+        $global:FunctionResult = "1"
+        return
     }
-    
-    $(Invoke-RestMethod @IWRSplatParams).data.keys
+
+    $SSHKeyGenParentDir = $(Get-Command ssh-keygen).Source | Split-Path -Parent
+    $SSHKeyGenArguments = "-y -f `"$PathToPrivateKeyFile`""
+
+    $ProcessInfo = New-Object System.Diagnostics.ProcessStartInfo
+    #$ProcessInfo.WorkingDirectory = $SSHKeyGenParentDir
+    $ProcessInfo.FileName = $(Get-Command ssh-keygen).Source
+    $ProcessInfo.RedirectStandardError = $true
+    $ProcessInfo.RedirectStandardOutput = $true
+    #$ProcessInfo.StandardOutputEncoding = [System.Text.Encoding]::Unicode
+    #$ProcessInfo.StandardErrorEncoding = [System.Text.Encoding]::Unicode
+    $ProcessInfo.UseShellExecute = $false
+    $ProcessInfo.Arguments = $SSHKeyGenArguments
+    $Process = New-Object System.Diagnostics.Process
+    $Process.StartInfo = $ProcessInfo
+    $Process.Start() | Out-Null
+    # Below $FinishedInAlottedTime returns boolean true/false
+    $FinishedInAlottedTime = $Process.WaitForExit(5000)
+    if (!$FinishedInAlottedTime) {
+        $Process.Kill()
+        $ProcessKilled = $True
+    }
+    $stdout = $Process.StandardOutput.ReadToEnd()
+    $stderr = $Process.StandardError.ReadToEnd()
+    $SSHKeyGenOutput = $stdout + $stderr
+
+    if ($SSHKeyGenOutput -match "invalid format") {
+        $ValidSSHPrivateKeyFormat = $False
+        $PasswordProtected = $False
+    }
+    if ($SSHKeyGenOutput -match "ssh-rsa AA") {
+        $ValidSSHPrivateKeyFormat = $True
+        $PasswordProtected = $False
+    }
+    if ($SSHKeyGenOutput -match "passphrase|pass phrase" -or $($SSHKeyGenOutput -eq $null -and $ProcessKilled)) {
+        $ValidSSHPrivateKeyFormat = $True
+        $PasswordProtected = $True
+    }
+
+    [pscustomobject]@{
+        ValidSSHPrivateKeyFormat        = $ValidSSHPrivateKeyFormat
+        PasswordProtected               = $PasswordProtected
+    }
 }
 
 # SIG # Begin signature block
 # MIIMiAYJKoZIhvcNAQcCoIIMeTCCDHUCAQExCzAJBgUrDgMCGgUAMGkGCisGAQQB
 # gjcCAQSgWzBZMDQGCisGAQQBgjcCAR4wJgIDAQAABBAfzDtgWUsITrck0sYpfvNR
-# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUK6F8vWZ7+/z3LqVXQcV/8UDc
-# fJigggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
+# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUY84vTj+og50K+UwFD5cXkDfL
+# Gr6gggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
 # 9w0BAQsFADAwMQwwCgYDVQQGEwNMQUIxDTALBgNVBAoTBFpFUk8xETAPBgNVBAMT
 # CFplcm9EQzAxMB4XDTE3MDkyMDIxMDM1OFoXDTE5MDkyMDIxMTM1OFowPTETMBEG
 # CgmSJomT8ixkARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMT
@@ -132,11 +162,11 @@ function Get-VaultTokenAccessors {
 # ARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMTB1plcm9TQ0EC
 # E1gAAAH5oOvjAv3166MAAQAAAfkwCQYFKw4DAhoFAKB4MBgGCisGAQQBgjcCAQwx
 # CjAIoAKAAKECgAAwGQYJKoZIhvcNAQkDMQwGCisGAQQBgjcCAQQwHAYKKwYBBAGC
-# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFIRP3A11F4N7VJD4
-# cqtU87BP7Z6OMA0GCSqGSIb3DQEBAQUABIIBAFVonlhQYOGr4BnK2omxAyojtCOc
-# cuDr5ccBsvv1PJ31oJIEXnPzls2uyNt1LEIJtkghHHG6CswmMZAeTh9mlwvA0FKb
-# kgBwDK8q4CDqhUwHR4Gv8MN3OyWnI3ZF3Byd5l1coZrT5sPZZqqXOGgrOwX6DDC/
-# Rmbl9vy8fG3fJAPlIcumqjsyBM9qZI2RsOptO2aM4unwG+FLq/2GpM7iwWROiHzf
-# CGUi4vflfMrsQn3h4vd9Yl6VnguMKfrQxFeOFNkbB3t688Ds+hwjibm5bjjKWWY8
-# TILcfdLDrhrcI3HjIDlmUmr0hijDxRR+vNnVx+RJWF1TCh45tfIUOQguMeI=
+# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFKxk/vj+dDRvZao5
+# ddG27Wxa73rfMA0GCSqGSIb3DQEBAQUABIIBAJUvXDPA4zfrxZDyFx934B+MoM6R
+# 0Ci483ie/p3ApA2wz7DEURd6GSF8DtDlq1btRL/ZPCl9abODgpQKGMskXzTisZhb
+# Y5QQTwUVfKb/wY0BHzvDu98UY1kFXIv934auc2rmCkPDiRxvrc6votNyjf2wnzvQ
+# InozRIFhEluimKl6Ilcn7P9iAHIVse08kG3sibObjSHEboz0rf1sHGLiS1r0JvlY
+# X+eiI8dWEdciHZMBYcPhgEGNHfLhDtA8I/ccw38xO9qVdrq5Vf1oNm1NHn/TgyUN
+# jgBbi1qAcP2KG3wzqtPt4iRtQLTLHtmUl8Mq7kcUQPhEs8Vc40fhOG17P8s=
 # SIG # End signature block

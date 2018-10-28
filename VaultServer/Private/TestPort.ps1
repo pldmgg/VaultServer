@@ -8,57 +8,49 @@ function TestPort {
         [int]$Port = $(Read-Host -Prompt "Please enter the port number you would like to check.")
     )
 
-    Begin {
+    #region >> Main
 
-        ##### BEGIN Variable/Parameter Transforms and PreRun Prep #####
-        
-        try {
-            $HostNameNetworkInfo = ResolveHost -HostNameOrIP $HostName -ErrorAction Stop
-        }
-        catch {
-            Write-Error "Unable to resolve $HostName! Halting!"
-            $global:FunctionResult = "1"
-            return
-        }
-
-        $tcp = New-Object Net.Sockets.TcpClient
-        $RemoteHostFQDN = $HostNameNetworkInfo.FQDN
-        
-        ##### END Variable/Parameter Transforms and PreRun Prep #####
+    try {
+        $HostNameNetworkInfo = ResolveHost -HostNameOrIP $HostName -ErrorAction Stop
+    }
+    catch {
+        Write-Error "Unable to resolve $HostName! Halting!"
+        $global:FunctionResult = "1"
+        return
     }
 
-    ##### BEGIN Main Body #####
-    Process {
-        if ($pscmdlet.ShouldProcess("$RemoteHostFQDN","Test Connection on $RemoteHostFQDN`:$Port")) {
-            try {
-                $tcp.Connect($RemoteHostFQDN, $Port)
-            }
-            catch {}
+    $tcp = New-Object Net.Sockets.TcpClient
+    $RemoteHostFQDN = $HostNameNetworkInfo.FQDN
+    
 
-            if ($tcp.Connected) {
-                $tcp.Close()
-                $open = $true
-            }
-            else {
-                $open = $false
-            }
-
-            $PortTestResult = [pscustomobject]@{
-                Address = $RemoteHostFQDN
-                Port    = $Port
-                Open    = $open
-            }
-            $PortTestResult
-        }
-        ##### END Main Body #####
+    try {
+        $tcp.Connect($RemoteHostFQDN, $Port)
     }
+    catch {}
+
+    if ($tcp.Connected) {
+        $tcp.Close()
+        $open = $true
+    }
+    else {
+        $open = $false
+    }
+
+    $PortTestResult = [pscustomobject]@{
+        Address = $RemoteHostFQDN
+        Port    = $Port
+        Open    = $open
+    }
+    $PortTestResult
+
+    #endregion >> Main
 }
 
 # SIG # Begin signature block
 # MIIMiAYJKoZIhvcNAQcCoIIMeTCCDHUCAQExCzAJBgUrDgMCGgUAMGkGCisGAQQB
 # gjcCAQSgWzBZMDQGCisGAQQBgjcCAR4wJgIDAQAABBAfzDtgWUsITrck0sYpfvNR
-# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUcZ2gGFQ7He9TN4JCrKnjht9/
-# +JWgggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
+# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUdyME1GGbX9RUlWu7k4gOMUCJ
+# gz+gggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
 # 9w0BAQsFADAwMQwwCgYDVQQGEwNMQUIxDTALBgNVBAoTBFpFUk8xETAPBgNVBAMT
 # CFplcm9EQzAxMB4XDTE3MDkyMDIxMDM1OFoXDTE5MDkyMDIxMTM1OFowPTETMBEG
 # CgmSJomT8ixkARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMT
@@ -115,11 +107,11 @@ function TestPort {
 # ARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMTB1plcm9TQ0EC
 # E1gAAAH5oOvjAv3166MAAQAAAfkwCQYFKw4DAhoFAKB4MBgGCisGAQQBgjcCAQwx
 # CjAIoAKAAKECgAAwGQYJKoZIhvcNAQkDMQwGCisGAQQBgjcCAQQwHAYKKwYBBAGC
-# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFEuobC9z8pkzjDnG
-# xOi+b7srtObuMA0GCSqGSIb3DQEBAQUABIIBAKDIAS7dw5DJr++0IkWo78MYnGom
-# 51wV8/7DiMhn+x05Il77WhGQJX0qCe+sCGDz9imKVKAnoh7IObHPkYlBs1nE1ltG
-# RTKVdA3uosJjGwcTuQxkN+uM2Id5Oz2KtvwB7wqBbg5XAcbz6t/BqcaQ3w4PDGWJ
-# 0EY/17b7jaPZoMJf9mmpEQ2gmxjSZFE1TU2RIyZgr6KpWCx11ZdHce9XQM2tMGX4
-# vgxevysw+9CodBUydL3NxJK9oAAeSFqZkz3HKdkZWLUeLu/ffb1ilVKMb527Z7SI
-# NamJokmS/7K6bXr3LDNmxW4uF/2wVPMQhSqu4SAB0hhsbif2j16ZdHB75bg=
+# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFAQ+YTEJzrhm1ADR
+# vCvJWnhXerDxMA0GCSqGSIb3DQEBAQUABIIBALJl15+eRdx+eN6fd/7MtZNn+ret
+# 5aKtAIvTmmPtnXasEWBTi6I0WNPLn1YEmcVBOJUeN4fII+DwkRW/YPE8fF+mI4fz
+# bxaBnaDBDR4tGih/PkeGEpE8uhK8pks08pzYrXyjxnc4PQozCk8Ou0dyKRZK5s+1
+# JaSoE/Z8b+68A/wooLsXDY6dkIlSswVULuG7DfD0geptwDiy1dQrCMIGiDXT97cy
+# 2fstpdq9TYBwor50IpZ4m/iqxFnjCwpNWSnPwTskFjoEuL1LShPNnKXK+JUHIrjR
+# NDuZtonakSDr9bPKrygUyiSStBCKbVrZ5iHEhQmHOaBdh6pXacU5CIl1WIA=
 # SIG # End signature block

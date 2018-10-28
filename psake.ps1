@@ -82,38 +82,91 @@ foreach ($import in $Private) {
 }
 
 [System.Collections.Arraylist]$ModulesToInstallAndImport = @()
-if (Test-Path "$PSScriptRoot\module.requirements.psd1") {
-    $ModuleManifestData = Import-PowerShellDataFile "$PSScriptRoot\module.requirements.psd1"
-    $ModuleManifestData.Keys | Where-Object {$_ -ne "PSDependOptions"} | foreach {$null = $ModulesToinstallAndImport.Add($_)}
+if (Test-Path "$PSScriptRoot/module.requirements.psd1") {
+    $ModuleManifestData = Import-PowerShellDataFile "$PSScriptRoot/module.requirements.psd1"
+    #$ModuleManifestData.Keys | Where-Object {$_ -ne "PSDependOptions"} | foreach {$null = $ModulesToinstallAndImport.Add($_)}
+    $($ModuleManifestData.GetEnumerator()) | foreach {
+        if ($_.Key -ne "PSDependOptions") {
+            $PSObj = [pscustomobject]@{
+                Name    = $_.Key
+                Version = $_.Value.Version
+            }
+            $null = $ModulesToinstallAndImport.Add($PSObj)
+        }
+    }
 }
 
-if ($ModulesToInstallAndImport.Count -gt 0) {
-    # NOTE: If you're not sure if the Required Module is Locally Available or Externally Available,
-    # add it the the -RequiredModules string array just to be certain
-    $InvModDepSplatParams = @{
-        RequiredModules                     = $ModulesToInstallAndImport
-        InstallModulesNotAvailableLocally   = $True
-        ErrorAction                         = "SilentlyContinue"
-        WarningAction                       = "SilentlyContinue"
+if ($PSVersionTable.Platform -eq "Unix" -or $PSVersionTable.OS -match "Darwin") {
+    $env:SudoPwdPrompt = $True
+
+    if ($ModulesToInstallAndImport.Count -gt 0) {
+        foreach ($ModuleItem in $ModulesToInstallAndImport) {
+            if ($ModuleItem.Name -match "WinSSH|NTFSSecurity|WindowsCompatibility") {
+                continue
+            }
+
+            if (!$(Get-Module -ListAvailable $ModuleItem.Name -ErrorAction SilentlyContinue)) {
+                try {
+                    Install-Module $ModuleItem.Name -AllowClobber -ErrorAction Stop
+                }
+                catch {
+                    try {
+                        Install-Module $ModuleItem.Name -AllowClobber -AllowPrerelease -ErrorAction Stop
+                    }
+                    catch {
+                        Write-Error $_
+                        Write-Error "Unable to import all Module dependencies! Please unload $ThisModule via 'Remove-Module $ThisModule'! Halting!"
+                        $global:FunctionResult = "1"
+                        return
+                    }
+                }
+            }
+            
+            # Make sure the Module Manifest file name and the Module Folder name are exactly the same case
+            $env:PSModulePath -split ':' | foreach {
+                Get-ChildItem -Path $_ -Directory | Where-Object {$_ -match $ModuleItem.Name}
+            } | foreach {
+                $ManifestFileName = $(Get-ChildItem -Path $_ -Recurse -File | Where-Object {$_.Name -match "$($ModuleItem.Name)\.psd1"}).BaseName
+                if (![bool]$($_.Name -cmatch $ManifestFileName)) {
+                    Rename-Item $_ $ManifestFileName
+                }
+            }
+
+            if (!$(Get-Module $ModuleItem.Name -ErrorAction SilentlyContinue)) {
+                try {
+                    Import-Module $ModuleItem.Name -ErrorAction Stop -WarningAction SilentlyContinue
+                }
+                catch {
+                    Write-Error $_
+                    Write-Error "Unable to import all Module dependencies! Please unload $ThisModule via 'Remove-Module $ThisModule'! Halting!"
+                    $global:FunctionResult = "1"
+                    return
+                }
+            }
+        }
     }
-    $ModuleDependenciesMap = InvokeModuleDependencies @InvModDepSplatParams
 }
+
+if (!$PSVersionTable.Platform -or $PSVersionTable.Platform -eq "Win32NT") {
+    if ($ModulesToInstallAndImport.Count -gt 0) {
+        # NOTE: If you're not sure if the Required Module is Locally Available or Externally Available,
+        # add it the the -RequiredModules string array just to be certain
+        $InvModDepSplatParams = @{
+            RequiredModules                     = $ModulesToInstallAndImport
+            InstallModulesNotAvailableLocally   = $True
+            ErrorAction                         = "SilentlyContinue"
+            WarningAction                       = "SilentlyContinue"
+        }
+        $ModuleDependenciesMap = InvokeModuleDependencies @InvModDepSplatParams
+    }
+}
+
 
 # Public Functions
 '@
 
     ###### BEGIN Unique Additions to this Module ######
-    # Add PowerShim Module
-    <#
-    $PowerShimFileContent = Get-Content "$env:BHModulePath\powershim.psm1"
-    $SigBlockLineNumber = $PowerShimFileContent.IndexOf('# SIG # Begin signature block')
-    $ContentSansSigBlock = $($($PowerShimFileContent[0..$($SigBlockLineNumber-1)]) -join "`n").Trim() -split "`n"
-    $UniqueCode = $ContentSansSigBlock -join "`n"
-
-    if ($UniqueCode) {
-        $BoilerPlateFunctionSourcing = $BoilerPlateFunctionSourcing + $UniqueCode
-    }
-    #>
+    # NONE
     ###### END Unique Additions to this Module ######
 
     Set-Content -Path "$env:BHModulePath\$env:BHProjectName.psm1" -Value $BoilerPlateFunctionSourcing
@@ -129,6 +182,37 @@ if ($ModulesToInstallAndImport.Count -gt 0) {
     $null = $FunctionTextToAdd.Add("`n")
 
     Add-Content -Value $FunctionTextToAdd -Path "$env:BHModulePath\$env:BHProjectName.psm1"
+
+    # Add the Import-Module WinCompat
+    $ImportWinCompat = @'
+
+if ($PSVersionTable.Platform -eq "Win32NT" -and $PSVersionTable.PSEdition -eq "Core") {
+    if (![bool]$(Get-Module -ListAvailable WindowsCompatibility)) {
+        try {
+            Install-Module WindowsCompatibility -ErrorAction Stop
+        }
+        catch {
+            Write-Error $_
+            $global:FunctionResult = "1"
+            return
+        }
+    }
+    if (![bool]$(Get-Module WindowsCompatibility)) {
+        try {
+            Import-Module WindowsCompatibility -ErrorAction Stop
+        }
+        catch {
+            Write-Error $_
+            Write-Warning "The $ThisModule Module was NOT loaded successfully! Please run:`n    Remove-Module $ThisModule"
+            $global:FunctionResult = "1"
+            return
+        }
+    }
+}
+
+'@
+
+    Add-Content -Value $ImportWinCompat -Path "$env:BHModulePath\$env:BHProjectName.psm1"
 
     # Finally, add array the variables contained in VariableLibrary.ps1 if it exists in case we want to use this Module Remotely
     if (Test-Path "$env:BHModulePath\VariableLibrary.ps1") {
@@ -225,8 +309,8 @@ Task Deploy -Depends Build {
 # SIG # Begin signature block
 # MIIMiAYJKoZIhvcNAQcCoIIMeTCCDHUCAQExCzAJBgUrDgMCGgUAMGkGCisGAQQB
 # gjcCAQSgWzBZMDQGCisGAQQBgjcCAR4wJgIDAQAABBAfzDtgWUsITrck0sYpfvNR
-# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQU9dQZ9yxzf9CGUpGD9pVMkZS9
-# +e6gggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
+# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUx4Cxbj7xEDNi4jBNIYthHznB
+# awKgggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
 # 9w0BAQsFADAwMQwwCgYDVQQGEwNMQUIxDTALBgNVBAoTBFpFUk8xETAPBgNVBAMT
 # CFplcm9EQzAxMB4XDTE3MDkyMDIxMDM1OFoXDTE5MDkyMDIxMTM1OFowPTETMBEG
 # CgmSJomT8ixkARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMT
@@ -283,11 +367,11 @@ Task Deploy -Depends Build {
 # ARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMTB1plcm9TQ0EC
 # E1gAAAH5oOvjAv3166MAAQAAAfkwCQYFKw4DAhoFAKB4MBgGCisGAQQBgjcCAQwx
 # CjAIoAKAAKECgAAwGQYJKoZIhvcNAQkDMQwGCisGAQQBgjcCAQQwHAYKKwYBBAGC
-# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFHEfYu1qHdgVGOWD
-# +0DNqhw4C6y6MA0GCSqGSIb3DQEBAQUABIIBAF/DhXp1X7vHq6lbslkwGB3/Gq2n
-# f4webNKyD2OZG85DUWHNNL/aHiW/4tAVKa8GwRt/wm2o1+Dukmb1jJFH+GzX/J7E
-# KSJAccEOeuYopOU3bXLHJdI/WsidScpMXx0IY39q71Q/+wCT33DfIa1lKWdI/8go
-# r7Ve9tAkygR6kkmSHJ9MNfRQC0k/9+XrZp2RSkcSgW3xiFgYDn49M2f0jcta9ga+
-# ksCkqCZZFOxeW4UnzIACWQXd2H5YwE2L1wCaN4UU1f8feS3j9n/mDDblWoX9Mh+P
-# lEwBgR/41j0iR16d/ZcZ+FoZkmRM2qBpI0JKuW+9rHQ+IVrKB+n7QBUcYow=
+# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFCVwMxutUhuTibn3
+# XJh3XWZM4bpJMA0GCSqGSIb3DQEBAQUABIIBAAb7EC/gtJNjpN1F4FyoC/sSPj37
+# QJi1iebHet6Qkq2J4eTbrOAgzwiSneJ102LC4JjzoCYpPCAT3sFjea7EpMS9zsLF
+# +soZfU6jEsWqU4y4945FNXkCfqfecU3OF1pvYui3i/4BbjsQiTwBqxXXkYcrsfnR
+# vOUSl50NH+K2wxICn9r0+FfBsgTUs7pHgPYCCnvqTYC9cIsT8A8s+efqks9HjRa+
+# 2yaKNObjI7HFk8sEB3GWCYu/J1Lblrt7aAk1RthoMxUleVVIJ2gbHTOwAJu5rwIV
+# 4V7PCycFsFokPGtD5yjyB3J6/SWaM8f9sy5Qoyw7ccL8hm34Co+URSUiBQQ=
 # SIG # End signature block

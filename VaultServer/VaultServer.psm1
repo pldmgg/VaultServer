@@ -16,22 +16,85 @@ foreach ($import in $Private) {
 }
 
 [System.Collections.Arraylist]$ModulesToInstallAndImport = @()
-if (Test-Path "$PSScriptRoot\module.requirements.psd1") {
-    $ModuleManifestData = Import-PowerShellDataFile "$PSScriptRoot\module.requirements.psd1"
-    $ModuleManifestData.Keys | Where-Object {$_ -ne "PSDependOptions"} | foreach {$null = $ModulesToinstallAndImport.Add($_)}
+if (Test-Path "$PSScriptRoot/module.requirements.psd1") {
+    $ModuleManifestData = Import-PowerShellDataFile "$PSScriptRoot/module.requirements.psd1"
+    #$ModuleManifestData.Keys | Where-Object {$_ -ne "PSDependOptions"} | foreach {$null = $ModulesToinstallAndImport.Add($_)}
+    $($ModuleManifestData.GetEnumerator()) | foreach {
+        if ($_.Key -ne "PSDependOptions") {
+            $PSObj = [pscustomobject]@{
+                Name    = $_.Key
+                Version = $_.Value.Version
+            }
+            $null = $ModulesToinstallAndImport.Add($PSObj)
+        }
+    }
 }
 
-if ($ModulesToInstallAndImport.Count -gt 0) {
-    # NOTE: If you're not sure if the Required Module is Locally Available or Externally Available,
-    # add it the the -RequiredModules string array just to be certain
-    $InvModDepSplatParams = @{
-        RequiredModules                     = $ModulesToInstallAndImport
-        InstallModulesNotAvailableLocally   = $True
-        ErrorAction                         = "SilentlyContinue"
-        WarningAction                       = "SilentlyContinue"
+if ($PSVersionTable.Platform -eq "Unix" -or $PSVersionTable.OS -match "Darwin") {
+    $env:SudoPwdPrompt = $True
+
+    if ($ModulesToInstallAndImport.Count -gt 0) {
+        foreach ($ModuleItem in $ModulesToInstallAndImport) {
+            if ($ModuleItem.Name -match "WinSSH|NTFSSecurity|WindowsCompatibility") {
+                continue
+            }
+
+            if (!$(Get-Module -ListAvailable $ModuleItem.Name -ErrorAction SilentlyContinue)) {
+                try {
+                    Install-Module $ModuleItem.Name -AllowClobber -ErrorAction Stop
+                }
+                catch {
+                    try {
+                        Install-Module $ModuleItem.Name -AllowClobber -AllowPrerelease -ErrorAction Stop
+                    }
+                    catch {
+                        Write-Error $_
+                        Write-Error "Unable to import all Module dependencies! Please unload $ThisModule via 'Remove-Module $ThisModule'! Halting!"
+                        $global:FunctionResult = "1"
+                        return
+                    }
+                }
+            }
+            
+            # Make sure the Module Manifest file name and the Module Folder name are exactly the same case
+            $env:PSModulePath -split ':' | foreach {
+                Get-ChildItem -Path $_ -Directory | Where-Object {$_ -match $ModuleItem.Name}
+            } | foreach {
+                $ManifestFileName = $(Get-ChildItem -Path $_ -Recurse -File | Where-Object {$_.Name -match "$($ModuleItem.Name)\.psd1"}).BaseName
+                if (![bool]$($_.Name -cmatch $ManifestFileName)) {
+                    Rename-Item $_ $ManifestFileName
+                }
+            }
+
+            if (!$(Get-Module $ModuleItem.Name -ErrorAction SilentlyContinue)) {
+                try {
+                    Import-Module $ModuleItem.Name -ErrorAction Stop -WarningAction SilentlyContinue
+                }
+                catch {
+                    Write-Error $_
+                    Write-Error "Unable to import all Module dependencies! Please unload $ThisModule via 'Remove-Module $ThisModule'! Halting!"
+                    $global:FunctionResult = "1"
+                    return
+                }
+            }
+        }
     }
-    $ModuleDependenciesMap = InvokeModuleDependencies @InvModDepSplatParams
 }
+
+if (!$PSVersionTable.Platform -or $PSVersionTable.Platform -eq "Win32NT") {
+    if ($ModulesToInstallAndImport.Count -gt 0) {
+        # NOTE: If you're not sure if the Required Module is Locally Available or Externally Available,
+        # add it the the -RequiredModules string array just to be certain
+        $InvModDepSplatParams = @{
+            RequiredModules                     = $ModulesToInstallAndImport
+            InstallModulesNotAvailableLocally   = $True
+            ErrorAction                         = "SilentlyContinue"
+            WarningAction                       = "SilentlyContinue"
+        }
+        $ModuleDependenciesMap = InvokeModuleDependencies @InvModDepSplatParams
+    }
+}
+
 
 # Public Functions
 
@@ -719,6 +782,130 @@ function Add-CAPubKeyToSSHAndSSHDConfig {
     }
 
     [pscustomobject]$Output
+}
+
+
+<#
+    .SYNOPSIS
+        This function connects to a Remote Host via ssh and adds the specified User/Client SSH Public Key to
+        the ~/.ssh/authorized_keys file on that Remote Host. As long as you can connect to the Remote Host via
+        ssh, this function will work with both Windows and Linux targets.
+
+    .DESCRIPTION
+        See .SYNOPSIS
+
+    .NOTES
+
+    .PARAMETER PublicKeyPath
+        This parameter is MANDATORY.
+
+        This parameter takes a string that represents the full path to the SSH User/Client Public Key that you
+        would like to add to the Remote Host's ~/.ssh/authorized_keys file.
+
+    .PARAMETER RemoteHost
+        This parameter is MANDATORY.
+
+        This parameter takes a string that represents an IP Address or DNS-Resolvable name to a remote host
+        running an sshd server.
+
+    .PARAMETER RemoteHostUserName
+        This parameter is MANDATORY,
+
+        This parameter takes a string that represents the User Name you would like to use to ssh
+        into the Remote Host.
+
+    .EXAMPLE
+        # Open an elevated PowerShell Session, import the module, and -
+
+        PS C:\Users\zeroadmin> $SplatParams = @{
+            PublicKeyPath       = "$HOME\.ssh\id_rsa.pub"
+            RemoteHost          = "Ubuntu18.zero.lab"
+            RemoteHostUserName  = "zero\zeroadmin"
+        }
+        PS C:\Users\zeroadmin> Add-PublicKeyToRemoteHost @SplatParams
+#>
+function Add-PublicKeyToRemoteHost {
+    [CmdletBinding()]
+    Param(
+        [Parameter(Mandatory=$True)]
+        [string]$PublicKeyPath,
+
+        [Parameter(Mandatory=$True)]
+        [string]$RemoteHost,
+
+        [Parameter(Mandatory=$True)]
+        [string]$RemoteHostUserName
+    )
+
+    #region >> Prep
+
+    if ($PSVersionTable.Platform -eq "Unix" -or $PSVersionTable.OS -match "Darwin" -and $env:SudoPwdPrompt) {
+        if (GetElevation) {
+            Write-Error "You should not be running the VaultServer Module as root! Halting!"
+            $global:FunctionResult = "1"
+            return
+        }
+        RemoveMySudoPwd
+        NewCronToAddSudoPwd
+        $env:SudoPwdPrompt = $False
+    }
+
+    if (!$(Test-Path $PublicKeyPath)) {
+        Write-Error "The path $PublicKeyPath was not found! Halting!"
+        $global:FunctionResult = "1"
+        return
+    }
+
+    try {
+        $RemoteHostNetworkInfo = ResolveHost -HostNameOrIP $RemoteHost -ErrorAction Stop
+    }
+    catch {
+        Write-Error "Unable to resolve $RemoteHost! Halting!"
+        $global:FunctionResult = "1"
+        return
+    }    
+    
+    if (![bool]$(Get-Command ssh -ErrorAction SilentlyContinue)) {
+        Write-Error "Unable to find ssh.exe! Halting!"
+        $global:FunctionResult = "1"
+        return
+    }
+
+    $PubKeyContent = Get-Content $PublicKeyPath
+
+    #endregion >> Prep
+
+
+    #region >> Main
+
+    if ($RemoteHostNetworkInfo.FQDN) {
+        $RemoteHostLocation = $RemoteHostNetworkInfo.FQDN
+    }
+    elseif ($RemoteHostNetworkInfo.HostName) {
+        $RemoteHostLocation = $RemoteHostNetworkInfo.HostName
+    }
+    elseif ($RemoteHostNetworkInfo.IPAddressList[0]) {
+        $RemoteHostLocation = $RemoteHostNetworkInfo.IPAddressList[0]
+    }
+
+    #ssh -t $RemoteHostUserName@$RemoteHostLocation "echo '$PubKeyContent' >> ~/.ssh/authorized_keys"
+    if ($RemoteHostUserName -match "\\|@") {
+        if ($RemoteHostUserName -match "\\") {
+            $DomainPrefix = $($RemoteHostUserName -split "\\")[0]
+        }
+        if ($RemoteHostUserName -match "@") {
+            $DomainPrefix = $($RemoteHostUserName -split "\\")[-1]
+        }
+    }
+
+    if (!$DomainPrefix) {
+        ssh -o "StrictHostKeyChecking=no" -o "BatchMode=yes" -t $RemoteHostUserName@$RemoteHostLocation "echo '$PubKeyContent' >> ~/.ssh/authorized_keys"
+    }
+    else {
+        ssh -o "StrictHostKeyChecking=no" -o "BatchMode=yes" -t $RemoteHostUserName@$DomainPrefix@$RemoteHostLocation "echo '$PubKeyContent' >> ~/.ssh/authorized_keys"
+    }
+
+    #endregion >> Main
 }
 
 
@@ -1765,6 +1952,552 @@ function Configure-VaultServerForSSHManagement {
 
 <#
     .SYNOPSIS
+        This function adds the specified User Accounts (both Local and Domain) to the file 
+        'C:\ProgramData\ssh\authorized_principals' on the Local Host. Adding these User Accounts
+        to the 'authorized_principals' file allows these users to ssh into the Local Host.
+
+        IMPORTANT NOTE: The Generate-AuthorizedPrincipalsFile will only ADD users to the authorized_principals
+        file (if they're not already in there). It WILL NOT delete or otherwise overwrite existing users in the file
+
+    .DESCRIPTION
+        See .SYNOPSIS
+
+    .NOTES
+
+    .PARAMETER AuthorizedPrincipalsFileLocation
+        This parameter is OPTIONAL.
+
+        This parameter takes a string that represents the full path to desired location of the newly generated
+        'authorized_principals' file. If this parameter is NOT used, the function will default to writing the
+        'authorized_principals' file to the 'C:\ProgramData\ssh' directory. If that directory does not exist,
+        then it will be written to the 'C:\Program Files\OpenSSH-Win64' directory. If that directory does not
+        exist, the function will halt.
+
+    .PARAMETER UserGroupToAdd
+        This parameter is OPTIONAL, however, either this parameter or the -UsersToAdd parameter is REQUIRED.
+
+        This parameter takes an array of strings. Possible string values are:
+            - AllUsers
+            - LocalAdmins
+            - LocalUsers
+            - DomainAdmins
+            - DomainUsers
+        
+        Using "LocalAdmins" will add all User Accounts that are members of the Built-In 'Administrators' Security Group
+        on the Local Host to the authorized_principals file.
+
+        Using "LocalUsers" will add all user Accounts that are members of the Built-In 'Users' Security Group on
+        the Local Host to the authorized_principals file.
+
+        Using "DomainAdmins" will add all User Accounts that are members of the "Domain Admins" Security Group in
+        Active Directory to the authorized_principals file.
+
+        Using "Domain Users" will add all User Accounts that are members of the "Domain Users" Security Group in
+        Active Directory to the authorized_principals file.
+
+        Using "AllUsers" will add User Accounts that are members of all of the above Security Groups to the
+        authorized_principals file.
+
+        You CAN use this parameter in conjunction with the -UsersToAdd parameter, and this function
+        DOES check for repeats, so don't worry about overlap.
+
+    .PARAMETER UsersToAdd
+        This parameter is OPTIONAL, however, either this parameter or the -UserGroupToAdd parameter is REQUIRED.
+
+        This parameter takes an array of strings, each of which represents either a Local User Account
+        or a Domain User Account. Local User Accounts MUST be in the format <UserName>@<LocalHostComputerName> and
+        Domain User Accounts MUST be in the format <UserName>@<DomainPrefix>. (To clarify DomainPrefix: if your
+        domain is, for example, 'zero.lab', your DomainPrefix would be 'zero').
+
+        These strings will be added to the authorized_principals file, and these User Accounts
+        will be permitted to SSH into the Local Host.
+
+        You CAN use this parameter in conjunction with the -UserGroupToAdd parameter, and this function
+        DOES check for repeats, so don't worry about overlap.
+
+    .EXAMPLE
+        # Open an elevated PowerShell Session, import the module, and -
+
+        PS C:\Users\zeroadmin> $AuthorizedPrincipalsFile = Generate-AuthorizedPrincipalsFile -UserGroupToAdd @("LocalAdmins","DomainAdmins")
+        
+#>
+function Generate-AuthorizedPrincipalsFile {
+    [CmdletBinding()]
+    Param(
+        [Parameter(Mandatory=$False)]
+        [string]$AuthorizedPrincipalsFileLocation,
+
+        [Parameter(Mandatory=$False)]
+        [ValidateSet("AllUsers","LocalAdmins","LocalUsers","DomainAdmins","DomainUsers")]
+        [string[]]$UserGroupToAdd,
+
+        [Parameter(Mandatory=$False)]
+        [ValidatePattern("[\w]+@[\w]+")]
+        [string[]]$UsersToAdd
+    )
+
+    if ($PSVersionTable.Platform -eq "Unix" -or $PSVersionTable.OS -match "Darwin" -and $env:SudoPwdPrompt) {
+        if (GetElevation) {
+            Write-Error "You should not be running the VaultServer Module as root! Halting!"
+            $global:FunctionResult = "1"
+            return
+        }
+        RemoveMySudoPwd
+        NewCronToAddSudoPwd
+        $env:SudoPwdPrompt = $False
+    }
+
+    if (!$AuthorizedPrincipalsFileLocation) {
+        if (!$PSVersionTable.Platform -or $PSVersionTable.Platform -eq "Win32NT") {
+            $sshdir = "$env:ProgramData\ssh"
+        }
+        if ($PSVersionTable.Platform -eq "Unix" -or $PSVersionTable.OS -match "Darwin") {
+            $sshdir = "/etc/ssh"
+        }
+        
+        if (!$(Test-Path $sshdir)) {
+            Write-Error "Unable to find $sshdir! Halting!"
+            $global:FunctionResult = "1"
+            return
+        }
+
+        $AuthorizedPrincipalsFileLocation = Join-Path $sshdir "authorized_principals"
+    }
+
+    $AuthorizedPrincipalsFileLocation = $AuthorizedPrincipalsFileLocation -replace '\\','/'
+
+    # Get the content of $AuthorizedPrincipalsFileLocation to make sure we don't add anything that is already in there
+    if (Test-Path $AuthorizedPrincipalsFileLocation) {
+        $OriginalAuthPrincContent = Get-Content $AuthorizedPrincipalsFileLocation
+    }
+
+    if ($(!$UserGroupToAdd -and !$UsersToAdd) -or $UserGroupToAdd -contains "AllUsers") {
+        $AllUsers = $True
+    }
+    if ($AllUsers) {
+        $LocalAdmins = $True
+        $LocalUsers = $True
+        $DomainAdmins = $True
+        $DomainUsers = $True
+    }
+    else {
+        # Switch automatically loops through an array if the object passed is an array
+        if ($UserGroupToAdd) {
+            switch ($UserGroupToAdd) {
+                'LocalAdmins'   {$LocalAdmins = $True}
+                'LocalUsers'    {$LocalUsers = $True}
+                'DomainAdmins'  {$DomainAdmins = $True}
+                'DomainUsers'   {$DomainUsers = $True}
+            }
+        }
+    }
+
+    try {
+        $ThisDomainName = GetDomainName -ErrorAction Stop
+        $PartOfDomain = $True
+    }
+    catch {
+        $PartOfDomain = $False
+    }
+
+    if (!$PartOfDomain) {
+        if ($DomainAdmins) {
+            $DomainAdmins = $False
+        }
+        if ($DomainUsers) {
+            $DomainUsers = $False
+        }
+    }
+
+    # Get ready to start writing to $sshdir\authorized_principals...
+
+    $StreamWriter = [System.IO.StreamWriter]::new($AuthorizedPrincipalsFileLocation, $True)
+    [System.Collections.ArrayList]$AccountsAdded = @()
+
+    try {
+        if ($LocalAdmins) {
+            try {
+                $LocalAdminAccounts = GetLocalGroupAndUsers -ErrorAction Stop
+            }
+            catch {
+                throw $_.Exception.Message
+            }
+
+            if (!$PSVersionTable.Platform -or $PSVersionTable.Platform -eq "Win32NT") {
+                $LocalAdminAccounts = $($LocalAdminAccounts | Where-Object {$_.Group -eq "Administrators"}).Users
+
+                $AccountsReformatted = foreach ($LocalAcctName in $LocalAdminAccounts) {
+                    $ActualHostName = $env:ComputerName
+
+                    $ReformattedName = "$LocalAcctName@$($ActualHostName.ToLowerInvariant())"
+                    $ReformattedName
+                }
+            }
+            if ($PSVersionTable.Platform -eq "Unix" -or $PSVersionTable.OS -match "Darwin") {
+                $LocalAdminAccounts = $($LocalAdminAccounts | Where-Object {$_.Group -eq "SudoUsers"}).Users
+
+                $AccountsReformatted = foreach ($LocalAcctName in $LocalAdminAccounts) {
+                    if ($env:HOSTNAME -match '\.') {
+                        $ActualHostName = $($env:HOSTNAME -split '\.')[0]
+                    }
+                    else {
+                        $ActualHostName = $env:HOSTNAME
+                    }
+
+                    $ReformattedName = "$LocalAcctName@$($ActualHostName.ToLowerInvariant())"
+                    $ReformattedName
+                }
+            }
+
+            foreach ($Acct in $AccountsReformatted) {
+                if ($AccountsAdded -notcontains $Acct -and $OriginalAuthPrincContent -notcontains $Acct) {
+                    # NOTE: $True below means that the content will *appended* to $AuthorizedPrincipalsFileLocation
+                    $StreamWriter.WriteLine($Acct)
+
+                    # Keep track of the accounts we're adding...
+                    $null = $AccountsAdded.Add($Acct)
+                }
+            }
+        }
+
+        if ($LocalUsers) {
+            try {
+                $LocalAdminAccounts = GetLocalGroupAndUsers
+            }
+            catch {
+                throw $_.Exception.Message
+            }
+
+            if (!$PSVersionTable.Platform -or $PSVersionTable.Platform -eq "Win32NT") {
+                $LocalAdminAccounts = $($LocalAdminAccounts | Where-Object {$_.Group -eq "Users"}).Users
+            }
+
+            if ($PSVersionTable.Platform -eq "Unix" -or $PSVersionTable.OS -match "Darwin") {
+                $LocalAdminAccounts = $($LocalAdminAccounts | Where-Object {$_.Group -eq "humanusers"}).Users
+            }
+
+            $AccountsReformatted = foreach ($LocalAcctName in $LocalAdminAccounts) {
+                $ActualHostName = $env:ComputerName
+
+                $ReformattedName = "$LocalAcctName@$($ActualHostName.ToLowerInvariant())"
+                $ReformattedName
+            }
+
+            foreach ($Acct in $AccountsReformatted) {
+                if ($AccountsAdded -notcontains $Acct -and $OriginalAuthPrincContent -notcontains $Acct) {
+                    # NOTE: $True below means that the content will *appended* to $AuthorizedPrincipalsFileLocation
+                    $StreamWriter.WriteLine($Acct)
+
+                    # Keep track of the accounts we're adding...
+                    $null = $AccountsAdded.Add($Acct)
+                }
+            }
+        }
+
+        if ($DomainAdmins) {
+            if (!$LDAPGroupInfo) {
+                try {
+                    $LDAPGroupInfo = GetLDAPGroupAndUsers -ErrorAction Stop
+                    #if (!$LDAPGroupInfo) {throw "Problem with GetLDAPGroupAndUsers function! Halting!"}
+                }
+                catch {
+                    throw $_.Exception.Message
+                }
+            }
+
+            $LDAPGroups = $LDAPGroupInfo.Group
+            $DomainAdminsInfo = $LDAPGroupInfo | Where-Object {$_.Group -eq "Domain Admins"}
+            if (!$DomainAdminsInfo) {
+                Write-Error "Unable to find the 'Domain Admins' Group in LDAP! Halting!"
+                $global:FunctionResult = "1"
+                return
+            }
+
+            [System.Collections.Generic.List[PSObject]]$DomainAdminUserAccounts = @()
+            [System.Collections.Generic.List[PSObject]]$DomainAdminGroupAccounts = @()
+            $DomainAdminsInfo.Users | foreach {
+                if ($LDAPGroups -contains $_) {
+                    $null = $DomainAdminGroupAccounts.Add($_)
+                }
+                else {
+                    $null = $DomainAdminUserAccounts.Add($_)
+                }
+            }
+            if ($DomainAdminGroupAccounts.Count -gt 0) {
+                [System.Collections.Generic.List[PSObject]]$SubGroups = @()
+                foreach ($GroupAcct in $DomainAdminGroupAccounts) {
+                    $PotentialAdditionalUsers = $($LDAPGroupInfo | Where-Object {$_.Group -eq $GroupAcct}).Users
+                    foreach ($UserOrGroup in $PotentialAdditionalUsers) {
+                        if ($LDAPGroups -contains $UserOrGroup) {
+                            if ($DomainAdminGroupAccounts -notcontains $UserOrGroup) {
+                                $null = $SubGroups.Add($_)
+                            }
+                        }
+                        else {
+                            $null = $DomainAdminUserAccounts.Add($_)
+                        }
+                    }
+                }
+
+                $SubGroupsCloned = $SudoGroups.Clone()
+                while ($SubGroups.Count -gt 0) {
+                    foreach ($GroupAcct in $SubGroupsCloned) {
+                        $PotentialAdditionalUsers = $($LDAPGroupInfo | Where-Object {$_.Group -eq $GroupAcct}).Users
+                        foreach ($UserOrGroup in $PotentialAdditionalUsers) {
+                            if ($LDAPGroups -contains $UserOrGroup) {
+                                if ($DomainAdminGroupAccounts -notcontains $UserOrGroup -and $SubGroups -notcontains $UserOrGroup) {
+                                    $null = $SubGroups.Add($UserOrGroup)
+                                }
+                            }
+                            else {
+                                if ($DomainAdminUserAccounts -notcontains $UserOrGroup) {
+                                    $null = $DomainAdminUserAccounts.Add($UserOrGroup)
+                                }
+                            }
+                        }
+                        $null = $SubGroups.Remove($GroupAcct)
+                    }
+                }
+            }
+
+            $AccountsReformatted = $DomainAdminUserAccounts | foreach {
+                if (![System.String]::IsNullOrWhiteSpace($_)) {
+                    $_ + "@" + $ThisDomainName.ToLowerInvariant()
+                }
+            }
+
+            foreach ($Acct in $AccountsReformatted) {
+                if ($AccountsAdded -notcontains $Acct -and $OriginalAuthPrincContent -notcontains $Acct) {
+                    # NOTE: $True below means that the content will *appended* to $AuthorizedPrincipalsFileLocation
+                    $StreamWriter.WriteLine($Acct)
+
+                    # Keep track of the accounts we're adding...
+                    $null = $AccountsAdded.Add($Acct)
+                }
+            }
+        }
+
+        if ($DomainUsers) {
+            if (!$LDAPGroupInfo) {
+                try {
+                    $LDAPGroupInfo = GetLDAPGroupAndUsers -ErrorAction Stop
+                    #if (!$LDAPGroupInfo) {throw "Problem with GetLDAPGroupAndUsers function! Halting!"}
+                }
+                catch {
+                    throw $_.Exception.Message
+                }
+            }
+
+            $LDAPGroups = $LDAPGroupInfo.Group
+            $DomainUsersInfo = $LDAPGroupInfo | Where-Object {$_.Group -eq "Domain Users"}
+            if (!$DomainUsersInfo) {
+                Write-Error "Unable to find the 'Domain Users' Group in LDAP! Halting!"
+                $global:FunctionResult = "1"
+                return
+            }
+
+            [System.Collections.Generic.List[PSObject]]$DomainUserUserAccounts = @()
+            [System.Collections.Generic.List[PSObject]]$DomainUserGroupAccounts = @()
+            $DomainUsersInfo.Users | foreach {
+                if ($LDAPGroups -contains $_) {
+                    $null = $DomainUserGroupAccounts.Add($_)
+                }
+                else {
+                    $null = $DomainUserUserAccounts.Add($_)
+                }
+            }
+            if ($DomainUserGroupAccounts.Count -gt 0) {
+                [System.Collections.Generic.List[PSObject]]$SubGroups = @()
+                foreach ($GroupAcct in $DomainUserGroupAccounts) {
+                    $PotentialAdditionalUsers = $($LDAPGroupInfo | Where-Object {$_.Group -eq $GroupAcct}).Users
+                    foreach ($UserOrGroup in $PotentialAdditionalUsers) {
+                        if ($LDAPGroups -contains $UserOrGroup) {
+                            if ($DomainUserGroupAccounts -notcontains $UserOrGroup) {
+                                $null = $SubGroups.Add($_)
+                            }
+                        }
+                        else {
+                            $null = $DomainUserUserAccounts.Add($_)
+                        }
+                    }
+                }
+
+                $SubGroupsCloned = $SudoGroups.Clone()
+                while ($SubGroups.Count -gt 0) {
+                    foreach ($GroupAcct in $SubGroupsCloned) {
+                        $PotentialAdditionalUsers = $($LDAPGroupInfo | Where-Object {$_.Group -eq $GroupAcct}).Users
+                        foreach ($UserOrGroup in $PotentialAdditionalUsers) {
+                            if ($LDAPGroups -contains $UserOrGroup) {
+                                if ($DomainUserGroupAccounts -notcontains $UserOrGroup -and $SubGroups -notcontains $UserOrGroup) {
+                                    $null = $SubGroups.Add($UserOrGroup)
+                                }
+                            }
+                            else {
+                                if ($DomainUserUserAccounts -notcontains $UserOrGroup) {
+                                    $null = $DomainUserUserAccounts.Add($UserOrGroup)
+                                }
+                            }
+                        }
+                        $null = $SubGroups.Remove($GroupAcct)
+                    }
+                }
+            }
+
+            $AccountsReformatted = $DomainUserUserAccounts | foreach {
+                if (![System.String]::IsNullOrWhiteSpace($_)) {
+                    $_ + "@" + $ThisDomainName.ToLowerInvariant()
+                }
+            }
+
+            foreach ($Acct in $AccountsReformatted) {
+                if ($AccountsAdded -notcontains $Acct -and $OriginalAuthPrincContent -notcontains $Acct) {
+                    # NOTE: $True below means that the content will *appended* to $AuthorizedPrincipalsFileLocation
+                    $StreamWriter.WriteLine($Acct)
+
+                    # Keep track of the accounts we're adding...
+                    $null = $AccountsAdded.Add($Acct)
+                }
+            }
+        }
+
+        if ($UsersToAdd) {
+            foreach ($Acct in $UsersToAdd) {
+                if ($AccountsAdded -notcontains $Acct -and $OriginalAuthPrincContent -notcontains $Acct) {
+                    # NOTE: $True below means that the content will *appended* to $AuthorizedPrincipalsFileLocation
+                    $StreamWriter.WriteLine($Acct)
+
+                    # Keep track of the accounts we're adding...
+                    $null = $AccountsAdded.Add($Acct)
+                }
+            }
+        }
+
+        $StreamWriter.Close()
+
+        Get-Item $AuthorizedPrincipalsFileLocation
+    }
+    catch {
+        $StreamWriter.Close()
+        Write-Error $_
+        $global:FunctionResult = "1"
+        return
+    }
+}
+
+
+<#
+    .SYNOPSIS
+        This function generates:
+            - An ArrayList of PSCustomObjects that describes the contents of each of the files within the
+            "$HOME\.ssh" directory
+            - An .xml file that can be ingested by the 'Import-CliXml' cmdlet to generate
+            the aforementioned ArrayList of PSCustomObjects in future PowerShell sessions.
+            
+            Each PSCustomObject in the ArrayList contains information similar to:
+
+                File     : C:\Users\zeroadmin\.ssh\PwdProtectedPrivKey
+                FileType : RSAPrivateKey
+                Contents : {-----BEGIN RSA PRIVATE KEY-----, Proc-Type: 4,ENCRYPTED, DEK-Info: AES-128-CBC,27E137C044FC7857DAAC05C408472EF8, ...}
+                Info     : {-----BEGIN RSA PRIVATE KEY-----, Proc-Type: 4,ENCRYPTED, DEK-Info: AES-128-CBC,27E137C044FC7857DAAC05C408472EF8, ...}
+
+        By default, the .xml file is written to "$HOME\.ssh\SSHDirectoryFileInfo.xml"
+
+    .DESCRIPTION
+        See .SYNOPSIS
+
+    .NOTES
+
+    .PARAMETER PathToHomeDotSSHDirectory
+        This parameter is OPTIONAL.
+
+        This parameter takes a string that represents a full path to the User's .ssh directory. You should
+        only use this parameter if the User's .ssh is NOT under "$HOME\.ssh" for some reason. 
+
+    .EXAMPLE
+        # Open an elevated PowerShell Session, import the module, and -
+
+        PS C:\Users\zeroadmin> Generate-SSHUserDirFileInfo
+        
+#>
+function Generate-SSHUserDirFileInfo {
+    [CmdletBinding()]
+    Param(
+        [Parameter(Mandatory=$False)]
+        [string]$PathToHomeDotSSHDirectory
+    )
+
+    if ($PSVersionTable.Platform -eq "Unix" -or $PSVersionTable.OS -match "Darwin" -and $env:SudoPwdPrompt) {
+        if (GetElevation) {
+            Write-Error "You should not be running the VaultServer Module as root! Halting!"
+            $global:FunctionResult = "1"
+            return
+        }
+        RemoveMySudoPwd
+        NewCronToAddSudoPwd
+        $env:SudoPwdPrompt = $False
+    }
+
+    # Make sure we have access to ssh binaries
+    if (![bool]$(Get-Command ssh-keygen -ErrorAction SilentlyContinue)) {
+        Write-Error "Unable to find 'ssh-keygen'! Halting!"
+        $global:FunctionResult = "1"
+        return
+    }
+
+    if (!$PathToHomeDotSSHDirectory) {
+        $PathToHomeDotSSHDirectory = Join-Path $HOME ".ssh"
+    }
+
+    # Get a list of all files under $HOME\.ssh
+    [array]$SSHHomeFiles = Get-ChildItem -Path $PathToHomeDotSSHDirectory -File | Where-Object {$_.Name -ne "SSHDirectoryFileInfo.xml"}
+
+    if ($SSHHomeFiles.Count -eq 0) {
+        Write-Error "Unable to find any files under '$PathToHomeDotSSHDirectory'! Halting!"
+        $global:FunctionResult = "1"
+        return
+    }
+
+    [System.Collections.ArrayList]$ArrayOfPSObjects = @()
+    foreach ($File in $SSHHomeFiles.FullName) {
+        #Write-Host "Analyzing file '$File' ..."
+        try {
+            $GetSSHFileInfoResult = Get-SSHFileInfo -PathToKeyFile $File -ErrorAction Stop -WarningAction SilentlyContinue
+            if (!$GetSSHFileInfoResult) {
+                #Write-Warning "'$File' is not a valid Public Key, Private Key, or Public Key Certificate!"
+                #Write-Host "Ensuring '$File' is UTF8 encoded and trying again..." -ForegroundColor Yellow
+                Set-Content -Path $File -Value $(Get-Content $File) -Encoding UTF8
+            }
+
+            $GetSSHFileInfoResult = Get-SSHFileInfo -PathToKeyFile $File -ErrorAction Stop -WarningAction SilentlyContinue
+            if (!$GetSSHFileInfoResult) {
+                Write-Verbose "'$File' is definitley not a valid Public Key, Private Key, or Public Key Certificate!"
+            }
+
+            # Sample Output:
+            # NOTE: Possible values for the 'FileType' property are 'RSAPrivateKey','RSAPublicKey', and 'RSAPublicKeyCertificate'
+            <#
+                File     : C:\Users\zeroadmin\.ssh\PwdProtectedPrivKey
+                FileType : RSAPrivateKey
+                Contents : {-----BEGIN RSA PRIVATE KEY-----, Proc-Type: 4,ENCRYPTED, DEK-Info: AES-128-CBC,27E137C044FC7857DAAC05C408472EF8, ...}
+                Info     : {-----BEGIN RSA PRIVATE KEY-----, Proc-Type: 4,ENCRYPTED, DEK-Info: AES-128-CBC,27E137C044FC7857DAAC05C408472EF8, ...}
+            #>
+
+            $null = $ArrayOfPSObjects.Add($GetSSHFileInfoResult)
+        }
+        catch {
+            Write-Error $_
+            $global:FunctionResult = "1"
+            return
+        }
+    }
+
+    $ArrayOfPSObjects
+    $ArrayOfPSObjects | Export-CliXml "$PathToHomeDotSSHDirectory\SSHDirectoryFileInfo.xml"
+}
+
+
+<#
+    .SYNOPSIS
         This function gets the TLS certificate used by the LDAP server on the specified Port.
 
         The function outputs a PSCustomObject with the following properties:
@@ -2047,6 +2780,1051 @@ function Get-LDAPCert {
 
 <#
     .SYNOPSIS
+        This function is used to determine the most efficient ssh.exe command that should work
+        on the Remote Host (assuming the sshd server on the remote host is configured properly).
+
+        By providing this function ONE of the following parameters...
+            SSHKeyFilePath
+            SSHPublicKeyFilePath
+            SSHPrivateKeyFilePath
+            SSHPublicCertFilePath
+        ...this function will find all related files (as long as they're in the "$HOME\.ssh" directory
+        or in the ssh-agent). Then, depending on the type of authentication you would like to use
+        (which you sould specify using the -AuthMethod parameter), this function will output a PSCustomObject
+        with properties similar to:
+            PublicKeyAuthShouldWork (Boolean)
+            PublicKeyCertificateAuthShouldWork (Boolean)
+            SSHClientProblemDescription (String)
+            FinalSSHExeCommand (String)
+        
+        The property 'PublicKeyAuthShouldWork' will appear only if -AuthMethod is "PublicKey".
+        The property 'PublicKeyCertificateAuthShouldWork' will appear only if -AuthMethod is "PublicKeyCertificate".
+        The property 'SSHClientProblemDescription' will appear only if an SSH Command cannot be determined.
+        The property 'FinalSSHExeCommand' will always appear. It might be $null if a command cannot be determined.
+
+    .DESCRIPTION
+        See .SYNOPSIS
+
+    .NOTES
+
+    .PARAMETER SSHKeyFilePath
+        This parameter is MANDATORY for its given Parameter Set.
+
+        This parameter takes a string that represents a full path to an SSH Key/Cert file.
+
+        This parameter should be used if you are certain that the specified file is related to SSH
+        Authentication, but you are not sure if the file is a Public Key, Private Key, or Public Certificate.
+
+        It is HIGHLY RECOMMENDED that you use this parameter instead of -SSHPublicKeyFilePath or
+        -SSHPrivateKeyFilePath or -SSHPublicCertFilePath.
+
+    .PARAMETER SSHPublicKeyFilePath
+        This parameter is MANDATORY for its given Parameter Set.
+
+        This parameter takes a string that represents a full path to an SSH Public Key file. If the file
+        is NOT an SSH Public Key file, the function will halt.
+
+    .PARAMETER SSHPrivateKeyFilePath
+        This parameter is MANDATORY for its given Parameter Set.
+
+        This parameter takes a string that represents a full path to an SSH Private Key file. If the file
+        is NOT an SSH Private Key file, the function will halt.
+
+    .PARAMETER SSHPublicCertFilePath
+        This parameter is MANDATORY for its given Parameter Set.
+
+        This parameter takes a string that represents a full path to an SSH Public Certificate file. If the file
+        is NOT an SSH Public Certificate file, the function will halt.
+
+    .PARAMETER AuthMethod
+        This parameter is MANDATORY.
+
+        This parameter takes a string that must be one of two values: "PublicKey", "PublicKeyCertificate"
+
+        If you would like this function to output an ssh command that uses Public Key Authentication,
+        use "PublicKey" for this parameter. If you would like this function to ouput an ssh command that
+        uses Public Certificate Authentication, use "PublicKeyCertificate" for this parameter.
+
+    .EXAMPLE
+        # Open an elevated PowerShell Session, import the module, and -
+
+        PS C:\Users\zeroadmin> Get-SSHClientAuthSanity -SSHKeyFilePath "$HOME\.ssh\id_rsa"
+        
+#>
+function Get-SSHClientAuthSanity {
+    [CmdletBinding(DefaultParameterSetName="UnknownKey")]
+    Param(
+        [Parameter(
+            Mandatory=$True,
+            ParameterSetName="UnknownKey"
+        )]
+        [string]$SSHKeyFilePath,
+
+        [Parameter(
+            Mandatory=$True,
+            ParameterSetName="PublicKey"
+        )]
+        [string]$SSHPublicKeyFilePath,
+
+        [Parameter(
+            Mandatory=$True,
+            ParameterSetName="PrivateKey"
+        )]
+        [string]$SSHPrivateKeyFilePath,
+
+        [Parameter(
+            Mandatory=$True,
+            ParameterSetName="PublicCert"
+        )]
+        [string]$SSHPublicCertFilePath,
+
+        [Parameter(Mandatory=$False)]
+        [ValidateSet("PublicKey","PublicKeyCertificate")]
+        [string]$AuthMethod = "PublicKey"
+    )
+
+    if ($PSVersionTable.Platform -eq "Unix" -or $PSVersionTable.OS -match "Darwin" -and $env:SudoPwdPrompt) {
+        if (GetElevation) {
+            Write-Error "You should not be running the VaultServer Module as root! Halting!"
+            $global:FunctionResult = "1"
+            return
+        }
+        RemoveMySudoPwd
+        NewCronToAddSudoPwd
+        $env:SudoPwdPrompt = $False
+    }
+
+    # Make sure we have access to ssh binaries
+    if (![bool]$(Get-Command ssh-keygen -ErrorAction SilentlyContinue)) {
+        Write-Error "Unable to find 'ssh-keygen'! Halting!"
+        $global:FunctionResult = "1"
+        return
+    }
+
+    $BoundParametersDictionary = $PSCmdlet.MyInvocation.BoundParameters
+    [array]$UsedParameterNames = $($BoundParametersDictionary.GetEnumerator()).Key
+    $SSHFilePathParameter = $UsedParameterNames | Where-Object {$_ -match "SSHKeyFilePath|SSHPublicKeyFilePath|SSHPrivateKeyFilePath|SSHPublicCertFilePath"}
+    $SSHKeyFilePath = Get-Variable -Name $SSHFilePathParameter -ValueOnly
+
+    # Make sure the SSHKeyFilePath exists
+    if (!$(Test-Path $SSHKeyFilePath)) {
+        Write-Error "The path '$SSHKeyFilePath' was not found! Halting!"
+        $global:FunctionResult = "1"
+        return
+    }
+    else {
+        $SSHKeyFilePath = $(Resolve-Path $SSHKeyFilePath).Path
+    }
+
+    if ($SSHPublicCertFilePath) {
+        $AuthMethod = "PublicKeyCertificate"
+    }
+
+    # Inspect the SSHKeyFile
+    try {
+        $CheckSSHKeyFile = Get-SSHFileInfo -PathToKeyFile $SSHKeyFilePath -ErrorAction Stop -WarningAction SilentlyContinue
+    }
+    catch {
+        Write-Error $_
+        $global:FunctionResult = "1"
+        return
+    }
+
+    if ($CheckSSHKeyFile.FileType -eq $null) {
+        Write-Error "The file '$SSHKeyFilePath' does not appear to be an RSA Public Key, RSA Public Key Certificate, or RSA Private Key! Halting!"
+        $global:FunctionResult = "1"
+        return
+    }
+
+    if ($SSHPublicKeyFilePath -and $CheckSSHKeyFile.FileType -ne "RSAPublicKey") {
+        if ($CheckSSHKeyFile.FileType -eq "RSAPublicKeyCertificate") {
+            $CorrectParameter = "SSHPublicKeyCertFilePath"
+        }
+        if ($CheckSSHKeyFile.FileType -eq "RSAPrivateKey") {
+            $CorrectParameter = "SSHPrivateKeyCertFilePath"
+        }
+        
+        $ParamErrMsg = "The file '$SSHPublicKeyFilePath' does not appear to be an RSA Public Key! " +
+        "Instead, it appears to be an $($CheckSSHKeyFile.FileType)! Please use the -$CorrectParameter parameter instead. Halting!"
+        Write-Error $ParamErrMsg
+        $global:FunctionResult = "1"
+        return
+    }
+    if ($SSHPublicCertFilePath -and $CheckSSHKeyFile.FileType -ne "RSAPublicKeyCertificate") {
+        if ($CheckSSHKeyFile.FileType -eq "RSAPublicKey") {
+            $CorrectParameter = "SSHPublicKeyFilePath"
+        }
+        if ($CheckSSHKeyFile.FileType -eq "RSAPrivateKey") {
+            $CorrectParameter = "SSHPrivateKeyCertFilePath"
+        }
+
+        $ParamErrMsg = "The file '$SSHPublicKeyFilePath' does not appear to be an RSA Public Key! " +
+        "Instead, it appears to be an $($CheckSSHKeyFile.FileType)! Please use the -$CorrectParameter parameter instead. Halting!"
+        Write-Error $ParamErrMsg
+        $global:FunctionResult = "1"
+        return
+    }
+    if ($SSHPrivateKeyFilePath -and $CheckSSHKeyFile.FileType -ne "RSAPrivateKey") {
+        if ($CheckSSHKeyFile.FileType -eq "RSAPublicKey") {
+            $CorrectParameter = "SSHPublicKeyFilePath"
+        }
+        if ($CheckSSHKeyFile.FileType -eq "RSAPublicKeyCertificate") {
+            $CorrectParameter = "SSHPublicKeyCertFilePath"
+        }
+
+        $ParamErrMsg = "The file '$SSHPublicKeyFilePath' does not appear to be an RSA Public Key! " +
+        "Instead, it appears to be an $($CheckSSHKeyFile.FileType)! Please use the -$CorrectParameter parameter instead. Halting!"
+        Write-Error $ParamErrMsg
+        $global:FunctionResult = "1"
+        return
+    }
+
+    if ($CheckSSHKeyFile.FileType -eq "RSAPublicKeyCertificate") {
+        $SSHPublicCertFilePath = $CheckSSHKeyFile.File
+    }
+    if ($CheckSSHKeyFile.FileType -eq "RSAPublicKey") {
+        $SSHPublicKeyFilePath = $CheckSSHKeyFile.File
+    }
+    if ($CheckSSHKeyFile.FileType -eq "RSAPrivateKey") {
+        $SSHPrivateKeyFilePath = $CheckSSHKeyFile.File
+    }
+
+    if ($SSHPublicCertFilePath) {
+        if ($(Get-Item $SSHPublicCertFilePath).Name -notmatch "-cert\.pub") {
+            $SSHKeyFilePath = $SSHPublicCertFilePath -replace "\..*?$","-cert.pub"
+            Rename-Item -Path $SSHPublicCertFilePath -NewName $SSHKeyFilePath
+        }
+    }
+    if ($SSHPublicKeyFilePath) {
+        if ($(Get-Item $SSHPublicKeyFilePath).Name -notmatch "\.pub") {
+            $SSHKeyFilePath = $SSHPublicKeyFilePath -replace "\..*?$",".pub"
+            Rename-Item -Path $SSHPublicKeyFilePath -NewName $SSHKeyFilePath
+        }
+    }
+    if ($SSHPrivateKeyFilePath) {
+        if ($(Get-Item $SSHPrivateKeyFilePath).Name -match "\..*?$" -and $(Get-Item $SSHPrivateKeyFilePath).Name -notmatch "\.pem$") {
+            $SSHKeyFilePath = $SSHPrivateKeyFilePath -replace "\..*?$",""
+            Rename-Item -Path $SSHPrivateKeyFilePath -NewName $SSHKeyFilePath
+        }
+    }
+
+    $KeyFileParentDirectory = $SSHKeyFilePath | Split-Path -Parent
+
+    # Inspect all files in $SSHKeyFilePath Parent Directory (should just be '$HOME/.ssh')
+    try {
+        $GenSSHDirFileInfoSplatParams = @{
+            PathToHomeDotSSHDirectory       = $KeyFileParentDirectory
+            WarningAction                   = "SilentlyContinue"
+            ErrorAction                     = "Stop"
+        }
+
+        $SSHDirFileInfo = Generate-SSHUserDirFileInfo @GenSSHUserDirFileInfoSplatParams
+    }
+    catch {
+        Write-Error $_
+        $global:FunctionResult = "1"
+        return
+    }
+
+    # Get all related Key Files
+    $FingerPrintRelevantString = $($CheckSSHKeyFile.FingerPrint -split " ")[1]
+    $RelatedKeyFileInfoObjects = $SSHDirFileInfo | Where-Object {$_.FingerPrint -match [regex]::Escape($FingerPrintRelevantString)}
+
+    if ($RelatedKeyFileInfoObjects.FileType -contains "RSAPublicKeyCertificate") {
+        $AuthMethod = "PublicKeyCertificate"
+    }
+    # NOTE: Each PSCustomObject in the above $RelatedKeyFileInfoObjects has the following properties:
+    # File - [string] Absolute File Path
+    # FileType - [string] with possible values 'RSAPublicKey', 'RSAPrivateKey', 'RSAPublicKeyCertificate', 'PuttyCombinedPublicPrivateKey', or 'SSH2_RFC4716'
+    # Contents - Result of `Get-Content` on File. Could be [string] or [string[]] if RSAPrivateKey, PuttyCombinedPublicPrivateKey, or SSH2_RFC4716
+    # Info - Could be either result of `Get-Content` on File or an `ssh-keygen` command. Could be [string] or [string[]] depending
+    # FingerPrint - Could be [string] or $null if PuttyCombinedPublicPrivateKey, or SSH2_RFC4716
+    # PasswordProtected - Could be [bool] or $null if PuttyCombinedPublicPrivateKey, or SSH2_RFC4716
+
+    # We're most likely going to need the fingerprints of the keys loaded in the ssh-agent, so get that info now
+    $SSHAgentOutput = [scriptblock]::Create('ssh-add -L').InvokeReturnAsIs()
+    if ($LASTEXITCODE -ne 0) {
+        Write-Warning $Error[0].Exception.Message
+    }
+    
+    if ($SSHAgentOutput) {
+        $tempDirectory = [IO.Path]::Combine([IO.Path]::GetTempPath(), [IO.Path]::GetRandomFileName()) -replace "\..*?$",""
+        $null = [IO.Directory]::CreateDirectory($tempDirectory)
+        [System.Collections.ArrayList]$RSAPubKeyTempFiles = @()
+        $Counter = 0
+        foreach ($RSAPubKey in $SSHAgentOutput) {
+            Set-Content -Path "$tempDirectory/RSAPubKey$Counter" -Value $RSAPubKey
+            $null = $RSAPubKeyTempFiles.Add("$tempDirectory/RSAPubKey$Counter")
+            $Counter++
+        }
+        [System.Collections.ArrayList]$SSHAgentKeyFingerPrintsInSSHAgent = @()
+        foreach ($RSAPubKeyFile in $RSAPubKeyTempFiles) {
+            $PSCustObj = [pscustomobject]@{
+                File                = $RSAPubKeyFile
+                FingerPrint         = [scriptblock]::Create("ssh-keygen -l -f $RSAPubKeyFile").InvokeReturnAsIs()
+                Contents            = $(Get-Content $RSAPubKeyFile)
+            }
+            $null = $SSHAgentKeyFingerPrintsInSSHAgent.Add($PSCustObj)
+        }
+        # Cleanup
+        Remove-Item $tempDirectory -Recurse -Force
+
+        # Check to see if the Private Key is Loaded in the ssh-agent
+        $RelevantString = $($CheckSSHKeyFile.FingerPrint -split " ")[1]
+        if ($SSHAgentKeyFingerPrintsInSSHAgent.FingerPrint -match [regex]::Escape($RelevantString)) {
+            $PrivateKeyIsLoadedInSSHAgent = $True
+            if ($SSHAgentKeyFingerPrintsInSSHAgent.Count -eq 1) {
+                $PositionOfLoadedPrivateKey = 0
+            }
+            elseif ($SSHAgentKeyFingerPrintsInSSHAgent.Count -gt 1) {
+                $PositionOfLoadedPrivateKey = $SSHAgentKeyFingerPrintsInSSHAgent.FingerPrint.IndexOf($($SSHAgentKeyFingerPrintsInSSHAgent.FingerPrint -match [regex]::Escape($RelevantString)))
+            }
+        }
+        else {
+            $PrivateKeyIsLoadedInSSHAgent = $False
+        }
+    }
+
+    [System.Collections.ArrayList]$NeededAdditionalSSHExeOptions = @()
+
+    # If $AuthMethod is "PublicKey" we need to track down the Public Key and the Private Key
+    if ($AuthMethod -eq "PublicKey") {
+        # If we were provided the path to the Public Key, then we just need to track down the Private Key
+        # It could either be in the same directory as the Public Key or in the ssh-agent
+        if ($SSHPublicKeyFilePath) {
+            # If `$RelatedKeyFileInfoObjects.Count -eq 1` then we know that the Private Key is NOT in $KeyFileParentDirectory,
+            # so we have to look for it in the ssh-agent
+            if ($RelatedKeyFileInfoObjects.Count -eq 1 -or
+            $($($RelatedKeyFileInfoObjects.Count -ge 2 -and $RelatedKeyFileInfoObjects.FileType -notcontains "RSAPrivateKey"))
+            ) {
+                # If the corresponding Private Key isn't loaded in the ssh-agent, or if it's too far down in the list, then we have a problem
+                if (!$PrivateKeyIsLoadedInSSHAgent -or $PositionOfLoadedPrivateKey -ge 4) {
+                    if (!$PrivateKeyIsLoadedInSSHAgent) {
+                        $SSHClientProblemDescription = "The Private Key is not on the filesystem under $KeyFileParentDirectory or loaded in the ssh-agent!"
+                    }
+                    if ($PositionOfLoadedPrivateKey -ge 4) {
+                        $SSHClientProblemDescription = "The Private Key is not on the filesystem in same directory " +
+                        "as the Public Key (i.e. $KeyFileParentDirectory). The Private Key IS loaded in the ssh-agent, " +
+                        "however, it is not in the top 5 on the list, so the sshd server on the Remote Host will most " +
+                        "likely reject authentication because of too many attempts!"
+                        $PubKeyAuthShouldWork = $False
+                    }
+                    $PubKeyAuthShouldWork = $False
+                }
+                if ($PrivateKeyIsLoadedInSSHAgent -and $PositionOfLoadedPrivateKey -lt 4) {
+                    $PubKeyAuthShouldWork = $True
+                }
+            }
+            # If `$RelatedKeyFileInfoObjects.Count -eq 2`, then one of those is the RSAPublicKey, but we need to
+            # confirm that the other is actually the RSAPrivateKey. If not, then we need to check the ssh-agent
+            # for the Private Key.
+            if ($RelatedKeyFileInfoObjects.Count -ge 2 -and $RelatedKeyFileInfoObjects.FileType -contains "RSAPrivateKey") {
+                if (!$PrivateKeyIsLoadedInSSHAgent) {
+                    $PubKeyAuthShouldWork = $True
+                    if ($SSHAgentKeyFingerPrintsInSSHAgent.Count -gt 4) { 
+                        $null = $NeededAdditionalSSHExeOptions.Add("IdentitiesOnly")
+                    }
+                    $null = $NeededAdditionalSSHExeOptions.Add("iPathToPrivateKey")
+                    $FinalPathToPrivateKey = $($RelatedKeyFileInfoObjects | Where-Object {$_.FileType -eq "RSAPrivateKey"}).File
+                }
+                if ($PositionOfLoadedPrivateKey -ge 4) {
+                    $PubKeyAuthShouldWork = $True
+                    $null = $NeededAdditionalSSHExeOptions.Add("IdentitiesOnly")
+                    $null = $NeededAdditionalSSHExeOptions.Add("iPathToPrivateKey")
+                    $FinalPathToPrivateKey = $($RelatedKeyFileInfoObjects | Where-Object {$_.FileType -eq "RSAPrivateKey"}).File
+                }
+                if ($PrivateKeyIsLoadedInSSHAgent -and $PositionOfLoadedPrivateKey -lt 4) {
+                    $PubKeyAuthShouldWork = $True
+                }
+            }
+        }
+        # If we are provided the Private Key, we should (just for organization's sake) make sure the corresponding
+        # Public Key is in $KeyFileParentDirectory. Also, depending on if the Private Key is loaded in the ssh-agent,
+        # we may or may not need `-i <PathToPrivateKey>` in the final ssh.exe command.
+        if ($SSHPrivateKeyFilePath) {
+            # If `$RelatedKeyFileInfoObjects.Count -eq 1`, then we only have the Private Key on the filesystem
+            # under $KeyFileParentDirectory. So, we should create the Public Key File alongside it.
+            if ($RelatedKeyFileInfoObjects.Count -eq 1 -or 
+            $($RelatedKeyFileInfoObjects.Count -ge 2 -and $RelatedKeyFileInfoObjects.FileType -notcontains "RSAPublicKey")
+            ) {
+                $RSAPublicKeyString = ssh-keygen -y -f "$SSHPrivateKeyFilePath"
+                Set-Content -Value $RSAPublicKeyString -Path "$SSHPrivateKeyFilePath.pub"
+            }
+
+            if (!$PrivateKeyIsLoadedInSSHAgent) {
+                $PubKeyAuthShouldWork = $True
+                if ($SSHAgentKeyFingerPrintsInSSHAgent.Count -gt 4) { 
+                    $null = $NeededAdditionalSSHExeOptions.Add("IdentitiesOnly")
+                }
+                $null = $NeededAdditionalSSHExeOptions.Add("iPathToPrivateKey")
+                $FinalPathToPrivateKey = $SSHPrivateKeyFilePath
+            }
+            if ($PositionOfLoadedPrivateKey -ge 4) {
+                $PubKeyAuthShouldWork = $True
+                $null = $NeededAdditionalSSHExeOptions.Add("IdentitiesOnly")
+                $null = $NeededAdditionalSSHExeOptions.Add("iPathToPrivateKey")
+                $FinalPathToPrivateKey = $SSHPrivateKeyFilePath
+            }
+            if ($PrivateKeyIsLoadedInSSHAgent -and $PositionOfLoadedPrivateKey -lt 4) {
+                $PubKeyAuthShouldWork = $True
+            }
+        }
+    }
+
+    # If $AuthMethod is "PublicKeyCertificate", we need to track down the Public Key Certificate and the Private Key
+    if ($AuthMethod -eq "PublicKeyCertificate") {
+        if ($SSHPublicCertFilePath) {
+            if ($RelatedKeyFileInfoObjects.Count -eq 1 -or 
+            $($RelatedKeyFileInfoObjects.Count -ge 2 -and $RelatedKeyFileInfoObjects.FileType -notcontains "RSAPrivateKey")
+            ) {
+                # If `$RelatedKeyFileInfoObjects.Count -eq 1`, the only relevant SSH Key File we have in our $HOME\.ssh directory
+                # is the Public Key Certificate
+
+                # If the corresponding Private Key isn't loaded in the ssh-agent, then we have a problem...
+                if (!$PrivateKeyIsLoadedInSSHAgent) {
+                    $SSHClientProblemDescription = "Unable to find Private Key in ssh-agent or in same directory as the Public Key Certificate (i.e. $KeyFileParentDirectory)!"
+                    $PubCertAuthShouldWork = $False
+                }
+                # If the Private Key IS Loaded in the ssh-agent, but it is too far down on the list, we have a problem...
+                if ($PositionOfLoadedPrivateKey -ge 4) {
+                    $SSHClientProblemDescription = "The Private Key is not on the filesystem in same directory " +
+                    "as the Public Key (i.e. $KeyFileParentDirectory). The Private Key IS loaded in the ssh-agent, "
+                    "however, it is not in the top 5 on the list, so the sshd server on the Remote Host will most " +
+                    "likely reject authentication because of too many attempts!"
+                    $PubCertAuthShouldWork = $False
+                }
+                if ($PrivateKeyIsLoadedInSSHAgent -and $PositionOfLoadedPrivateKey -lt 4) {
+                    # Even if the Private Key is Loaded in the ssh-agent and it's low enough on the list,
+                    # we need to make sure that the ssh-agent is aware of the Public Key Certificate specifically
+                    #
+                    # NOTE: In the below, we can use `$_.Contents -eq $(Get-Content $SSHPublicCertFilePath)`
+                    # as opposed to `$(Compare-Object $_.Contents $(Get-Content $SSHPublicCertFilePath)) -eq $null` because
+                    # each should be a single string (as opposed to an array of strings)
+                    $PublicCertLoadedCheck = $SSHAgentKeyFingerPrintsInSSHAgent | Where-Object {
+                        $_.FingerPrint -match [regex]::Escape($RelevantString) -and
+                        $($($_.Contents -split " ")[0..1] -join " ") -eq $($($(Get-Content $SSHPublicCertFilePath) -split " ")[0..1] -join " ")
+                    }
+                    
+                    if ($PublicCertLoadedCheck) {
+                        $PubCertAuthShouldWork = $True
+                    }
+                    else {
+                        $SSHClientProblemDescription = "The Private Key is loaded in the ssh-agent and it is low enough " +
+                        "on the list of keys to present to the Remote Host, HOWEVER, the ssh-agent does not appear to be " +
+                        "aware of the Public Key Certificate (i.e. 'ssh-add -L' will not contain the output of " +
+                        "'Get-Content '$SSHPublicCertFilePath''. To remedy, remove the key from the ssh-agent via " +
+                        "'ssh-add -d', ensure the Public Key Certificate is in the same directory as the Private Key, " +
+                        "ensure the Public Key Certificate file has the same file name as the Private Key just appended " +
+                        "with '-cert.pub', and add the Private Key to the ssh-agent via 'ssh-add <PathToPrivateKeyFile>' "
+                        $PubCertAuthShouldWork = $False
+                    }
+                }
+            }
+            if ($RelatedKeyFileInfoObjects.Count -ge 2 -and $RelatedKeyFileInfoObjects.FileType -contains "RSAPrivateKey") {
+                # One of these two objects is the Public Key Certificate. The other one is either the RSAPrivateKey
+                # or the RSAPublicKey. If it's the RSAPrivateKey, we should generate the RSAPublicKey regardless
+                # of whether or not the Private Key is loaded in the ssh-agent. We should also  make sure
+                # the File Names of the RSAPrivateKey and RSAPublicKey resemble the File Name of RSAPublicKeyCertificate.
+                # We should also note that if the Private Key isn't loaded in the ssh-agent, we'll need to use the
+                # `-i <PathToPrivateKeyFile>` option in addition to the `-i <PathToPublicKeyCertificate>` with ssh.exe
+                $PrivateKeyFileInfoObject = $RelatedKeyFileInfoObjects | Where-Object {$_.FileType -eq "RSAPrivateKey"}
+                if ($RelatedKeyFileInfoObjects.FileType -notcontains "RSAPublicKey") {
+                    $RSAPublicKeyString = ssh-keygen -y -f "$($PrivateKeyFileInfoObject.File)"
+                    $OutputPath = "$($PrivateKeyFileInfoObject.File)" + ".pub"
+                    Set-Content -Value $RSAPublicKeyString -Path $OutputPath
+                }
+
+                if (!$PrivateKeyIsLoadedInSSHAgent) {
+                    $PubCertAuthShouldWork = $True
+                    if ($SSHAgentKeyFingerPrintsInSSHAgent.Count -gt 4) { 
+                        $null = $NeededAdditionalSSHExeOptions.Add("IdentitiesOnly")
+                    }
+                    $null = $NeededAdditionalSSHExeOptions.Add("iPathToPrivateKey")
+                    $FinalPathToPrivateKey = $PrivateKeyFileInfoObject.File
+                    $null = $NeededAdditionalSSHExeOptions.Add("iPathToPublicCert")
+                    $FinalPathToPublicCert = $SSHPublicCertFilePath
+                }
+                if ($PositionOfLoadedPrivateKey -ge 4) {
+                    $PubCertAuthShouldWork = $True
+                    if ($SSHAgentKeyFingerPrintsInSSHAgent.Count -gt 4) { 
+                        $null = $NeededAdditionalSSHExeOptions.Add("IdentitiesOnly")
+                    }
+                    $null = $NeededAdditionalSSHExeOptions.Add("iPathToPrivateKey")
+                    $FinalPathToPrivateKey = $PrivateKeyFileInfoObject.File
+                }
+                if ($PrivateKeyIsLoadedInSSHAgent -and $PositionOfLoadedPrivateKey -lt 4) {
+                    # Even if the Private Key is Loaded in the ssh-agent and it's low enough on the list,
+                    # we need to make sure that the ssh-agent is aware of the Public Key Certificate specifically
+                    #
+                    # NOTE: In the below, we can use `$_.Contents -eq $(Get-Content $SSHPublicCertFilePath)`
+                    # as opposed to `$(Compare-Object $_.Contents $(Get-Content $SSHPublicCertFilePath)) -eq $null` because
+                    # each should be a single string (as opposed to an array of strings)
+                    $PublicCertLoadedCheck = $SSHAgentKeyFingerPrintsInSSHAgent | Where-Object {
+                        $_.FingerPrint -match [regex]::Escape($RelevantString) -and
+                        $($($_.Contents -split " ")[0..1] -join " ") -eq $($($(Get-Content $SSHPublicCertFilePath) -split " ")[0..1] -join " ")
+                    }
+                    
+                    if ($PublicCertLoadedCheck) {
+                        $PubCertAuthShouldWork = $True
+                    }
+                    else {
+                        $SSHClientProblemDescription = "The Private Key is loaded in the ssh-agent and it is low enough " +
+                        "on the list of keys to present to the Remote Host, HOWEVER, the ssh-agent does not appear to be " +
+                        "aware of the Public Key Certificate (i.e. 'ssh-add -L' will not contain the output of " +
+                        "'Get-Content '$SSHPublicCertFilePath''. To remedy, remove the key from the ssh-agent via " +
+                        "'ssh-add -d', ensure the Public Key Certificate is in the same directory as the Private Key, " +
+                        "ensure the Public Key Certificate file has the same file name as the Private Key just appended " +
+                        "with '-cert.pub', and add the Private Key to the ssh-agent via 'ssh-add <PathToPrivateKeyFile>' "
+                        $PubCertAuthShouldWork = $False
+                    }
+                }
+            }
+        }
+        if ($SSHPublicKeyFilePath) {
+            # If the corresponding Private Key is loaded in the ssh-agent, then we need to make sure it reflects
+            # a Public Key Certificate (i.e. content should not equal `Get-Content $SSHPublicKeyFile`).
+            # If the corresponding Private Key is NOT Loaded in the ssh-agent, then it better be on the filesystem,
+            # otherwise, we're out of luck.
+            if ($RelatedKeyFileInfoObjects.Count -eq 1 -or 
+            $($RelatedKeyFileInfoObjects.Count -ge 2 -and $RelatedKeyFileInfoObjects.FileType -notcontains "RSAPrivateKey")
+            ) {
+                if (!$PrivateKeyIsLoadedInSSHAgent) {
+                    $PubCertAuthShouldWork = $False
+                    $SSHClientProblemDescription = "Unable to find Private Key in ssh-agent or in same directory as the Public Key (i.e. $KeyFileParentDirectory)!"
+                }
+                if ($PositionOfLoadedPrivateKey -ge 4) {
+                    $SSHClientProblemDescription = "The Private Key is not on the filesystem in same directory " +
+                    "as the Public Key (i.e. $KeyFileParentDirectory). The Private Key IS loaded in the ssh-agent, "
+                    "however, it is not in the top 5 on the list, so the sshd server on the Remote Host will most " +
+                    "likely reject authentication because of too many attempts!"
+                    $PubCertAuthShouldWork = $False
+                }
+                if ($PrivateKeyIsLoadedInSSHAgent -and $PositionOfLoadedPrivateKey -lt 4) {
+                    # Even if the Private Key is Loaded in the ssh-agent and it's low enough on the list,
+                    # we need to make sure that the ssh-agent is aware of the Public Key Certificate specifically
+                    #
+                    # NOTE: In the below, we can use `$_.Contents -eq $(Get-Content $SSHPublicCertFilePath)`
+                    # as opposed to `$(Compare-Object $_.Contents $(Get-Content $SSHPublicCertFilePath)) -eq $null` because
+                    # each should be a single string (as opposed to an array of strings)
+                    $PublicCertLoadedCheck = $SSHAgentKeyFingerPrintsInSSHAgent | Where-Object {
+                        $_.FingerPrint -match [regex]::Escape($RelevantString) -and
+                        $($($_.Contents -split " ")[0..1] -join " ") -ne $($($(Get-Content $SSHPublicKeyFilePath) -split " ")[0..1] -join " ")
+                    }
+                    
+                    if ($PublicCertLoadedCheck) {
+                        $PubCertAuthShouldWork = $True
+                    }
+                    else {
+                        $SSHClientProblemDescription = "The Private Key is loaded in the ssh-agent and it is low enough " +
+                        "on the list of keys to present to the Remote Host, HOWEVER, the ssh-agent does not appear to be " +
+                        "aware of the Public Key Certificate (i.e. 'ssh-add -L' will not contain the output of " +
+                        "'Get-Content '$SSHPublicCertFilePath''. To remedy, remove the key from the ssh-agent via " +
+                        "'ssh-add -d', ensure the Public Key Certificate is in the same directory as the Private Key, " +
+                        "ensure the Public Key Certificate file has the same file name as the Private Key just appended " +
+                        "with '-cert.pub', and add the Private Key to the ssh-agent via 'ssh-add <PathToPrivateKeyFile>' "
+                        $PubCertAuthShouldWork = $False
+                    }
+                }
+            }
+            if ($RelatedKeyFileInfoObjects.Count -ge 2 -and $RelatedKeyFileInfoObjects.FileType -contains "RSAPrivateKey") {
+                if (!$PrivateKeyIsLoadedInSSHAgent) {
+                    # If the Private Key is not loaded in the ssh-agent, we need both the Private Key and the 
+                    # Public Key Certificate on the filesystem. At this point we know we have the Private Key
+                    # File, so now we have to check to see if we have the Public Key Certificate File
+                    if ($RelatedKeyFileInfoObjects.FileType -notcontains "RSAPublicKeyCertificate") {
+                        $SSHClientProblemDescription = "We are unable to find the RSA Public Key Certificate either on the filesystem (i.e. under $KeyFileParentDirectory), or loaded in the ssh-agent!"
+                        $PubCertAuthShouldWork = $False
+                    }
+                    if ($RelatedKeyFileInfoObjects.FileType -contains "RSAPublicKeyCertificate") {
+                        $PubCertAuthShouldWork = $True
+                        
+                        if ($SSHAgentKeyFingerPrintsInSSHAgent.Count -gt 4) { 
+                            $null = $NeededAdditionalSSHExeOptions.Add("IdentitiesOnly")
+                        }
+                        $null = $NeededAdditionalSSHExeOptions.Add("iPathToPrivateKey")
+                        $FinalPathToPrivateKey = $($RelatedKeyFileInfoObjects | Where-Object {$_.FileType -eq "RSAPrivateKey"}).File
+                        $null = $NeededAdditionalSSHExeOptions.Add("iPathToPublicCert")
+                        $FinalPathToPublicCert = $($RelatedKeyFileInfoObjects | Where-Object {$_.FileType -eq "RSAPublicKeyCertificate"}).File
+                    }
+                }
+                if ($PositionOfLoadedPrivateKey -ge 4) {
+                    # We need to determine if the output of `ssh-add -L` references the Public Key Certificate
+                    # or just the Public Key. If it just references the Public Key, we're out of luck.
+                    $PublicCertLoadedCheck = $SSHAgentKeyFingerPrintsInSSHAgent | Where-Object {
+                        $_.FingerPrint -match [regex]::Escape($RelevantString) -and
+                        $($($_.Contents -split " ")[0..1] -join " ") -ne $($($(Get-Content $SSHPublicKeyFilePath) -split " ")[0..1] -join " ")
+                    }
+
+                    if ($PublicCertLoadedCheck) {
+                        # Even though the Private Key corresponding to a Public Key Certificate is loaded in the ssh-agent
+                        # it's position is too high in the list. But what we can do is write the string to a file in 
+                        # $KeyFileParentDirectory and use `-i` options
+                        $PublicKeyCertificateString = $PublicCertLoadedCheck.Contents
+                        Set-Content -Value $PublicKeyCertificateString -Path $($SSHPublicKeyFilePath -replace "\.pub","-cert.pub")
+
+                        $null = $NeededAdditionalSSHExeOptions.Add("IdentitiesOnly")
+                        $null = $NeededAdditionalSSHExeOptions.Add("iPathToPrivateKey")
+                        $FinalPathToPrivateKey = $($RelatedKeyFileInfoObjects | Where-Object {$_.FileType -eq "RSAPrivateKey"}).File
+                        $null = $NeededAdditionalSSHExeOptions.Add("iPathToPublicCert")
+                        $FinalPathToPublicCert = $($SSHPublicKeyFilePath -replace "\.pub","-cert.pub")
+                    }
+                    if (!$PublicCertLoadedCheck) {
+                        $SSHClientProblemDescription = "The corresponding Private Key is on the filesystem (i.e. under " +
+                        "$KeyFileParentDirectory), and that private key is loaded in the ssh-agent, however, the ssh-agent " +
+                        "does not appear to be aware of a Public Key Certificate (i.e. 'ssh-add -L' should NOT contain the " +
+                        "same output as 'Get-Content $SSHPublicKeyFilePath'). To remedy, remove the key from the ssh-agent via " +
+                        "'ssh-add -d', ensure the Public Key Certificate is in the same directory as the Private Key, " +
+                        "ensure the Public Key Certificate file has the same file name as the Private Key just appended " +
+                        "with '-cert.pub', and add the Private Key to the ssh-agent via 'ssh-add <PathToPrivateKeyFile>'"
+                        $PubCertAuthShouldWork = $False
+                    }
+                }
+                if ($PrivateKeyIsLoadedInSSHAgent -and $PositionOfLoadedPrivateKey -lt 4) {
+                    # Even if the Private Key is Loaded in the ssh-agent and it's low enough on the list,
+                    # we need to make sure that the ssh-agent is aware of the Public Key Certificate specifically
+                    #
+                    # NOTE: In the below, we can use `$_.Contents -eq $(Get-Content $SSHPublicCertFilePath)`
+                    # as opposed to `$(Compare-Object $_.Contents $(Get-Content $SSHPublicCertFilePath)) -eq $null` because
+                    # each should be a single string (as opposed to an array of strings)
+                    $PublicCertLoadedCheck = $SSHAgentKeyFingerPrintsInSSHAgent | Where-Object {
+                        $_.FingerPrint -match [regex]::Escape($RelevantString) -and
+                        $($($_.Contents -split " ")[0..1] -join " ") -ne $($($(Get-Content $SSHPublicKeyFilePath) -split " ")[0..1] -join " ")
+                    }
+                    
+                    if ($PublicCertLoadedCheck) {
+                        $PubCertAuthShouldWork = $True
+                    }
+                    else {
+                        $SSHClientProblemDescription = "The Private Key is loaded in the ssh-agent and it is low enough " +
+                        "on the list of keys to present to the Remote Host, HOWEVER, the ssh-agent does not appear to be " +
+                        "aware of a Public Key Certificate (i.e. 'ssh-add -L' contains the output of " +
+                        "'Get-Content '$SSHPublicKeyFilePath'' instead of the Public Key Certificate string. " +
+                        "To remedy, remove the key from the ssh-agent via 'ssh-add -d', ensure the Public Key Certificate " +
+                        "is in the same directory as the Private Key, ensure the Public Key Certificate file has the same " +
+                        "file name as the Private Key just appended with '-cert.pub', and add the Private Key to the " +
+                        "ssh-agent via 'ssh-add <PathToPrivateKeyFile>'"
+                        $PubCertAuthShouldWork = $False
+                    }
+                }
+            }
+        }
+        if ($SSHPrivateKeyFilePath) {
+            if ($RelatedKeyFileInfoObjects.Count -eq 1) {
+                if (!$PrivateKeyIsLoadedInSSHAgent) {
+                    $PubCertAuthShouldWork = $False
+                    $SSHClientProblemDescription = "Unable to find Public Key Certificate either under $KeyFileParentDirectory or loaded in the ssh-agent!"
+                }
+                if ($PositionOfLoadedPrivateKey -ge 4) {
+                    # We need to determine if the output of `ssh-add -L` references the Public Key Certificate
+                    # or just the Public Key. If it just references the Public Key, we're out of luck.
+                    $PubKeyContent = ssh-keygen -y -f "$SSHPrivateKeyFilePath"
+                    $PublicCertLoadedCheck = $SSHAgentKeyFingerPrintsInSSHAgent | Where-Object {
+                        $_.FingerPrint -match [regex]::Escape($RelevantString) -and
+                        $($($_.Contents -split " ")[0..1] -join " ") -ne $($($PubKeyContent -split " ")[0..1] -join " ")
+                    }
+
+                    if ($PublicCertLoadedCheck) {
+                        # Even though the Private Key corresponding to a Public Key Certificate is loaded in the ssh-agent
+                        # it's position is too high in the list. But what we can do is write the string to a file in 
+                        # $KeyFileParentDirectory and use `-i` options
+                        $PublicKeyCertificateString = $PublicCertLoadedCheck.Contents
+                        Set-Content -Value $PublicKeyCertificateString -Path "$SSHPrivateKeyFilePath-cert.pub"
+
+                        $null = $NeededAdditionalSSHExeOptions.Add("IdentitiesOnly")
+                        $null = $NeededAdditionalSSHExeOptions.Add("iPathToPrivateKey")
+                        $FinalPathToPrivateKey = $($RelatedKeyFileInfoObjects | Where-Object {$_.FileType -eq "RSAPrivateKey"}).File
+                        $null = $NeededAdditionalSSHExeOptions.Add("iPathToPublicCert")
+                        $FinalPathToPublicCert = "$SSHPrivateKeyFilePath-cert.pub"
+                    }
+                    if (!$PublicCertLoadedCheck) {
+                        $SSHClientProblemDescription = "The corresponding Private Key is on the filesystem (i.e. under " +
+                        "$KeyFileParentDirectory), and that private key is loaded in the ssh-agent, however, the ssh-agent " +
+                        "does not appear to be aware of a Public Key Certificate (i.e. 'ssh-add -L' should NOT contain the " +
+                        "same output as 'ssh-keygen -y -f '$SSHPrivateKeyFilePath''). To remedy, remove the key from the ssh-agent via " +
+                        "'ssh-add -d', ensure the Public Key Certificate is in the same directory as the Private Key, " +
+                        "ensure the Public Key Certificate file has the same file name as the Private Key just appended " +
+                        "with '-cert.pub', and add the Private Key to the ssh-agent via 'ssh-add <PathToPrivateKeyFile>'"
+                        $PubCertAuthShouldWork = $False
+                    }
+                }
+                if ($PrivateKeyIsLoadedInSSHAgent -and $PositionOfLoadedPrivateKey -lt 4) {
+                    # Even if the Private Key is Loaded in the ssh-agent and it's low enough on the list,
+                    # we need to make sure that the ssh-agent is aware of the Public Key Certificate specifically
+                    #
+                    # NOTE: In the below, we can use `$_.Contents -eq $(Get-Content $SSHPublicCertFilePath)`
+                    # as opposed to `$(Compare-Object $_.Contents $(Get-Content $SSHPublicCertFilePath)) -eq $null` because
+                    # each should be a single string (as opposed to an array of strings)
+                    $PubKeyContent = ssh-keygen -y -f "$SSHPrivateKeyFilePath"
+                    $PublicCertLoadedCheck = $SSHAgentKeyFingerPrintsInSSHAgent | Where-Object {
+                        $_.FingerPrint -match [regex]::Escape($RelevantString) -and
+                        $($_.Contents -split " ")[0..1] -ne $($PubKeyContent -split " ")[0..1]
+                        $($($_.Contents -split " ")[0..1] -join " ") -ne $($($PubKeyContent -split " ")[0..1] -join " ")
+                    }
+                    
+                    if ($PublicCertLoadedCheck) {
+                        $PubCertAuthShouldWork = $True
+                    }
+                    else {
+                        $SSHClientProblemDescription = "The Private Key is loaded in the ssh-agent and it is low enough " +
+                        "on the list of keys to present to the Remote Host, HOWEVER, the ssh-agent does not appear to be " +
+                        "aware of a Public Key Certificate (i.e. 'ssh-add -L' will not contain the output of " +
+                        "'ssh-keygen -y -f '$SSHPrivateKeyFilePath''). To remedy, remove the key from the ssh-agent via " +
+                        "'ssh-add -d', ensure the Public Key Certificate is in the same directory as the Private Key, " +
+                        "ensure the Public Key Certificate file has the same file name as the Private Key just appended " +
+                        "with '-cert.pub', and add the Private Key to the ssh-agent via 'ssh-add <PathToPrivateKeyFile>' "
+                        $PubCertAuthShouldWork = $False
+                    }
+                }
+            }
+            if ($RelatedKeyFileInfoObjects.Count -ge 2) {
+                if (!$PrivateKeyIsLoadedInSSHAgent) {
+                    # If the Private Key is not loaded in the ssh-agent, we need both the Private Key and the 
+                    # Public Key Certificate on the filesystem. At this point we know we have the Private Key
+                    # File, so now we have to check to see if we have the Public Key Certificate File
+                    if ($RelatedKeyFileInfoObjects.FileType -notcontains "RSAPublicKeyCertificate") {
+                        $SSHClientProblemDescription = "We are unable to find the RSA Public Key Certificate either on the filesystem (i.e. under $KeyFileParentDirectory), or loaded in the ssh-agent!"
+                        $PubCertAuthShouldWork = $False
+                    }
+                    if ($RelatedKeyFileInfoObjects.FileType -contains "RSAPublicKeyCertificate") {
+                        $PubCertAuthShouldWork = $True
+                        
+                        if ($SSHAgentKeyFingerPrintsInSSHAgent.Count -gt 4) { 
+                            $null = $NeededAdditionalSSHExeOptions.Add("IdentitiesOnly")
+                        }
+                        $null = $NeededAdditionalSSHExeOptions.Add("iPathToPrivateKey")
+                        $FinalPathToPrivateKey = $($RelatedKeyFileInfoObjects | Where-Object {$_.FileType -eq "RSAPrivateKey"}).File
+                        $null = $NeededAdditionalSSHExeOptions.Add("iPathToPublicCert")
+                        $FinalPathToPublicCert = $($RelatedKeyFileInfoObjects | Where-Object {$_.FileType -eq "RSAPublicKeyCertificate"}).File
+                    }
+                }
+                if ($PositionOfLoadedPrivateKey -ge 4) {
+                    # We need to determine if the output of `ssh-add -L` references the Public Key Certificate
+                    # or just the Public Key. If it just references the Public Key, we're out of luck.
+                    $PubKeyContent = ssh-keygen -y -f "$SSHPrivateKeyFilePath"
+                    $PublicCertLoadedCheck = $SSHAgentKeyFingerPrintsInSSHAgent | Where-Object {
+                        $_.FingerPrint -match [regex]::Escape($RelevantString) -and
+                        $($($_.Contents -split " ")[0..1] -join " ") -ne $($($PubKeyContent -split " ")[0..1] -join " ")
+                    }
+
+                    if ($PublicCertLoadedCheck) {
+                        # Even though the Private Key corresponding to a Public Key Certificate is loaded in the ssh-agent
+                        # it's position is too high in the list. But what we can do is write the string to a file in 
+                        # $KeyFileParentDirectory and use `-i` options
+                        $PublicKeyCertificateString = $PublicCertLoadedCheck.Contents
+                        Set-Content -Value $PublicKeyCertificateString -Path "$SSHPrivateKeyFilePath-cert.pub"
+
+                        $null = $NeededAdditionalSSHExeOptions.Add("IdentitiesOnly")
+                        $null = $NeededAdditionalSSHExeOptions.Add("iPathToPrivateKey")
+                        $FinalPathToPrivateKey = $($RelatedKeyFileInfoObjects | Where-Object {$_.FileType -eq "RSAPrivateKey"}).File
+                        $null = $NeededAdditionalSSHExeOptions.Add("iPathToPublicCert")
+                        $FinalPathToPublicCert = "$SSHPrivateKeyFilePath-cert.pub"
+                    }
+                    if (!$PublicCertLoadedCheck) {
+                        $SSHClientProblemDescription = "The corresponding Private Key is on the filesystem (i.e. under " +
+                        "$KeyFileParentDirectory), and that private key is loaded in the ssh-agent, however, the ssh-agent " +
+                        "does not appear to be aware of a Public Key Certificate (i.e. 'ssh-add -L' should NOT contain the " +
+                        "same output as 'ssh-keygen -y -f '$SSHPrivateKeyFilePath''). To remedy, remove the key from the ssh-agent via " +
+                        "'ssh-add -d', ensure the Public Key Certificate is in the same directory as the Private Key, " +
+                        "ensure the Public Key Certificate file has the same file name as the Private Key just appended " +
+                        "with '-cert.pub', and add the Private Key to the ssh-agent via 'ssh-add <PathToPrivateKeyFile>'"
+                        $PubCertAuthShouldWork = $False
+                    }
+                }
+                if ($PrivateKeyIsLoadedInSSHAgent -and $PositionOfLoadedPrivateKey -lt 4) {
+                    # Even if the Private Key is Loaded in the ssh-agent and it's low enough on the list,
+                    # we need to make sure that the ssh-agent is aware of the Public Key Certificate specifically
+                    #
+                    # NOTE: In the below, we can use `$_.Contents -eq $(Get-Content $SSHPublicCertFilePath)`
+                    # as opposed to `$(Compare-Object $_.Contents $(Get-Content $SSHPublicCertFilePath)) -eq $null` because
+                    # each should be a single string (as opposed to an array of strings)
+                    $PubKeyContent = ssh-keygen -y -f "$SSHPrivateKeyFilePath"
+                    $PublicCertLoadedCheck = $SSHAgentKeyFingerPrintsInSSHAgent | Where-Object {
+                        $_.FingerPrint -match [regex]::Escape($RelevantString) -and
+                        $($_.Contents -split " ")[0..1] -ne $($PubKeyContent -split " ")[0..1]
+                        $($($_.Contents -split " ")[0..1] -join " ") -ne $($($PubKeyContent -split " ")[0..1] -join " ")
+                    }
+                    
+                    if ($PublicCertLoadedCheck) {
+                        $PubCertAuthShouldWork = $True
+                    }
+                    else {
+                        $SSHClientProblemDescription = "The Private Key is loaded in the ssh-agent and it is low enough " +
+                        "on the list of keys to present to the Remote Host, HOWEVER, the ssh-agent does not appear to be " +
+                        "aware of a Public Key Certificate (i.e. 'ssh-add -L' will not contain the output of " +
+                        "'ssh-keygen -y -f '$SSHPrivateKeyFilePath''). To remedy, remove the key from the ssh-agent via " +
+                        "'ssh-add -d', ensure the Public Key Certificate is in the same directory as the Private Key, " +
+                        "ensure the Public Key Certificate file has the same file name as the Private Key just appended " +
+                        "with '-cert.pub', and add the Private Key to the ssh-agent via 'ssh-add <PathToPrivateKeyFile>' "
+                        $PubCertAuthShouldWork = $False
+                    }
+                }
+            }
+        }
+    }
+
+    if ($AuthMethod -eq "PublicKeyCertificate") {
+        if ($PubCertAuthShouldWork) {
+            $PublicCertificateFileInfo = $RelatedKeyFileInfoObjects | Where-Object {$_.FileType -eq "RSAPublicKeyCertificate"}
+            # Finally, if we're checking Public Key Certificate Authentication, we need to figure out if we need to specify a
+            # User Account other that the Currently Logged in user, so we need to look at the 'Principals' on the Public Key Certificate
+            $IndexOfPrincipals = $PublicCertificateFileInfo.Info.IndexOf($($PublicCertificateFileInfo.Info -match "Principals:"))
+            $IndexOfCriticalOptions = $PublicCertificateFileInfo.Info.IndexOf($($PublicCertificateFileInfo.Info -match "Critical Options:"))
+            [array]$UserPrincipalsOnCert = $PublicCertificateFileInfo.Info[$($IndexOfPrincipals+1)..$($IndexOfCriticalOptions-1)] | foreach {$_.Trim()}
+            $WhoAmIReformatted = $($(whoami) -split "\\")[1] + "@" + $($(whoami) -split "\\")[0]
+            if ($UserPrincipalsOnCert -contains $WhoAmIReformatted) {
+                $DomainAccount = $True
+            }
+        }
+    }
+
+    # Create Output PSObject
+    $Output = [ordered]@{}
+    if ($AuthMethod -eq "PublicKey") {
+        $PubKeyAuthTestResult = if ($PubKeyAuthShouldWork) {$True} else {$False}
+        $Output.Add("PublicKeyAuthShouldWork",$PubKeyAuthTestResult)
+    }
+    if ($AuthMethod -eq "PublicKeyCertificate") {
+        $PubKeyCertAuthTestResult = if ($PubCertAuthShouldWork) {$True} else {$False}
+        $Output.Add("PublicKeyCertificateAuthShouldWork",$PubKeyCertAuthTestResult)
+    }
+    if ($SSHClientProblemDescription) {
+        $Output.Add("SSHClientProblemDescription",$SSHClientProblemDescription)
+    }
+    if ($NeededAdditionalSSHExeOptions) {
+        [System.Collections.ArrayList]$AdditionalArguments = @()
+        if ($NeededAdditionalSSHExeOptions -contains "IdentitiesOnly") {
+            $null = $AdditionalArguments.Add('-o "IdentitiesOnly=true"')
+        }
+        if ($NeededAdditionalSSHExeOptions -contains "iPathToPrivateKey") {
+            #$PrivateKeyFileInfoObject = $RelatedKeyFileInfoObjects | Where-Object {$_.FileType -eq "RSAPrivateKey"}
+            $null = $AdditionalArguments.Add("-i `"$FinalPathToPrivateKey`"")
+        }
+        if ($NeededAdditionalSSHExeOptions -contains "iPathToPublicCert") {
+            $null = $AdditionalArguments.Add("-i `"$FinalPathToPublicCert`"") 
+        }
+    }
+
+    if ($AuthMethod -eq "PublicKeyCertificate") {
+        [System.Collections.ArrayList]$PossibleUserAtRemoteHostFormats = @()
+        foreach ($UserAcct in [array]$UserPrincipalsOnCert) {
+            if ($DomainAccount) {
+                if ($($UserAcct -split "@")[-1] -ne $($(whoami) -split "\\")[0]) {
+                    $null = $PossibleUserAtRemoteHostFormats.Add("$($($UserAcct -split "@")[0])@<RemoteHost>")
+                }
+                else {
+                    $null = $PossibleUserAtRemoteHostFormats.Add("$UserAcct@<RemoteHost>")
+                }
+            }
+            else {
+                $null = $PossibleUserAtRemoteHostFormats.Add("$UserAcct@<RemoteHost>")
+            }
+        }
+        
+        $UserAtRemoteHost = $PossibleUserAtRemoteHostFormats -join " OR "
+    }
+    else {
+        $UserAtRemoteHost = "<user>@<RemoteHost>"
+    }
+
+    if ($AdditionalArguments.Count -gt 0) {
+        $SSHExeCommand = "ssh $($AdditionalArguments -join " ") $UserAtRemoteHost"
+    }
+    else {
+        $SSHExeCommand = "ssh $UserAtRemoteHost"
+    }
+
+    if ($SSHExeCommand) {
+        $Output.Add("FinalSSHExeCommand",$SSHExeCommand)
+    }
+
+    #$Output.Add("RelatedKeyFileInfo",$RelatedKeyFileInfoObjects)
+
+    [pscustomobject]$Output
+
+}
+
+
+<#
+    .SYNOPSIS
+        This function gets information about the specified SSH Key/Certificate file.
+
+        Output is a PSCustomObject with the following properties...
+
+            File                = $PathToKeyFile
+            FileType            = $FileType
+            Contents            = $Contents
+            Info                = $Info
+            FingerPrint         = $FingerPrint
+            PasswordProtected   = $PasswordProtected
+
+        ...where...
+        
+            - $PathToKeyFile is the path to the Key file specified by the -PathToKeyFile parameter,
+            - $FileType is either "RSAPublicKey", "RSAPrivateKey", or "RSAPublicKeyCertificate"
+            - $Contents is the result of: Get-Content $PathToKeyFile
+            - $Info is the result of: ssh-keygen -l -f "$PathToKeyFile"
+            - $FingerPrint is the fingerprint of the $PathToKeyFile
+            - $PasswordProtected is a Boolean that indicates whether or not the file is password protected.
+
+    .DESCRIPTION
+        See .SYNOPSIS
+
+    .NOTES
+
+    .PARAMETER PathToKeyFile
+        This parameter is MANDATORY.
+
+        This parameter takes a string that represents the full path to the SSH Key/Cert File you would
+        like to inspect.
+
+    .EXAMPLE
+        # Open an elevated PowerShell Session, import the module, and -
+
+        PS C:\Users\zeroadmin> Get-SSHFileInfo -PathToKeyFile "$HOME\.ssh\id_rsa"
+        
+#>
+function Get-SSHFileInfo {
+    [CmdletBinding()]
+    Param(
+        [Parameter(Mandatory=$True)]
+        [string]$PathToKeyFile
+    )
+
+    # Make sure we have access to ssh binaries
+    if (![bool]$(Get-Command ssh-keygen -ErrorAction SilentlyContinue)) {
+        Write-Error "Unable to find 'ssh-keygen'! Halting!"
+        $global:FunctionResult = "1"
+        return
+    }
+
+    # Make sure the path exists
+    if (!$(Test-Path $PathToKeyFile)) {
+        Write-Error "Unable to find the path '$PathToKeyFile'! Halting!"
+        $global:FunctionResult = "1"
+        return
+    }
+
+    # This function can't validate .ppk files from putty, so just assume they're valid
+    if ($(Get-Item $PathToKeyFile).Extension -eq ".ppk") {
+        [pscustomobject]@{
+            File                = $PathToKeyFile
+            FileType            = "PuttyCombinedPublicPrivateKey"
+            Contents            = $(Get-Content $PathToKeyFile)
+            Info                = $(Get-Content $PathToKeyFile)
+            FingerPrint         = $null
+            PasswordProtected   = $null
+        }
+        
+        return
+    }
+
+    #$SSHKeyGenParentDir = $(Get-Command ssh-keygen).Source | Split-Path -Parent
+    $SSHKeyGenArguments = "-l -f `"$PathToKeyFile`""
+
+    $ProcessInfo = New-Object System.Diagnostics.ProcessStartInfo
+    #$ProcessInfo.WorkingDirectory = $SSHKeyGenParentDir
+    $ProcessInfo.FileName = $(Get-Command ssh-keygen).Source
+    $ProcessInfo.RedirectStandardError = $true
+    $ProcessInfo.RedirectStandardOutput = $true
+    #$ProcessInfo.StandardOutputEncoding = [System.Text.Encoding]::Unicode
+    #$ProcessInfo.StandardErrorEncoding = [System.Text.Encoding]::Unicode
+    $ProcessInfo.UseShellExecute = $false
+    $ProcessInfo.Arguments = $SSHKeyGenArguments
+    $Process = New-Object System.Diagnostics.Process
+    $Process.StartInfo = $ProcessInfo
+    $Process.Start() | Out-Null
+    # Below $FinishedInAlottedTime returns boolean true/false
+    $FinishedInAlottedTime = $Process.WaitForExit(5000)
+    if (!$FinishedInAlottedTime) {
+        $Process.Kill()
+        $ProcessKilled = $True
+    }
+    $stdout = $Process.StandardOutput.ReadToEnd()
+    $stderr = $Process.StandardError.ReadToEnd()
+    $SSHKeyGenOutput = $stdout + $stderr
+
+    $KeyFileContent = Get-Content $PathToKeyFile
+    if ($SSHKeyGenOutput -match "(RSA-CERT)") {
+        $PublicKeyCertInfo = [scriptblock]::Create("ssh-keygen -L -f `"$PathToKeyFile`"").InvokeReturnAsIs()
+        $PublicKeyCertContent = $KeyFileContent
+        $FingerPrint = [scriptblock]::Create("ssh-keygen -l -f `"$PathToKeyFile`"").InvokeReturnAsIs()
+        $IsPublicKeyCert = $True
+    }
+    elseif ($SSHKeyGenOutput -match "(RSA)") {
+        # It could be either a Public Key or Private Key
+        $PrivateKeyAttempt = Validate-SSHPrivateKey -PathToPrivateKeyFile $PathToKeyFile
+        if (!$PrivateKeyAttempt.ValidSSHPrivateKeyFormat) {
+            $IsPublicKey = $True
+            $PublicKeyContent = $KeyFileContent
+            $PublicKeyInfo = $FingerPrint = [scriptblock]::Create("ssh-keygen -l -f `"$PathToKeyFile`"").InvokeReturnAsIs()
+        }
+        else {
+            $IsPrivateKey = $True
+            $PrivateKeyContent = $PrivateKeyInfo = $KeyFileContent
+            $FingerPrint = [scriptblock]::Create("ssh-keygen -l -f `"$PathToKeyFile`"").InvokeReturnAsIs()
+            $PasswordProtected = $PrivateKeyAttempt.PasswordProtected
+        }
+    }
+    elseif ($SSHKeyGenOutput -match "passphrase|pass phrase" -or $($SSHKeyGenOutput -eq $null -and $ProcessKilled)) {
+        $IsPrivateKey = $True
+        $PrivateKeyContent = $PrivateKeyInfo = $KeyFileContent
+        $PasswordProtected = $True
+    }
+    elseif ($KeyFileContent.Count -gt 0) {
+        if ($(Get-Content $PathToKeyFile)[0] -match "SSH2") {
+            [pscustomobject]@{
+                File                = $PathToKeyFile
+                FileType            = "SSH2_RFC4716"
+                Contents            = $(Get-Content $PathToKeyFile)
+                Info                = $(Get-Content $PathToKeyFile)
+                FingerPrint         = $null
+                PasswordProtected   = $null
+            }
+        }
+
+        return
+    }
+    else {
+        $NotPubKeyPrivKeyOrPubCert = $True
+    }
+
+    if ($NotPubKeyPrivKeyOrPubCert) {
+        Write-Warning "'$PathToKeyFile' is NOT a Public Key, Public Key Certificate, or Private Key"
+    }
+    else {
+        if ($IsPublicKeyCert) {
+            $FileType           = "RSAPublicKeyCertificate"
+            $Contents           = $PublicKeyCertContent
+            $Info               = $PublicKeyCertInfo
+            $PasswordProtected  = $False
+        }
+        if ($IsPublicKey) {
+            $FileType           = "RSAPublicKey"
+            $Contents           = $PublicKeyContent
+            $Info               = $PublicKeyInfo
+            $PasswordProtected  = $False
+        }
+        if ($IsPrivateKey) {
+            $FileType           = "RSAPrivateKey"
+            $Contents           = $PrivateKeyContent
+            $Info               = $PrivateKeyInfo
+            $PasswordProtected  = $PrivateKeyAttempt.PasswordProtected
+        }
+
+        [pscustomobject]@{
+            File                = $PathToKeyFile
+            FileType            = $FileType
+            Contents            = $Contents
+            Info                = $Info
+            FingerPrint         = $FingerPrint
+            PasswordProtected   = $PasswordProtected
+        }
+    }
+}
+
+
+<#
+    .SYNOPSIS
         This function uses the Vault Server REST API to return a list of Vault Token Accessors and associated
         information. (This function differes from the Get-VaultTokenAccessors function in that it provides
         additional information besides a simple list of Accessors).
@@ -2083,6 +3861,17 @@ function Get-VaultAccessorLookup {
         [Parameter(Mandatory=$True)]
         [string]$VaultAuthToken # Should be something like 'myroot' or '434f37ca-89ae-9073-8783-087c268fd46f'
     )
+
+    if ($PSVersionTable.Platform -eq "Unix" -or $PSVersionTable.OS -match "Darwin" -and $env:SudoPwdPrompt) {
+        if (GetElevation) {
+            Write-Error "You should not be running the VaultServer Module as root! Halting!"
+            $global:FunctionResult = "1"
+            return
+        }
+        RemoveMySudoPwd
+        NewCronToAddSudoPwd
+        $env:SudoPwdPrompt = $False
+    }
 
     # Make sure $VaultServerBaseUri is a valid Url
     try {
@@ -2269,6 +4058,17 @@ function Get-VaultTokenAccessors {
         [Parameter(Mandatory=$True)]
         [string]$VaultAuthToken # Should be something like 'myroot' or '434f37ca-89ae-9073-8783-087c268fd46f'
     )
+
+    if ($PSVersionTable.Platform -eq "Unix" -or $PSVersionTable.OS -match "Darwin" -and $env:SudoPwdPrompt) {
+        if (GetElevation) {
+            Write-Error "You should not be running the VaultServer Module as root! Halting!"
+            $global:FunctionResult = "1"
+            return
+        }
+        RemoveMySudoPwd
+        NewCronToAddSudoPwd
+        $env:SudoPwdPrompt = $False
+    }
 
     # Make sure $VaultServerBaseUri is a valid Url
     try {
@@ -3471,6 +5271,17 @@ function New-SSHCredentials {
         [int]$SSHAgentExpiry
     )
 
+    if ($PSVersionTable.Platform -eq "Unix" -or $PSVersionTable.OS -match "Darwin" -and $env:SudoPwdPrompt) {
+        if (GetElevation) {
+            Write-Error "You should not be running the VaultServer Module as root! Halting!"
+            $global:FunctionResult = "1"
+            return
+        }
+        RemoveMySudoPwd
+        NewCronToAddSudoPwd
+        $env:SudoPwdPrompt = $False
+    }
+
     if ($(!$VaultAuthToken -and !$DomainCredentialsWithAccessToVault) -or $($VaultAuthToken -and $DomainCredentialsWithAccessToVault)) {
         Write-Error "The $($MyInvocation.MyCommand.Name) function requires one (no more, no less) of the following parameters: [-DomainCredentialsWithAccessToVault, -VaultAuthToken] Halting!"
         $global:FunctionResult = "1"
@@ -3500,11 +5311,12 @@ function New-SSHCredentials {
     }
 
     # Generate an SSH key pair for zeroadmin
-    if (!$(Test-Path "$HOME\.ssh")) {
-        New-Item -ItemType Directory -Path "$HOME\.ssh"
+    $UserSSHDir = Join-Path $HOME .ssh
+    if (!$(Test-Path $UserSSHDir)) {
+        New-Item -ItemType Directory -Path $UserSSHDir
     }
 
-    Push-Location "$HOME\.ssh"
+    Push-Location $UserSSHDir
 
     $NewSSHKeySplatParams = @{
         NewSSHKeyName       = $NewSSHKeyName
@@ -3518,7 +5330,8 @@ function New-SSHCredentials {
         $KeyPwd = $NewSSHKeyPwd
     }
     if (!$BlankSSHPrivateKeyPwd -and !$NewSSHKeyPwd) {
-        $KeyPwd = Read-Host -Prompt "Please enter a password to protect the new SSH Private Key $NewSSHKeyName" -AsSecureString
+        #$KeyPwd = Read-Host -Prompt "Please enter a password to protect the new SSH Private Key $NewSSHKeyName" -AsSecureString
+        $BlankSSHPrivateKeyPwd = $True
     }
     if ($KeyPwd) {
         $NewSSHKeySplatParams.Add("NewSSHKeyPwd",$KeyPwd)
@@ -3611,6 +5424,842 @@ function New-SSHCredentials {
 
 <#
     .SYNOPSIS
+        This function creates a new SSH Public/Private Key Pair. Optionally, add it to the ssh-agent.
+        Optionally add the public key to a Remote Host's ~/.ssh/authorized_keys file.
+
+    .DESCRIPTION
+        See .SYNOPSIS
+
+    .NOTES
+
+    .PARAMETER NewSSHKeyName
+        This parameter is MANDATORY.
+
+        This parameter takes a string that represents the file name that you would like to give to the new
+        SSH User/Client Keys.
+
+    .PARAMETER NewSSHKeyPurpose
+        This parameter is OPTIONAL.
+
+        This parameter takes a string that represents a very brief description of what the new SSH Keys
+        will be used for. This description will be added to the Comment section when the new keys are
+        created.
+
+    .PARAMETER NewSSHKeyPwd
+        This parameter is OPTIONAL.
+
+        This parameter takes a SecureString that represents the password used to protect the new
+        Private Key file that is created.
+
+    .PARAMETER BlankSSHPrivateKeyPwd
+        This parameter is OPTIONAL.
+
+        This parameter is a switch. Use it to ensure that the newly created Private Key is NOT password
+        protected.
+
+    .PARAMETER AddToSSHAgent
+        This parameter is OPTIONAL, but recommended.
+
+        This parameter is a switch. If used, the new SSH Key Pair will be added to the ssh-agent service.
+
+    .PARAMETER RemovePrivateKey
+        This parameter is OPTIONAL. This parameter should only be used in conjunction with the
+        -AddtoSSHAgent switch.
+
+        This parameter is a switch. If used, the newly created Private Key will be added to the ssh-agent
+        and deleted from the filesystem.
+
+    .PARAMETER RemoteHost
+        This parameter is OPTIONAL. This parameter should only be used in conjunction with the
+        -AddToRemoteHostAuthKeys switch.
+
+        This parameter takes a string that represents the IP Address of DNS-Resolvable name of a Remote Host.
+        The newly created public key will be added to the Remote Host's ~/.ssh/authorized_keys file. The
+        Remote Host can be either Windows or Linux (as long as you can ssh to it from the local host).
+
+    .PARAMETER AddToRemoteHostAuthKeys
+        This parameter is OPTIONAL.
+
+        This parameter is a switch. If used, the newly created Public Key will be added to the Remote Host's
+        ~/.ssh/authorized_keys file. (Specify the Remote Host using the -RemoteHost parameter)
+
+    .PARAMETER RemoteHostUserName
+        This parameter is OPTIONAL. This parameter should only be used in conjunction with the
+        -AddToRemoteHostAuthKeys parameter.
+
+        This parameter takes a string that represents the name of the user with ssh access to
+        the Remote Host (specified by the -RemoteHost parameter).
+
+    .EXAMPLE
+        # Open an elevated PowerShell Session, import the module, and -
+
+        PS C:\Users\zeroadmin> $SplatParams = @{
+            NewSSHKeyName           = "ToRHServ01"
+            NewSSHKeyPurpose        = "ForSSHToRHServ01"
+            AddToSSHAgent           = $True
+        }
+        PS C:\Users\zeroadmin> New-SSHKey @SplatParams
+        
+#>
+function New-SSHKey {
+    [CmdletBinding()]
+    Param(
+        [Parameter(Mandatory=$True)]
+        [string]$NewSSHKeyName,
+
+        [Parameter(Mandatory=$False)]
+        [securestring]$NewSSHKeyPwd,
+
+        [Parameter(Mandatory=$False)]
+        [ValidatePattern("^\w*$")] # No spaces allowed
+        [string]$NewSSHKeyPurpose,
+
+        [Parameter(Mandatory=$False)]
+        [switch]$AddToSSHAgent,
+
+        [Parameter(Mandatory=$False)]
+        [switch]$RemovePrivateKey,
+
+        #[Parameter(Mandatory=$False)]
+        #[switch]$ShowNextSteps,
+
+        [Parameter(Mandatory=$False)]
+        [string]$RemoteHost,
+
+        [Parameter(Mandatory=$False)]
+        [switch]$AddToRemoteHostAuthKeys,
+
+        [Parameter(Mandatory=$False)]
+        [string]$RemoteHostUserName
+    )
+
+    #region >> Prep
+
+    if ($PSVersionTable.Platform -eq "Unix" -or $PSVersionTable.OS -match "Darwin" -and $env:SudoPwdPrompt) {
+        if (GetElevation) {
+            Write-Error "You should not be running the VaultServer Module as root! Halting!"
+            $global:FunctionResult = "1"
+            return
+        }
+        RemoveMySudoPwd
+        NewCronToAddSudoPwd
+        $env:SudoPwdPrompt = $False
+    }
+
+    if (!$PSVersionTable.Platform -or $PSVersionTable.Platform -eq "Win32NT") {
+        try {
+            if ($(Get-Module -ListAvailable).Name -notcontains 'WinSSH') {$null = Install-Module WinSSH -ErrorAction Stop}
+            if ($(Get-Module).Name -notcontains 'WinSSH') {$null = Import-Module WinSSH -ErrorAction Stop}
+            Import-Module "$($(Get-Module WinSSH).ModuleBase)\Await\Await.psd1" -ErrorAction Stop
+        }
+        catch {
+            Write-Error $_
+            $global:FunctionResult = "1"
+            return
+        }
+
+        try {
+            $null = Stop-AwaitSession
+        }
+        catch {
+            Write-Verbose $_.Exception.Message
+        }
+    }
+
+    if ($PSVersionTable.Platform -eq "Unix" -or $PSVersionTable.OS -match "Darwin") {
+        # Determine if we have required Linux commands
+        [System.Collections.ArrayList]$LinuxCommands = @(
+            "echo"
+            "expect"
+        )
+        [System.Collections.ArrayList]$CommandsNotPresent = @()
+        foreach ($CommandName in $LinuxCommands) {
+            $CommandCheckResult = command -v $CommandName
+            if (!$CommandCheckResult) {
+                $null = $CommandsNotPresent.Add($CommandName)
+            }
+        }
+
+        if ($CommandsNotPresent.Count -gt 0) {
+            [System.Collections.ArrayList]$FailedInstalls = @()
+            if ($CommandsNotPresent -contains "echo") {
+                try {
+                    $null = InstallLinuxPackage -PossiblePackageNames "coreutils" -CommandName "echo"
+                }
+                catch {
+                    $null = $FailedInstalls.Add("coreutils")
+                }
+            }
+            if ($CommandsNotPresent -contains "expect") {
+                try {
+                    $null = InstallLinuxPackage -PossiblePackageNames "expect" -CommandName "expect"
+                }
+                catch {
+                    $null = $FailedInstalls.Add("expect")
+                }
+            }
+    
+            if ($FailedInstalls.Count -gt 0) {
+                Write-Error "The following Linux packages are required, but were not able to be installed:`n$($FailedInstalls -join "`n")`nHalting!"
+                $global:FunctionResult = "1"
+                return
+            }
+        }
+
+        [System.Collections.ArrayList]$CommandsNotPresent = @()
+        foreach ($CommandName in $LinuxCommands) {
+            $CommandCheckResult = command -v $CommandName
+            if (!$CommandCheckResult) {
+                $null = $CommandsNotPresent.Add($CommandName)
+            }
+        }
+    
+        if ($CommandsNotPresent.Count -gt 0) {
+            Write-Error "The following Linux commands are required, but not present on $env:ComputerName:`n$($CommandsNotPresent -join "`n")`nHalting!"
+            $global:FunctionResult = "1"
+            return
+        }
+    }
+
+    if (!$(Get-Command ssh-keygen -ErrorAction SilentlyContinue)) {
+        Write-Error "Unable to find ssh-keygen! Halting!"
+        $global:FunctionResult = "1"
+        return
+    }
+
+    if ($AddToSSHAgent) {
+        if (!$(Get-Command ssh-add -ErrorAction SilentlyContinue)) {
+            Write-Error "Unable to find ssh-add! Halting!"
+            $global:FunctionResult = "1"
+            return
+        }
+
+        if (!$PSVersionTable.Platform -or $PSVersionTable.Platform -eq "Win32NT") {
+            if ($(Get-Service ssh-agent).Status -ne "Running") {
+                $SSHDErrMsg = "The ssh-agent service is NOT curently running! No ssh key pair has been created. Please ensure that the " +
+                "ssh-agent and sshd services are running and try again. Halting!'"
+                Write-Error $SSHDErrMsg
+                $global:FunctionResult = "1"
+                return
+            }
+        }
+    }
+
+    if ($AddToRemoteHostAuthKeys -and !$RemoteHost) {
+        $RemoteHost = Read-Host -Prompt "Please enter an IP, FQDN, or DNS-resolvable Host Name that represents the Remote Host you would like to share your new public key with."
+    }
+    if ($RemoteHost -and !$AddToRemoteHostAuthKeys) {
+        $AddToRemoteHostAuthKeys = $True
+    }
+
+    if ($RemoteHost) {
+        try {
+            $RemoteHostNetworkInfo = ResolveHost -HostNameOrIP $RemoteHost -ErrorAction Stop
+        }
+        catch {
+            Write-Error "Unable to resolve $RemoteHost! Halting!"
+            $global:FunctionResult = "1"
+            return
+        }
+    }
+
+    if ($RemoteHost -or $AddToRemoteHostAuthKeys -and !$RemoteHostUserName) {
+        $RemoteHostUserName = Read-Host -Prompt "Please enter a UserName that has access to $RemoteHost"
+    }
+
+    $UserSSHDir = Join-Path $HOME ".ssh"
+    if (!$(Test-Path $UserSSHDir)) {
+        $null = New-Item -Type Directory -Path $UserSSHDir
+    }
+
+    $SSHKeyOutFile = Join-Path $UserSSHDir $NewSSHKeyName
+
+    if ($NewSSHKeyPwd) {
+        $NewSSHKeyPwdPT = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($NewSSHKeyPwd))
+    }
+
+    if ($NewSSHKeyPurpose) {
+        #$SSHKeyGenArgumentsString = "-t rsa -b 2048 -f `"$SSHKeyOutFile`" -q -N `"$NewSSHKeyPwdPT`" -C `"$NewSSHKeyPurpose`""
+        $NewSSHKeyPurpose = $NewSSHKeyPurpose -replace "[\s]",""
+        $SSHKeyGenArgumentsString = "-t rsa -b 2048 -f `"$SSHKeyOutFile`" -q -C `"$NewSSHKeyPurpose`""
+        $SSHKeyGenArgumentsStringForExpect = "-t rsa -b 2048 -f \`"$SSHKeyOutFile\`" -q -C \`"$NewSSHKeyPurpose\`""
+    }
+    else {
+        #$SSHKeyGenArgumentsString = "-t rsa -b 2048 -f `"$SSHKeyOutFile`" -q -N `"$NewSSHKeyPwd`""
+        $SSHKeyGenArgumentsString = "-t rsa -b 2048 -f `"$SSHKeyOutFile`" -q"
+        $SSHKeyGenArgumentsStringForExpect = "-t rsa -b 2048 -f \`"$SSHKeyOutFile\`" -q"
+    }
+    
+    #endregion >> Prep
+
+
+    #region >> Main
+
+    if (!$PSVersionTable.Platform -or $PSVersionTable.Platform -eq "Win32NT") {
+        $sshkeygenParentDir = $(Get-Command ssh-keygen).Source | Split-Path -Parent
+
+        #region >> Await Attempt 1 of 2
+
+        # Create new public/private keypair
+        $null = Start-AwaitSession
+        Start-Sleep -Seconds 1
+        $null = Send-AwaitCommand '$host.ui.RawUI.WindowTitle = "PSAwaitSession"'
+        $PSAwaitProcess = $($(Get-Process | Where-Object {$_.Name -eq "powershell"}) | Sort-Object -Property StartTime -Descending)[0]
+        Start-Sleep -Seconds 1
+        $null = Send-AwaitCommand "`$env:Path = '$env:Path'; Push-Location '$sshkeygenParentDir'"
+        Start-Sleep -Seconds 1
+        $null = Send-AwaitCommand -Command $([scriptblock]::Create("ssh-keygen $SSHKeyGenArgumentsString; Test-Path $SSHKeyOutFile"))
+        Start-Sleep -Seconds 2
+
+        $PassphraseOrOverwriteExistingKey = Receive-AwaitResponse
+
+        [System.Collections.ArrayList]$CheckForExpectedResponses = @()
+        $null = $CheckForExpectedResponses.Add($PassphraseOrOverwriteExistingKey)
+        $Counter = 0
+        while (![bool]$($($CheckForExpectedResponses -split "`n") -match [regex]::Escape("Enter passphrase (empty for no passphrase):")) -and
+        ![bool]$($($CheckForExpectedResponses -split "`n") -match [regex]::Escape("Overwrite (y/n)?")) -and $Counter -le 30
+        ) {
+            $PassphraseOrOverwriteExistingKey = Receive-AwaitResponse
+            $null = $CheckForExpectedResponses.Add($PassphraseOrOverwriteExistingKey)
+            if ($CheckResponsesOutput -match "must be greater than zero" -or @($CheckResponsesOutput)[-1] -notmatch "[a-zA-Z]") {
+                break
+            }
+            Start-Sleep -Seconds 1
+            $Counter++
+        }
+        if ($Counter -eq 31) {
+            Write-Verbose "sshkeygen attempt timed out!"
+
+            if ($PSAwaitProcess.Id) {
+                try {
+                    $null = Stop-AwaitSession
+                }
+                catch {
+                    if ($PSAwaitProcess.Id -eq $PID) {
+                        Write-Error "The PSAwaitSession never spawned! Halting!"
+                        $global:FunctionResult = "1"
+                        return
+                    }
+                    else {
+                        if ([bool]$(Get-Process -Id $PSAwaitProcess.Id -ErrorAction SilentlyContinue)) {
+                            Stop-Process -Id $PSAwaitProcess.Id -ErrorAction SilentlyContinue
+                        }
+                        $Counter = 0
+                        while ([bool]$(Get-Process -Id $PSAwaitProcess.Id -ErrorAction SilentlyContinue) -and $Counter -le 15) {
+                            Write-Verbose "Waiting for Await Module Process Id $($PSAwaitProcess.Id) to end..."
+                            Start-Sleep -Seconds 1
+                            $Counter++
+                        }
+                    }
+                }
+                $PSAwaitProcess = $null
+            }
+        }
+
+        #endregion >> Await Attempt 1 of 2
+
+        $CheckResponsesOutput = $CheckForExpectedResponses | foreach {$_ -split "`n"}
+            
+        #region >> Await Attempt 2 of 2
+        
+        # If $CheckResponsesOutput contains the string "must be greater than zero", then something broke with the Await Module.
+        # Most of the time, just trying again resolves any issues
+        if ($CheckResponsesOutput -match "must be greater than zero" -or @($CheckResponsesOutput)[-1] -notmatch "[a-zA-Z]" -or
+        $CheckResponsesOutput -match "background process reported an error") {
+            if ($PSAwaitProcess.Id) {
+                try {
+                    $null = Stop-AwaitSession
+                }
+                catch {
+                    if ($PSAwaitProcess.Id -eq $PID) {
+                        Write-Error "The PSAwaitSession never spawned! Halting!"
+                        $global:FunctionResult = "1"
+                        return
+                    }
+                    else {
+                        if ([bool]$(Get-Process -Id $PSAwaitProcess.Id -ErrorAction SilentlyContinue)) {
+                            Stop-Process -Id $PSAwaitProcess.Id -ErrorAction SilentlyContinue
+                        }
+                        $Counter = 0
+                        while ([bool]$(Get-Process -Id $PSAwaitProcess.Id -ErrorAction SilentlyContinue) -and $Counter -le 15) {
+                            Write-Verbose "Waiting for Await Module Process Id $($PSAwaitProcess.Id) to end..."
+                            Start-Sleep -Seconds 1
+                            $Counter++
+                        }
+                    }
+                }
+            }
+
+            # Create new public/private keypair
+            $null = Start-AwaitSession
+            Start-Sleep -Seconds 1
+            $null = Send-AwaitCommand '$host.ui.RawUI.WindowTitle = "PSAwaitSession"'
+            $PSAwaitProcess = $($(Get-Process | Where-Object {$_.Name -eq "powershell"}) | Sort-Object -Property StartTime -Descending)[0]
+            Start-Sleep -Seconds 1
+            $null = Send-AwaitCommand "`$env:Path = '$env:Path'; Push-Location '$sshkeygenParentDir'"
+            Start-Sleep -Seconds 1
+            $null = Send-AwaitCommand -Command $([scriptblock]::Create("ssh-keygen $SSHKeyGenArgumentsString"))
+            Start-Sleep -Seconds 2
+
+            $PassphraseOrOverwriteExistingKey = Receive-AwaitResponse
+
+            [System.Collections.ArrayList]$CheckForExpectedResponses = @()
+            $null = $CheckForExpectedResponses.Add($PassphraseOrOverwriteExistingKey)
+            $Counter = 0
+            while (![bool]$($($CheckForExpectedResponses -split "`n") -match [regex]::Escape("Enter passphrase (empty for no passphrase):")) -and
+            ![bool]$($($CheckForExpectedResponses -split "`n") -match [regex]::Escape("Overwrite (y/n)?")) -and $Counter -le 30
+            ) {
+                $PassphraseOrOverwriteExistingKey = Receive-AwaitResponse
+                $null = $CheckForExpectedResponses.Add($PassphraseOrOverwriteExistingKey)
+                Start-Sleep -Seconds 1
+                $Counter++
+            }
+            if ($Counter -eq 31) {
+                Write-Error "sshkeygen attempt timed out!"
+                $global:FunctionResult = "1"
+
+                #$CheckForExpectedResponses
+
+                if ($PSAwaitProcess.Id) {
+                    try {
+                        $null = Stop-AwaitSession
+                    }
+                    catch {
+                        if ($PSAwaitProcess.Id -eq $PID) {
+                            Write-Error "The PSAwaitSession never spawned! Halting!"
+                            $global:FunctionResult = "1"
+                            return
+                        }
+                        else {
+                            if ([bool]$(Get-Process -Id $PSAwaitProcess.Id -ErrorAction SilentlyContinue)) {
+                                Stop-Process -Id $PSAwaitProcess.Id -ErrorAction SilentlyContinue
+                            }
+                            $Counter = 0
+                            while ([bool]$(Get-Process -Id $PSAwaitProcess.Id -ErrorAction SilentlyContinue) -and $Counter -le 15) {
+                                Write-Verbose "Waiting for Await Module Process Id $($PSAwaitProcess.Id) to end..."
+                                Start-Sleep -Seconds 1
+                                $Counter++
+                            }
+                        }
+                    }
+                }
+
+                return
+            }
+        }
+
+        #endregion >> Await Attempt 2 of 2
+
+        $CheckResponsesOutput = $CheckForExpectedResponses | foreach {$_ -split "`n"}
+
+        # At this point, if we don't have the expected output, we need to fail
+        if ($CheckResponsesOutput -match "must be greater than zero" -or @($CheckResponsesOutput)[-1] -notmatch "[a-zA-Z]" -or
+        $CheckResponsesOutput -match "background process reported an error") {
+            if ($CheckResponsesOutput -match "must be greater than zero" -or @($CheckResponsesOutput)[-1] -notmatch "[a-zA-Z]") {
+                Write-Error "Something went wrong with the PowerShell Await Module! Halting!"
+            }
+            if ($CheckResponsesOutput -match "background process reported an error") {
+                Write-Error "Please check your credentials! Halting!"
+            }
+            $global:FunctionResult = "1"
+
+            if ($PSAwaitProcess.Id) {
+                try {
+                    $null = Stop-AwaitSession
+                }
+                catch {
+                    if ($PSAwaitProcess.Id -eq $PID) {
+                        Write-Error "The PSAwaitSession never spawned! Halting!"
+                        $global:FunctionResult = "1"
+                        return
+                    }
+                    else {
+                        if ([bool]$(Get-Process -Id $PSAwaitProcess.Id -ErrorAction SilentlyContinue)) {
+                            Stop-Process -Id $PSAwaitProcess.Id -ErrorAction SilentlyContinue
+                        }
+                        $Counter = 0
+                        while ([bool]$(Get-Process -Id $PSAwaitProcess.Id -ErrorAction SilentlyContinue) -and $Counter -le 15) {
+                            Write-Verbose "Waiting for Await Module Process Id $($PSAwaitProcess.Id) to end..."
+                            Start-Sleep -Seconds 1
+                            $Counter++
+                        }
+                    }
+                }
+            }
+
+            return
+        }
+
+        # Now we should either have a prompt to accept the host key, a prompt for a password, or it already worked...
+
+        if ($CheckResponsesOutput -match [regex]::Escape("Overwrite (y/n)?")) {
+            $null = Send-AwaitCommand "y"
+            Start-Sleep -Seconds 3
+            
+            # This will either not prompt at all or prompt for a password
+            $PassphraseOrOverwriteExistingKey = Receive-AwaitResponse
+
+            [System.Collections.ArrayList]$CheckExpectedSendYesOutput = @()
+            $null = $CheckExpectedSendYesOutput.Add($PassphraseOrOverwriteExistingKey)
+            $Counter = 0
+            while (![bool]$($($CheckExpectedSendYesOutput -split "`n") -match [regex]::Escape("Enter passphrase (empty for no passphrase):")) -and $Counter -le 30) {
+                $PassphraseOrOverwriteExistingKey = Receive-AwaitResponse
+                $null = $CheckExpectedSendYesOutput.Add($PassphraseOrOverwriteExistingKey)
+                Start-Sleep -Seconds 1
+                $Counter++
+            }
+            if ($Counter -eq 31) {
+                Write-Error "Sending 'y' to overwrite the existing ssh key timed out!"
+                $global:FunctionResult = "1"
+                
+                $CheckForExpectedResponses
+
+                if ($PSAwaitProcess.Id) {
+                    try {
+                        $null = Stop-AwaitSession
+                    }
+                    catch {
+                        if ($PSAwaitProcess.Id -eq $PID) {
+                            Write-Error "The PSAwaitSession never spawned! Halting!"
+                            $global:FunctionResult = "1"
+                            return
+                        }
+                        else {
+                            if ([bool]$(Get-Process -Id $PSAwaitProcess.Id -ErrorAction SilentlyContinue)) {
+                                Stop-Process -Id $PSAwaitProcess.Id -ErrorAction SilentlyContinue
+                            }
+                            $Counter = 0
+                            while ([bool]$(Get-Process -Id $PSAwaitProcess.Id -ErrorAction SilentlyContinue) -and $Counter -le 15) {
+                                Write-Verbose "Waiting for Await Module Process Id $($PSAwaitProcess.Id) to end..."
+                                Start-Sleep -Seconds 1
+                                $Counter++
+                            }
+                        }
+                    }
+                }
+
+                return
+            }
+
+            $CheckSendYesOutput = $CheckExpectedSendYesOutput | foreach {$_ -split "`n"}
+        }
+
+        if ($CheckSendYesOutput -match [regex]::Escape("Enter passphrase (empty for no passphrase):") -or
+        $CheckResponsesOutput -match [regex]::Escape("Enter passphrase (empty for no passphrase):")
+        ) {
+            if ($NewSSHKeyPwd) {
+                $null = Send-AwaitCommand $NewSSHKeyPwdPT
+            }
+            else {
+                $null = Send-AwaitCommand ""
+            }
+            Start-Sleep -Seconds 3
+
+            $PassphraseOrOverwriteExistingKey = Receive-AwaitResponse
+
+            [System.Collections.ArrayList]$CheckExpectedSendPwdOutput = @()
+            $null = $CheckExpectedSendPwdOutput.Add($PassphraseOrOverwriteExistingKey)
+            $Counter = 0
+            while (![bool]$($CheckExpectedSendPwdOutput -match [regex]::Escape("Enter same passphrase again:")) -and $Counter -le 30) {
+                $PassphraseOrOverwriteExistingKey = Receive-AwaitResponse
+                $null = $CheckExpectedSendPwdOutput.Add($PassphraseOrOverwriteExistingKey)
+                Start-Sleep -Seconds 1
+                $Counter++
+            }
+            if ($Counter -eq 31) {
+                Write-Error "Sending the initial password for the private key timed out!"
+                $global:FunctionResult = "1"
+
+                $CheckExpectedSendPwdOutput
+                
+                if ($PSAwaitProcess.Id) {
+                    try {
+                        $null = Stop-AwaitSession
+                    }
+                    catch {
+                        if ($PSAwaitProcess.Id -eq $PID) {
+                            Write-Error "The PSAwaitSession never spawned! Halting!"
+                            $global:FunctionResult = "1"
+                            return
+                        }
+                        else {
+                            if ([bool]$(Get-Process -Id $PSAwaitProcess.Id -ErrorAction SilentlyContinue)) {
+                                Stop-Process -Id $PSAwaitProcess.Id -ErrorAction SilentlyContinue
+                            }
+                            $Counter = 0
+                            while ([bool]$(Get-Process -Id $PSAwaitProcess.Id -ErrorAction SilentlyContinue) -and $Counter -le 15) {
+                                Write-Verbose "Waiting for Await Module Process Id $($PSAwaitProcess.Id) to end..."
+                                Start-Sleep -Seconds 1
+                                $Counter++
+                            }
+                        }
+                    }
+                }
+
+                return
+            }
+
+            $CheckSendPwdOutput = $CheckExpectedSendPwdOutput | foreach {$_ -split "`n"}
+
+            if ($CheckSendPwdOutput -match [regex]::Escape("Enter same passphrase again:")) {
+                if ($NewSSHKeyPwd) {
+                    $null = Send-AwaitCommand $NewSSHKeyPwdPT
+                }
+                else {
+                    $null = Send-AwaitCommand ""
+                }
+                Start-Sleep -Seconds 3
+
+                $PassphraseOrOverwriteExistingKey = Receive-AwaitResponse
+
+                if (!$OutputPrep) {
+                    [System.Collections.ArrayList]$OutputPrep = @()
+                    if (![System.String]::IsNullOrWhiteSpace($SuccessOrAcceptHostKeyOrPwdPrompt)) {
+                        $null = $OutputPrep.Add($SuccessOrAcceptHostKeyOrPwdPrompt)
+                    }
+                }
+                $Counter = 0
+                while (![bool]$($($OutputPrep -split "`n") -match "True") -and $Counter -le $CounterLimit) {
+                    $PassphraseOrOverwriteExistingKey = Receive-AwaitResponse
+                    $null = $OutputPrep.Add($PassphraseOrOverwriteExistingKey)
+                    Start-Sleep -Seconds 1
+                    $Counter++
+                }
+                if ($Counter -eq 31) {
+                    Write-Error "Sending the password again timed out!"
+                    $global:FunctionResult = "1"
+
+                    $OutputPrep
+                    
+                    if ($PSAwaitProcess.Id) {
+                        try {
+                            $null = Stop-AwaitSession
+                        }
+                        catch {
+                            if ($PSAwaitProcess.Id -eq $PID) {
+                                Write-Error "The PSAwaitSession never spawned! Halting!"
+                                $global:FunctionResult = "1"
+                                return
+                            }
+                            else {
+                                if ([bool]$(Get-Process -Id $PSAwaitProcess.Id -ErrorAction SilentlyContinue)) {
+                                    Stop-Process -Id $PSAwaitProcess.Id -ErrorAction SilentlyContinue
+                                }
+                                $Counter = 0
+                                while ([bool]$(Get-Process -Id $PSAwaitProcess.Id -ErrorAction SilentlyContinue) -and $Counter -le 15) {
+                                    Write-Verbose "Waiting for Await Module Process Id $($PSAwaitProcess.Id) to end..."
+                                    Start-Sleep -Seconds 1
+                                    $Counter++
+                                }
+                            }
+                        }
+                    }
+
+                    return
+                }
+            }
+        }
+    
+        $SSHKeyGenOutput = $OutputPrep
+    }
+    if ($PSVersionTable.Platform -eq "Unix" -or $PSVersionTable.OS -match "Darwin") {
+        if ($AddToSSHAgent) {
+            # Check to see if the ssh-agent is running
+            #[scriptblock]::Create('ssh-add -L').InvokeReturnAsIs()
+            $SSHAgentProcesses = Get-Process -Name ssh-agent -IncludeUserName -ErrorAction SilentlyContinue | Where-Object {$_.UserName -eq $env:USER}
+            if ($SSHAgentProcesses.Count -gt 0) {
+                $LatestSSHAgentProcess = $(@($SSHAgentProcesses) | Sort-Object StartTime)[-1]
+                $env:SSH_AUTH_SOCK = $(Get-ChildItem /tmp -Recurse -File | Where-Object {$_.FullName -match "\.$($LatestSSHAgentProcess.Id-1)"}).FullName
+                $env:SSH_AGENT_PID = $LatestSSHAgentProcess.Id
+            }
+            else {                
+                $SSHAgentInfo = ssh-agent
+                $env:SSH_AUTH_SOCK = $($($($SSHAgentInfo -match "AUTH_SOCK") -replace 'SSH_AUTH_SOCK=','') -split ';')[0]
+                $env:SSH_AGENT_PID = $($($($SSHAgentInfo -match "SSH_AGENT_PID") -replace 'SSH_AGENT_PID=','') -split ';')[0]
+            }
+        }
+
+        [System.Collections.ArrayList]$ExpectScriptPrep = @(
+            'expect - << EOF'
+            'set timeout 20'
+        )
+        if ($NewSSHKeyPwdPT) {
+            $null = $ExpectScriptPrep.Add("set password $NewSSHKeyPwdPT")
+        }
+
+        [System.Collections.ArrayList]$ExpectScriptPrep2 = @(
+            'set prompt \"(>|:|#|\\\\\\$)\\\\s+\\$\"'
+            "spawn ssh-keygen $SSHKeyGenArgumentsStringForExpect"
+            'match_max 100000'
+            'expect {'
+            '    \"*Overwrite (y*\" {'
+            '        send -- \"y\r\"'
+            '        exp_continue'
+            '    }'
+            '    \"*(empty for no passphrase)*\" {'
+        )
+        if ($NewSSHKeyPwdPT) {
+            $null = $ExpectScriptPrep2.Add('        send -- \"\$password\r\"')
+        }
+        else {
+            $null = $ExpectScriptPrep2.Add('        send -- \"\r\"')
+        }
+
+        [System.Collections.ArrayList]$ExpectScriptPrep3 = @(
+            '        expect \"*Enter same passphrase again*\"'
+            '    }'
+            '}'
+        )
+        if ($NewSSHKeyPwdPT) {
+            $null = $ExpectScriptPrep3.Add('send -- \"\$password\r\"')
+        }
+        else {
+            $null = $ExpectScriptPrep3.Add('send -- \"\r\"')
+        }
+
+        foreach ($Line in $ExpectScriptPrep2) {
+            $null = $ExpectScriptPrep.Add($Line)
+        }
+        foreach ($Line in $ExpectScriptPrep3) {
+            $null = $ExpectScriptPrep.Add($Line)
+        }
+
+        $null = $ExpectScriptPrep.Add('expect eof')
+        $null = $ExpectScriptPrep.Add('EOF')
+        
+        $ExpectScript = $ExpectScriptPrep -join "`n"
+
+        #Write-Host "`$ExpectScript is:`n$ExpectScript"
+        #$ExpectScript | Export-CliXml "$HOME/ExpectScriptA.xml"
+        
+        # The below $ExpectOutput is an array of strings
+        $ExpectOutput = bash -c "$ExpectScript"
+
+        $SSHKeyGenOutput = $ExpectOutput
+    }
+
+    $PubPrivKeyPairFiles = Get-ChildItem -Path $UserSSHDir -File | Where-Object {$_.Name -match "$NewSSHKeyName"}
+    $PubKey = $PubPrivKeyPairFiles | Where-Object {$_.Extension -eq ".pub"}
+    $PrivKey = $PubPrivKeyPairFiles | Where-Object {$_.Extension -ne ".pub"}
+
+    if (!$PubKey -or !$PrivKey) {
+        if (!$PSVersionTable.Platform -or $PSVersionTable.Platform -eq "Win32NT") {
+            $Counter = 0
+            if ($PSAwaitProcess.Id) {
+                try {
+                    $null = Stop-AwaitSession
+                }
+                catch {
+                    if ($PSAwaitProcess.Id -eq $PID) {
+                        Write-Error "The PSAwaitSession never spawned! Halting!"
+                        $global:FunctionResult = "1"
+                        return
+                    }
+                    else {
+                        if ([bool]$(Get-Process -Id $PSAwaitProcess.Id -ErrorAction SilentlyContinue)) {
+                            Stop-Process -Id $PSAwaitProcess.Id -ErrorAction SilentlyContinue
+                        }
+                        $Counter = 0
+                        while ([bool]$(Get-Process -Id $PSAwaitProcess.Id -ErrorAction SilentlyContinue) -and $Counter -le 15) {
+                            Write-Verbose "Waiting for Await Module Process Id $($PSAwaitProcess.Id) to end..."
+                            Start-Sleep -Seconds 1
+                            $Counter++
+                        }
+                    }
+                }
+            }
+        }
+
+        Write-Error "The New SSH Key Pair was NOT created! Please review the output of ssh-keygen below. Halting!"
+        $global:FunctionResult = "1"
+        $SSHKeyGenOutput
+        return
+    }
+
+    if ($AddToSSHAgent) {
+        # Add the New Private Key to the ssh-agent
+        $null = [scriptblock]::Create("ssh-add $($PrivKey.FullName)").InvokeReturnAsIs()
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warning $Error[0].Exception.Message
+            Write-Warning "There was a problem adding $($PrivKey.FullName) to the ssh-agent PID $env:SSH_AGENT_PID!"
+        }
+
+        [System.Collections.ArrayList]$PublicKeysAccordingToSSHAgent = @()
+        $(ssh-add -L) | foreach {
+            $null = $PublicKeysAccordingToSSHAgent.Add($_)
+        }
+        $ThisPublicKeyAccordingToSSHAgent = $PublicKeysAccordingToSSHAgent | Where-Object {$_ -match "$NewSSHKeyName$"}
+        [System.Collections.ArrayList]$CharacterCountArray = @()
+        $ThisPublicKeyAccordingToSSHAgent -split " " | foreach {
+            $null = $CharacterCountArray.Add($_.Length)
+        }
+        $LongestStringLength = $($CharacterCountArray | Measure-Object -Maximum).Maximum
+        $ArrayPositionBeforeComment = $CharacterCountArray.IndexOf([int]$LongestStringLength)
+        $PublicKeySansCommentFromSSHAgent = $($ThisPublicKeyAccordingToSSHAgent -split " ")[0..$ArrayPositionBeforeComment] -join " "
+
+        $ThisPublicKeyAccordingToFile = Get-Content $PubKey.FullName
+        [System.Collections.ArrayList]$CharacterCountArray = @()
+        $ThisPublicKeyAccordingToFile -split " " | foreach {
+            $null = $CharacterCountArray.Add($_.Length)
+        }
+        $LongestStringLength = $($CharacterCountArray | Measure-Object -Maximum).Maximum
+        $ArrayPositionBeforeComment = $CharacterCountArray.IndexOf([int]$LongestStringLength)
+        $PublicKeySansCommentFromFile = $($ThisPublicKeyAccordingToFile -split " ")[0..$ArrayPositionBeforeComment] -join " "
+
+        if ($PublicKeySansCommentFromSSHAgent -ne $PublicKeySansCommentFromFile) {
+            Write-Warning "The public key according to the ssh-agent does NOT match the public key content in $($PubKey.FullName)! It appears the private key was never added to the ssh-agent!"
+        }
+
+        Write-Host "The Private Key $PublicKeyLocationFinal has been added to the ssh-agent service." -ForegroundColor Green
+        
+        if (!$RemovePrivateKey) {
+            Write-Host "It is now safe to delete the private key (i.e. $($PrivKey.FullName)) since it has been added to the ssh-agent." -ForegroundColor Green
+        }
+    }
+
+    if ($AddToRemoteHostAuthKeys) {
+        if ($RemoteHostNetworkInfo.FQDN) {
+            $RemoteHostLocation = $RemoteHostNetworkInfo.FQDN
+        }
+        elseif ($RemoteHostNetworkInfo.HostName) {
+            $RemoteHostLocation = $RemoteHostNetworkInfo.HostName
+        }
+        elseif ($RemoteHostNetworkInfo.IPAddressList[0]) {
+            $RemoteHostLocation = $RemoteHostNetworkInfo.IPAddressList[0]
+        }
+        
+        try {
+            Add-PublicKeyToRemoteHost -PublicKeyPath $PubKey.FullName -RemoteHost $RemoteHostLocation -RemoteHostUserName $RemoteHostUserName -ErrorAction Stop
+        }
+        catch {
+            Write-Error "Unable to add the public key to the authorized_keys file on $RemoteHost! Halting!"
+            $global:FunctionResult = "1"
+            return
+        }
+        
+        if (!$AddToSSHAgent) {
+            Write-Host "You can now ssh to $RemoteHost using public key authentication using the following command:" -ForegroundColor Green
+            Write-Host "    ssh -i $PubKey.FullName $RemoteHostUserName@$RemoteHostLocation" -ForegroundColor Green
+        }
+        else {
+            Write-Host "You can now ssh to $RemoteHost using public key authentication using the following command:" -ForegroundColor Green
+            Write-Host "    ssh $RemoteHostUserName@$RemoteHostLocation" -ForegroundColor Green
+        }
+    }
+
+    [pscustomobject]@{
+        PublicKeyFilePath       = $PubKey.FullName
+        PrivateKeyFilePath      = if (!$RemovePrivateKey) {$PrivKey.FullName} else {"PrivateKey was deleted after being added to the ssh-agent"}
+        PublicKeyContent        = Get-Content $(Join-Path $UserSSHDir "$NewSSHKeyName.pub")
+    }
+
+    ##### END Main Body #####
+
+}
+
+
+<#
+    .SYNOPSIS
         This function revokes the Vault Token for the specified User.
 
     .DESCRIPTION
@@ -3665,6 +6314,17 @@ function Revoke-VaultToken {
         [string[]]$VaultUserToDelete # Should match .meta.username for the Accessor Lookup
     )
 
+    if ($PSVersionTable.Platform -eq "Unix" -or $PSVersionTable.OS -match "Darwin" -and $env:SudoPwdPrompt) {
+        if (GetElevation) {
+            Write-Error "You should not be running the VaultServer Module as root! Halting!"
+            $global:FunctionResult = "1"
+            return
+        }
+        RemoveMySudoPwd
+        NewCronToAddSudoPwd
+        $env:SudoPwdPrompt = $False
+    }
+
     # Make sure $VaultServerBaseUri is a valid Url
     try {
         $UriObject = [uri]$VaultServerBaseUri
@@ -3686,7 +6346,7 @@ function Revoke-VaultToken {
     }
 
     try {
-        $AccessorInfo = Get-VaultAccessorLookup -VaultServerBaseUri $VaultServerBaseUri -VaultAuthToken $ZeroAdminToken -ErrorAction Stop
+        $AccessorInfo = Get-VaultAccessorLookup -VaultServerBaseUri $VaultServerBaseUri -VaultAuthToken $VaultAuthToken -ErrorAction Stop
         if (!$AccessorInfo) {throw "Ther Get-VaultAccessorLookup function failed! Halting!"}
     }
     catch {
@@ -3725,7 +6385,7 @@ function Revoke-VaultToken {
 
     # Make sure it no longer exists
     try {
-        $AccessorInfo = Get-VaultAccessorLookup -VaultServerBaseUri $VaultServerBaseUri -VaultAuthToken $ZeroAdminToken -ErrorAction Stop
+        $AccessorInfo = Get-VaultAccessorLookup -VaultServerBaseUri $VaultServerBaseUri -VaultAuthToken $VaultAuthToken -ErrorAction Stop
         if (!$AccessorInfo) {throw "Ther Get-VaultAccessorLookup function failed! Halting!"}
     }
     catch {
@@ -3785,73 +6445,101 @@ function Sign-SSHHostPublicKey {
         [string]$VaultAuthToken # Should be something like 'myroot' or '434f37ca-89ae-9073-8783-087c268fd46f'
     )
 
-    # Make sure sshd service is installed and running. If it is, we shouldn't need to use
-    # the New-SSHD server function
-    if (![bool]$(Get-Service sshd -ErrorAction SilentlyContinue)) {
-        if (![bool]$(Get-Service ssh-agent -ErrorAction SilentlyContinue)) {
-            $InstallWinSSHSplatParams = @{
-                GiveWinSSHBinariesPathPriority  = $True
-                ConfigureSSHDOnLocalHost        = $True
-                DefaultShell                    = "powershell"
-                GitHubInstall                   = $True
-                ErrorAction                     = "SilentlyContinue"
-                ErrorVariable                   = "IWSErr"
-            }
+    #region >> Prep
 
-            try {
-                $InstallWinSSHResults = Install-WinSSH @InstallWinSSHSplatParams -ErrorAction Stop
-                if (!$InstallWinSSHResults) {throw "There was a problem with the Install-WinSSH function! Halting!"}
+    if ($PSVersionTable.Platform -eq "Unix" -or $PSVersionTable.OS -match "Darwin" -and $env:SudoPwdPrompt) {
+        if (GetElevation) {
+            Write-Error "You should not be running the VaultServer Module as root! Halting!"
+            $global:FunctionResult = "1"
+            return
+        }
+        RemoveMySudoPwd
+        NewCronToAddSudoPwd
+        $env:SudoPwdPrompt = $False
+    }
+
+    if (!$PSVersionTable.Platform -or $PSVersionTable.Platform -eq "Win32NT") {
+        # Make sure sshd service is installed and running. If it is, we shouldn't need to use
+        # the New-SSHD server function
+        if (![bool]$(Get-Service sshd -ErrorAction SilentlyContinue)) {
+            if (![bool]$(Get-Service ssh-agent -ErrorAction SilentlyContinue)) {
+                $InstallWinSSHSplatParams = @{
+                    GiveWinSSHBinariesPathPriority  = $True
+                    ConfigureSSHDOnLocalHost        = $True
+                    DefaultShell                    = "pwsh"
+                    ErrorAction                     = "SilentlyContinue"
+                    ErrorVariable                   = "IWSErr"
+                }
+
+                try {
+                    $InstallWinSSHResults = Install-WinSSH @InstallWinSSHSplatParams -ErrorAction Stop
+                    if (!$InstallWinSSHResults) {throw "There was a problem with the Install-WinSSH function! Halting!"}
+                }
+                catch {
+                    Write-Error $_
+                    Write-Host "Errors for the Install-WinSSH function are as follows:"
+                    Write-Error $($IWSErr | Out-String)
+                    $global:FunctionResult = "1"
+                    return
+                }
             }
-            catch {
-                Write-Error $_
-                Write-Host "Errors for the Install-WinSSH function are as follows:"
-                Write-Error $($IWSErr | Out-String)
-                $global:FunctionResult = "1"
-                return
+            else {
+                $NewSSHDServerSplatParams = @{
+                    ErrorAction         = "SilentlyContinue"
+                    ErrorVariable       = "SSHDErr"
+                    DefaultShell        = "powershell"
+                }
+                
+                try {
+                    $NewSSHDServerResult = New-SSHDServer @NewSSHDServerSplatParams
+                    if (!$NewSSHDServerResult) {throw "There was a problem with the New-SSHDServer function! Halting!"}
+                }
+                catch {
+                    Write-Error $_
+                    Write-Host "Errors for the New-SSHDServer function are as follows:"
+                    Write-Error $($SSHDErr | Out-String)
+                    $global:FunctionResult = "1"
+                    return
+                }
             }
         }
-        else {
-            $NewSSHDServerSplatParams = @{
-                ErrorAction         = "SilentlyContinue"
-                ErrorVariable       = "SSHDErr"
-                DefaultShell        = "powershell"
-            }
-            
-            try {
-                $NewSSHDServerResult = New-SSHDServer @NewSSHDServerSplatParams
-                if (!$NewSSHDServerResult) {throw "There was a problem with the New-SSHDServer function! Halting!"}
-            }
-            catch {
-                Write-Error $_
-                Write-Host "Errors for the New-SSHDServer function are as follows:"
-                Write-Error $($SSHDErr | Out-String)
-                $global:FunctionResult = "1"
-                return
-            }
+
+        if (Test-Path "$env:ProgramData\ssh") {
+            $sshdir = "$env:ProgramData\ssh"
         }
-    }
+        elseif (Test-Path "$env:ProgramFiles\OpenSSH-Win64") {
+            $sshdir = "$env:ProgramFiles\OpenSSH-Win64"
+        }
+        if (!$sshdir) {
+            Write-Error "Unable to find ssh directory at '$env:ProgramData\ssh' or '$env:ProgramFiles\OpenSSH-Win64'! Halting!"
+            $global:FunctionResult = "1"
+            return
+        }
 
-    if (Test-Path "$env:ProgramData\ssh") {
-        $sshdir = "$env:ProgramData\ssh"
-    }
-    elseif (Test-Path "$env:ProgramFiles\OpenSSH-Win64") {
-        $sshdir = "$env:ProgramFiles\OpenSSH-Win64"
-    }
-    if (!$sshdir) {
-        Write-Error "Unable to find ssh directory at '$env:ProgramData\ssh' or '$env:ProgramFiles\OpenSSH-Win64'! Halting!"
-        $global:FunctionResult = "1"
-        return
-    }
+        $PathToSSHHostPublicKeyFile = "$sshdir\ssh_host_rsa_key.pub"
+        $sshdConfigPath = "$sshdir\sshd_config"
 
-    $PathToSSHHostPublicKeyFile = "$sshdir\ssh_host_rsa_key.pub"
-
-    if (!$(Test-Path $PathToSSHHostPublicKeyFile)) {
-        Write-Error "Unable to find the SSH RSA Host Key for $env:ComputerName at path '$sshdir\ssh_host_rsa_key.pub'! Halting!"
-        $global:FunctionResult = "1"
-        return
+        if (!$(Test-Path $PathToSSHHostPublicKeyFile)) {
+            Write-Error "Unable to find the SSH RSA Host Key for $env:ComputerName at path '$PathToSSHHostPublicKeyFile'! Halting!"
+            $global:FunctionResult = "1"
+            return
+        }
+        
+        $SignedPubKeyCertFilePath = $PathToSSHHostPublicKeyFile -replace "\.pub","-cert.pub"
     }
-    
-    $SignedPubKeyCertFilePath = $PathToSSHHostPublicKeyFile -replace "\.pub","-cert.pub"
+    elseif ($PSVersionTable.Platform -eq "Unix" -or $PSVersionTable.OS -match "Darwin") {
+        $sshdir = "/etc/ssh"
+        $sshdConfigPath = "$sshdir/sshd_config"
+        $PathToSSHHostPublicKeyFile = "$sshdir/ssh_host_rsa_key.pub"
+
+        if (!$(Test-Path $PathToSSHHostPublicKeyFile)) {
+            Write-Error "Unable to find the SSH RSA Host Key for $env:HostName at path '$PathToSSHHostPublicKeyFile'! Halting!"
+            $global:FunctionResult = "1"
+            return
+        }
+        
+        $SignedPubKeyCertFilePath = $PathToSSHHostPublicKeyFile -replace "\.pub","-cert.pub"
+    }
 
     # Make sure $VaultSSHHostSigningUrl is a valid Url
     try {
@@ -3874,7 +6562,9 @@ function Sign-SSHHostPublicKey {
         $VaultSSHHostSigningUrl = $VaultSSHHostSigningUrl.Substring(0,$VaultSSHHostSigningUrl.Length-1)
     }
 
-    ##### BEGIN Main Body #####
+    #endregion >> Prep
+
+    #region >> Main
 
     # HTTP API Request
     # The below removes 'comment' text from the Host Public key because sometimes it can cause problems
@@ -3907,7 +6597,7 @@ function Sign-SSHHostPublicKey {
     Set-Content -Value $($SignedSSHClientPubKeyCertResponse.Content | ConvertFrom-Json).data.signed_key.Trim() -Path $SignedPubKeyCertFilePath
 
     # Make sure permissions on "$sshdir/ssh_host_rsa_key-cert.pub" are set properly
-    if ($PSVersionTable.PSEdition -eq "Core") {
+    if ($PSVersionTable.PSEdition -eq "Core" -and $PSVersionTable.Platform -eq "Win32NT") {
         $null = Invoke-WinCommand -ComputerName localhost -ScriptBlock {
             $SecurityDescriptor = Get-NTFSSecurityDescriptor -Path $args[0]
             $SecurityDescriptor | Disable-NTFSAccessInheritance -RemoveInheritedAccessRules
@@ -3918,7 +6608,7 @@ function Sign-SSHHostPublicKey {
             $SecurityDescriptor | Set-NTFSSecurityDescriptor
         } -ArgumentList $SignedPubKeyCertFilePath
     }
-    else {
+    elseif ($PSVersionTable.PSEdition -eq "Desktop") {
         $SecurityDescriptor = Get-NTFSSecurityDescriptor -Path $SignedPubKeyCertFilePath
         $null = $SecurityDescriptor | Disable-NTFSAccessInheritance -RemoveInheritedAccessRules
         $null = $SecurityDescriptor | Clear-NTFSAccess
@@ -3927,18 +6617,21 @@ function Sign-SSHHostPublicKey {
         $null = $SecurityDescriptor | Add-NTFSAccess -Account "NT AUTHORITY\Authenticated Users" -AccessRights "ReadAndExecute, Synchronize" -AppliesTo ThisFolderSubfoldersAndFiles
         $null = $SecurityDescriptor | Set-NTFSSecurityDescriptor
     }
+    elseif ($PSVersionTable.Platform -eq "Unix" -or $PSVersionTable.OS -match "Darwin") {
+        chmod 644 "$SignedPubKeyCertFilePath"
+    }
 
     # Update sshd_config
     [System.Collections.ArrayList]$sshdContent = Get-Content $sshdConfigPath
 
     # Determine if sshd_config already has the 'HostCertificate' option active
     $ExistingHostCertificateOption = $sshdContent -match "HostCertificate" | Where-Object {$_ -notmatch "#"}
-    $HostCertificatePathWithForwardSlashes = "$sshdir\ssh_host_rsa_key-cert.pub" -replace "\\","/"
+    $HostCertificatePath =  $PathToSSHHostPublicKeyFile -replace "\.pub","-cert.pub"
     $HostCertificateOptionLine = "HostCertificate $HostCertificatePathWithForwardSlashes"
     
     if (!$ExistingHostCertificateOption) {
         try {
-            $LineNumberToInsertOn = $sshdContent.IndexOf($($sshdContent -match "HostKey __PROGRAMDATA__/ssh/ssh_host_rsa_key")) + 1
+            $LineNumberToInsertOn = $sshdContent.IndexOf($($sshdContent -match "HostKey .*ssh_host_rsa_key$")) + 1
             [System.Collections.ArrayList]$sshdContent.Insert($LineNumberToInsertOn, $HostCertificateOptionLine)
             Set-Content -Value $sshdContent -Path $sshdConfigPath
             $SSHDConfigContentChanged = $True
@@ -3975,6 +6668,8 @@ function Sign-SSHHostPublicKey {
         SSHDConfigContentChanged    = if ($SSHDConfigContentChanged) {$True} else {$False}
         SSHDContentThatWasAdded     = if ($SSHDConfigContentChanged) {$HostCertificateOptionLine}
     }
+
+    #endregion >> Main
 }
 
 
@@ -4077,6 +6772,27 @@ function Sign-SSHUserPublicKey {
         [int]$SSHAgentExpiry
     )
 
+    #region >> Prep
+
+    if ($PSVersionTable.Platform -eq "Unix" -or $PSVersionTable.OS -match "Darwin" -and $env:SudoPwdPrompt) {
+        if (GetElevation) {
+            Write-Error "You should not be running the VaultServer Module as root! Halting!"
+            $global:FunctionResult = "1"
+            return
+        }
+        RemoveMySudoPwd
+        NewCronToAddSudoPwd
+        $env:SudoPwdPrompt = $False
+    }
+
+    if ($AddedToSSHAgent) {
+        if (!$(Get-Command ssh-add -ErrorAction SilentlyContinue)) {
+            Write-Error "Unable to find ssh-add! Halting!"
+            $global:FunctionResult = "1"
+            return
+        }
+    }
+    
     if (!$(Test-Path $PathToSSHUserPublicKeyFile)) {
         Write-Error "The path '$PathToSSHUserPublicKeyFile' was not found! Halting!"
         $global:FunctionResult = "1"
@@ -4090,31 +6806,38 @@ function Sign-SSHUserPublicKey {
         $CorrespondingPrivateKeyPath = $PathToSSHUserPublicKeyFile -replace "\.pub",""
     }
 
-    if (!$(Test-Path $CorrespondingPrivateKeyPath)) {
-        Write-Error "Unable to find expected path to corresponding private key, i.e. '$CorrespondingPrivateKeyPath'! Halting!"
-        $global:FunctionResult = "1"
-        return
+    if ($PathToSSHUserPrivateKeyFile) {
+        if (!$(Test-Path $CorrespondingPrivateKeyPath)) {
+            Write-Error "Unable to find expected path to corresponding private key, i.e. '$CorrespondingPrivateKeyPath'! Halting!"
+            $global:FunctionResult = "1"
+            return
+        }
     }
 
     $SignedPubKeyCertFilePath = $PathToSSHUserPublicKeyFile -replace "\.pub","-cert.pub"
     
-    # Check to make sure the user private key isn't password protected. If it is, things break
-    # with current Windows OpenSSH implementation
-    try {
-        $ValidateSSHPrivateKeyResult = Validate-SSHPrivateKey -PathToPrivateKeyFile $CorrespondingPrivateKeyPath -ErrorAction Stop
-        if (!$ValidateSSHPrivateKeyResult) {throw "There was a problem with the Validate-SSHPrivateKey function! Halting!"}
+    if ($PathToSSHUserPrivateKeyFile) {
+        # Check to make sure the user private key isn't password protected. If it is, things break
+        # with current Windows OpenSSH implementation
+        try {
+            $ValidateSSHPrivateKeyResult = Validate-SSHPrivateKey -PathToPrivateKeyFile $CorrespondingPrivateKeyPath -ErrorAction Stop
+            if (!$ValidateSSHPrivateKeyResult) {throw "There was a problem with the Validate-SSHPrivateKey function! Halting!"}
 
-        if (!$ValidateSSHPrivateKeyResult.ValidSSHPrivateKeyFormat) {
-            throw "'$CorrespondingPrivateKeyPath' is not in a valid format! Double check with: ssh-keygen -y -f `"$CorrespondingPrivateKeyPath`""
+            if (!$ValidateSSHPrivateKeyResult.ValidSSHPrivateKeyFormat) {
+                throw "'$CorrespondingPrivateKeyPath' is not in a valid format! Double check with: ssh-keygen -y -f `"$CorrespondingPrivateKeyPath`""
+            }
+            if ($ValidateSSHPrivateKeyResult.PasswordProtected) {
+                $KeysCurrentlyInAgent = ssh-add -L
+                if (![bool]$($KeysCurrentlyInAgent -match $CorrespondingPrivateKeyPath)) {
+                    throw "'$CorrespondingPrivateKeyPath' is password protected and it has not been loaded into the ssh-agent! This means there will be a prompt! Halting!"
+                }
+            }
         }
-        if ($ValidateSSHPrivateKeyResult.PasswordProtected) {
-            throw "'$CorrespondingPrivateKeyPath' is password protected! This breaks the current implementation of OpenSSH on Windows. Halting!"
+        catch {
+            Write-Error $_
+            $global:FunctionResult = "1"
+            return
         }
-    }
-    catch {
-        Write-Error $_
-        $global:FunctionResult = "1"
-        return
     }
 
     # Make sure $VaultSSHClientSigningUrl is a valid Url
@@ -4138,7 +6861,9 @@ function Sign-SSHUserPublicKey {
         $VaultSSHClientSigningUrl = $VaultSSHClientSigningUrl.Substring(0,$VaultSSHClientSigningUrl.Length-1)
     }
 
-    ##### BEGIN Main Body #####
+    #endregion >> Prep
+
+    #region >> Main
 
     # HTTP API Request
     # The below removes 'comment' text from the Host Public key because sometimes it can cause problems
@@ -4192,58 +6917,18 @@ function Sign-SSHUserPublicKey {
     Set-Content -Value $($SignedSSHClientPubKeyCertResponse.Content | ConvertFrom-Json).data.signed_key.Trim() -Path $SignedPubKeyCertFilePath
 
     if ($AddToSSHAgent) {
-        # Push/Pop-Location probably aren't necessary...but just in case...
-        Push-Location $($CorrespondingPrivateKeyPath | Split-Path -Parent)
-    
-        #$null = ssh-add "$CorrespondingPrivateKeyPath"
-        $SSHAddArgs = "`"$CorrespondingPrivateKeyPath`""
-
-        $SSHAddProcessInfo = New-Object System.Diagnostics.ProcessStartInfo
-        $SSHAddProcessInfo.WorkingDirectory = $($(Get-Command ssh-add).Source | Split-Path -Parent)
-        $SSHAddProcessInfo.FileName = "ssh-add.exe"
-        $SSHAddProcessInfo.RedirectStandardError = $true
-        $SSHAddProcessInfo.RedirectStandardOutput = $true
-        $SSHAddProcessInfo.UseShellExecute = $false
-        $SSHAddProcessInfo.Arguments = $SSHAddArgs
-        $SSHAddProcess = New-Object System.Diagnostics.Process
-        $SSHAddProcess.StartInfo = $SSHAddProcessInfo
-        $SSHAddProcess.Start() | Out-Null
-        $SSHAddProcess.WaitForExit()
-        $SSHAddStdout = $SSHAddProcess.StandardOutput.ReadToEnd()
-        $SSHAddStderr = $SSHAddProcess.StandardError.ReadToEnd()
-        $SSHAddAllOutput = $SSHAddStdout + $SSHAddStderr
-        
-        if ($SSHAddAllOutput -match "fail|error") {
-            Write-Error $SSHAddAllOutput
-            Write-Error "The 'ssh-add $($PrivKey.FullName)' command failed!"
+        $null = [scriptblock]::Create("ssh-add `"$CorrespondingPrivateKeyPath`"").InvokeReturnAsIs()
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warning $Error[0].Exception.Message
         }
 
         if ($SSHAgentExpiry) {
-            #$null = ssh-add -t $SSHAgentExpiry
-            $SSHAddArgs = '-t $SSHAgentExpiry'
-
-            $SSHAddProcessInfo = New-Object System.Diagnostics.ProcessStartInfo
-            $SSHAddProcessInfo.WorkingDirectory = $($(Get-Command ssh-add).Source | Split-Path -Parent)
-            $SSHAddProcessInfo.FileName = "ssh-add.exe"
-            $SSHAddProcessInfo.RedirectStandardError = $true
-            $SSHAddProcessInfo.RedirectStandardOutput = $true
-            $SSHAddProcessInfo.UseShellExecute = $false
-            $SSHAddProcessInfo.Arguments = $SSHAddArgs
-            $SSHAddProcess = New-Object System.Diagnostics.Process
-            $SSHAddProcess.StartInfo = $SSHAddProcessInfo
-            $SSHAddProcess.Start() | Out-Null
-            $SSHAddProcess.WaitForExit()
-            $SSHAddStdout = $SSHAddProcess.StandardOutput.ReadToEnd()
-            $SSHAddStderr = $SSHAddProcess.StandardError.ReadToEnd()
-            $SSHAddAllOutput = $SSHAddStdout + $SSHAddStderr
-            
-            if ($SSHAddAllOutput -match "fail|error") {
-                Write-Error $SSHAddAllOutput
-                Write-Error "The 'ssh-add $($PrivKey.FullName)' command failed!"
+            $null = [scriptblock]::Create("ssh-add -t $SSHAgentExpiry").InvokeReturnAsIs()
+            if ($LASTEXITCODE -ne 0) {
+                Write-Warning $Error[0].Exception.Message
             }
         }
-
-        Pop-Location
+        
         $AddedToSSHAgent = $True
     }
 
@@ -4255,43 +6940,192 @@ function Sign-SSHUserPublicKey {
     }
 
     [pscustomobject]$Output
+
+    #endregion >> Main
 }
 
 
+<#
+    .SYNOPSIS
+        This function is meant to determine the following:
+            - Whether or not the specified file is, in fact, an SSH Private Key
+            - If the SSH Private Key File is password protected
+        
+        In order to test if we have a valid Private Key, and if that Private Key
+        is password protected, we try and generate a Public Key from it using ssh-keygen.
+        Depending on the output of ssh-keygen, we can make a determination.
+
+    .DESCRIPTION
+        See .SYNOPSIS
+
+    .NOTES
+
+    .PARAMETER PathToPrivateKeyFile
+        This parameter is MANDATORY.
+
+        This parameter takes a string that represents a full path to the file that we believe is
+        a valid SSH Private Key that we want to test.
+
+    .EXAMPLE
+        # Open an elevated PowerShell Session, import the module, and -
+
+        PS C:\Users\zeroadmin> Validate-SSHPrivateKey -PathToPrivateKeyFile "$HOME\.ssh\random"
+        
+#>
+function Validate-SSHPrivateKey {
+    [CmdletBinding()]
+    Param(
+        [Parameter(Mandatory=$True)]
+        [string]$PathToPrivateKeyFile
+    )
+
+    if ($PSVersionTable.Platform -eq "Unix" -or $PSVersionTable.OS -match "Darwin" -and $env:SudoPwdPrompt) {
+        if (GetElevation) {
+            Write-Error "You should not be running the VaultServer Module as root! Halting!"
+            $global:FunctionResult = "1"
+            return
+        }
+        RemoveMySudoPwd
+        NewCronToAddSudoPwd
+        $env:SudoPwdPrompt = $False
+    }
+
+    # Make sure we have access to ssh binaries
+    if (![bool]$(Get-Command ssh-keygen -ErrorAction SilentlyContinue)) {
+        Write-Error "Unable to find 'ssh-keygen' binary! Halting!"
+        $global:FunctionResult = "1"
+        return
+    }
+
+    # Make sure the path exists
+    if (!$(Test-Path $PathToPrivateKeyFile)) {
+        Write-Error "Unable to find the path '$PathToPrivateKeyFile'! Halting!"
+        $global:FunctionResult = "1"
+        return
+    }
+
+    $SSHKeyGenParentDir = $(Get-Command ssh-keygen).Source | Split-Path -Parent
+    $SSHKeyGenArguments = "-y -f `"$PathToPrivateKeyFile`""
+
+    $ProcessInfo = New-Object System.Diagnostics.ProcessStartInfo
+    #$ProcessInfo.WorkingDirectory = $SSHKeyGenParentDir
+    $ProcessInfo.FileName = $(Get-Command ssh-keygen).Source
+    $ProcessInfo.RedirectStandardError = $true
+    $ProcessInfo.RedirectStandardOutput = $true
+    #$ProcessInfo.StandardOutputEncoding = [System.Text.Encoding]::Unicode
+    #$ProcessInfo.StandardErrorEncoding = [System.Text.Encoding]::Unicode
+    $ProcessInfo.UseShellExecute = $false
+    $ProcessInfo.Arguments = $SSHKeyGenArguments
+    $Process = New-Object System.Diagnostics.Process
+    $Process.StartInfo = $ProcessInfo
+    $Process.Start() | Out-Null
+    # Below $FinishedInAlottedTime returns boolean true/false
+    $FinishedInAlottedTime = $Process.WaitForExit(5000)
+    if (!$FinishedInAlottedTime) {
+        $Process.Kill()
+        $ProcessKilled = $True
+    }
+    $stdout = $Process.StandardOutput.ReadToEnd()
+    $stderr = $Process.StandardError.ReadToEnd()
+    $SSHKeyGenOutput = $stdout + $stderr
+
+    if ($SSHKeyGenOutput -match "invalid format") {
+        $ValidSSHPrivateKeyFormat = $False
+        $PasswordProtected = $False
+    }
+    if ($SSHKeyGenOutput -match "ssh-rsa AA") {
+        $ValidSSHPrivateKeyFormat = $True
+        $PasswordProtected = $False
+    }
+    if ($SSHKeyGenOutput -match "passphrase|pass phrase" -or $($SSHKeyGenOutput -eq $null -and $ProcessKilled)) {
+        $ValidSSHPrivateKeyFormat = $True
+        $PasswordProtected = $True
+    }
+
+    [pscustomobject]@{
+        ValidSSHPrivateKeyFormat        = $ValidSSHPrivateKeyFormat
+        PasswordProtected               = $PasswordProtected
+    }
+}
+
+
+
+if ($PSVersionTable.Platform -eq "Win32NT" -and $PSVersionTable.PSEdition -eq "Core") {
+    if (![bool]$(Get-Module -ListAvailable WindowsCompatibility)) {
+        try {
+            Install-Module WindowsCompatibility -ErrorAction Stop
+        }
+        catch {
+            Write-Error $_
+            $global:FunctionResult = "1"
+            return
+        }
+    }
+    if (![bool]$(Get-Module WindowsCompatibility)) {
+        try {
+            Import-Module WindowsCompatibility -ErrorAction Stop
+        }
+        catch {
+            Write-Error $_
+            Write-Warning "The $ThisModule Module was NOT loaded successfully! Please run:`n    Remove-Module $ThisModule"
+            $global:FunctionResult = "1"
+            return
+        }
+    }
+}
+
 [System.Collections.ArrayList]$script:FunctionsForSBUse = @(
+    ${Function:AddMySudoPwd}.Ast.Extent.Text
+    ${Function:AddWinRMTrustedHost}.Ast.Extent.Text
     ${Function:AddWinRMTrustLocalHost}.Ast.Extent.Text
     ${Function:ConvertFromHCLToPrintF}.Ast.Extent.Text
+    ${Function:DownloadNuGetPackage}.Ast.Extent.Text
     ${Function:GetComputerObjectsInLDAP}.Ast.Extent.Text
-    ${Function:GetCurrentuser}.Ast.Extent.Text
+    ${Function:GetCurrentUser}.Ast.Extent.Text
     ${Function:GetDomainController}.Ast.Extent.Text
+    ${Function:GetDomainName}.Ast.Extent.Text
     ${Function:GetElevation}.Ast.Extent.Text
     ${Function:GetGroupObjectsInLDAP}.Ast.Extent.Text
+    ${Function:GetLDAPGroupAndUsers}.Ast.Extent.Text
+    ${Function:GetLDAPUserAndGroups}.Ast.Extent.Text
+    ${Function:GetLinuxOctalPermissions}.Ast.Extent.Text
+    ${Function:GetLocalGroupAndUsers}.Ast.Extent.Text
+    ${Function:GetLocalUserAndGroups}.Ast.Extent.Text
     ${Function:GetModuleDependencies}.Ast.Extent.Text
-    ${Function:GetNativePath}.Ast.Extent.Text
+    ${Function:GetMySudoStatus}.Ast.Extent.Text
     ${Function:GetUserObjectsInLDAP}.Ast.Extent.Text
+    ${Function:InstallLinuxPackage}.Ast.Extent.Text
     ${Function:InvokeModuleDependencies}.Ast.Extent.Text
     ${Function:InvokePSCompatibility}.Ast.Extent.Text
     ${Function:ManualPSGalleryModuleInstall}.Ast.Extent.Text
+    ${Function:NewCronToAddSudoPwd}.Ast.Extent.Text
     ${Function:NewUniqueString}.Ast.Extent.Text
-    ${Function:PauseForWarning}.Ast.Extent.Text
+    ${Function:RemoveMySudoPwd}.Ast.Extent.Text
     ${Function:ResolveHost}.Ast.Extent.Text
     ${Function:TestIsValidIPAddress}.Ast.Extent.Text
     ${Function:TestLDAP}.Ast.Extent.Text
     ${Function:TestPort}.Ast.Extent.Text
     ${Function:UnzipFile}.Ast.Extent.Text
     ${Function:Add-CAPubKeyToSSHAndSSHDConfig}.Ast.Extent.Text
+    ${Function:Add-PublicKeyToRemoteHost}.Ast.Extent.Text
     ${Function:Configure-VaultServerForLDAPAuth}.Ast.Extent.Text
     ${Function:ConfigureVaultServerForSSHManagement}.Ast.Extent.Text
+    ${Function:Generate-AuthorizedPrincipalsFile}.Ast.Extent.Text
+    ${Function:Generate-SSHUserDirFileInfo}.Ast.Extent.Text
     ${Function:Get-LDAPCert}.Ast.Extent.Text
+    ${Function:Get-SSHClientAuthSanity}.Ast.Extent.Text
+    ${Function:Get-SSHFileInfo}.Ast.Extent.Text
     ${Function:Get-VaultAccessorLookup}.Ast.Extent.Text
     ${Function:Get-VaultLogin}.Ast.Extent.Text
     ${Function:Get-VaultTokenAccessors}.Ast.Extent.Text
     ${Function:Get-VaultTokens}.Ast.Extent.Text
     ${Function:Manage-StoredCredentials}.Ast.Extent.Text
     ${Function:New-SSHCredentials}.Ast.Extent.Text
+    ${Function:New-SSHKey}.Ast.Extent.Text
     ${Function:Revoke-VaultToken}.Ast.Extent.Text
     ${Function:Sign-SSHHostPublicKey}.Ast.Extent.Text
     ${Function:Sign-SSHUserPublicKey}.Ast.Extent.Text
+    ${Function:Validate-SSHPrivateKey}.Ast.Extent.Text
 )
 
 # Below $opensslkeysource from http://www.jensign.com/opensslkey/index.html
@@ -5508,8 +8342,8 @@ if(Win32.CertStrToName(X509_ASN_ENCODING, DN, CERT_X500_NAME_STR, IntPtr.Zero, n
 # SIG # Begin signature block
 # MIIMiAYJKoZIhvcNAQcCoIIMeTCCDHUCAQExCzAJBgUrDgMCGgUAMGkGCisGAQQB
 # gjcCAQSgWzBZMDQGCisGAQQBgjcCAR4wJgIDAQAABBAfzDtgWUsITrck0sYpfvNR
-# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUkbpOT55bCofXd5nU5WYAP4AS
-# b9Ogggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
+# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUQkoGDaQVjbFy0Jxq9a9bOrh3
+# LDugggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
 # 9w0BAQsFADAwMQwwCgYDVQQGEwNMQUIxDTALBgNVBAoTBFpFUk8xETAPBgNVBAMT
 # CFplcm9EQzAxMB4XDTE3MDkyMDIxMDM1OFoXDTE5MDkyMDIxMTM1OFowPTETMBEG
 # CgmSJomT8ixkARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMT
@@ -5566,11 +8400,11 @@ if(Win32.CertStrToName(X509_ASN_ENCODING, DN, CERT_X500_NAME_STR, IntPtr.Zero, n
 # ARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMTB1plcm9TQ0EC
 # E1gAAAH5oOvjAv3166MAAQAAAfkwCQYFKw4DAhoFAKB4MBgGCisGAQQBgjcCAQwx
 # CjAIoAKAAKECgAAwGQYJKoZIhvcNAQkDMQwGCisGAQQBgjcCAQQwHAYKKwYBBAGC
-# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFPQrvos6QXStebBU
-# V3F7prBpUd9iMA0GCSqGSIb3DQEBAQUABIIBAB+60yJvfiV/s0aPfnYCimR+dbQ9
-# R9uqBr6LK/7Te1hdD77psflzQrAcJsEt3x2GG2VLl5FIzRRemgMZWVadloOG3jYK
-# XcoxfOEjK+ZCZX+GDCyxGGHTuFAPiu3z3vELx4SK8FgFPJk6gPb7M7acx0dqWf8j
-# BWl87owfItDNRVihpIWtH5BZTmcH/eRHrXw3Tigo8/4gSJAXd9KWpD5ELHO37ick
-# xNQNtVEgtc+tIjuNc6SVuXo1gRv6CHRJjxGfqVrdfGFUCs4L4STwXN4S/fXxr6a5
-# fdXLtwhABN1VMHSd9XCfE9Fcz9f7/eUu3OisKq6oGxyQJYB25XjMywF1juc=
+# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFEZaJaAFrjMYO2UQ
+# XPdkcxUae1spMA0GCSqGSIb3DQEBAQUABIIBABuRUXjwdCrRT8+KlfbJU8fEJgHe
+# +0W+Sntar069lh8ea9feRP1h9LZJJ5DisPvyHAx+xcznWWzAl+zBgSZU4pyVh+h6
+# dgyrEn4k8YQpVUgo1oQKJSltO+DHrE7F4k32T9bJKPQTV3WBMCVZa1lFhVXbX7ZG
+# TmbnBFFaCZwyC+eGgR/9HVoGz0c1dB4yzuhNCIHCyeaKuk2pMJsCVrgWCtplCRP4
+# v1cl+bZdPR8aw8JDy7dJzS46dcqZSAOHagwP8vY9dSoyKJR5fDr/jh5R++iwY6Tk
+# Gg3f5Tl6dOVKU6wtP+lzL06MDd0fbWTm/YTrO1mO+TURJbrldWQDDekwZRc=
 # SIG # End signature block

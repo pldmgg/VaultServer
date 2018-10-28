@@ -54,21 +54,32 @@ Describe -Name "General Project Validation: $env:BHProjectName" -Tag 'Validation
         $Module = Get-Module $env:BHProjectName
         $Module.Name -eq $env:BHProjectName | Should Be $True
         $Commands = $Module.ExportedCommands.Keys
+        $Commands -contains 'AddMySudoPwd' | Should Be $False
+        $Commands -contains 'AddWinRMTrustedHost' | Should Be $False
         $Commands -contains 'AddWinRMTrustLocalHost' | Should Be $False
         $Commands -contains 'ConvertFromHCLToPrintF' | Should Be $False
+        $Commands -contains 'DownloadNuGetPackage' | Should Be $False
         $Commands -contains 'GetComputerObjectsInLDAP' | Should Be $False
         $Commands -contains 'GetCurrentUser' | Should Be $False
         $Commands -contains 'GetDomainController' | Should Be $False
+        $Commands -contains 'GetDomainName' | Should Be $False
         $Commands -contains 'GetElevation' | Should Be $False
         $Commands -contains 'GetGroupObjectsInLDAP' | Should Be $False
+        $Commands -contains 'GetLDAPGroupAndUsers' | Should Be $False
+        $Commands -contains 'GetLDAPUserAndGroups' | Should Be $False
+        $Commands -contains 'GetLinuxOctalPermissions' | Should Be $False
+        $Commands -contains 'GetLocalGroupAndUsers' | Should Be $False
+        $Commands -contains 'GetLocalUserAndGroups' | Should Be $False
         $Commands -contains 'GetModuleDependencies' | Should Be $False
-        $Commands -contains 'GetNativePath' | Should Be $False
+        $Commands -contains 'GetMySudoStatus' | Should Be $False
         $Commands -contains 'GetUserObjectsInLDAP' | Should Be $False
+        $Commands -contains 'InstallLinuxPackage' | Should Be $False
         $Commands -contains 'InvokeModuleDependencies' | Should Be $False
         $Commands -contains 'InvokePSCompatibility' | Should Be $False
         $Commands -contains 'ManualPSGalleryModuleInstall' | Should Be $False
+        $Commands -contains 'NewCronToAddSudoPwd' | Should Be $False
         $Commands -contains 'NewUniqueString' | Should Be $False
-        $Commands -contains 'PauseForWarning' | Should Be $False
+        $Commands -contains 'RemoveMySudoPwd' | Should Be $False
         $Commands -contains 'ResolveHost' | Should Be $False
         $Commands -contains 'TestIsValidIPAddress' | Should Be $False
         $Commands -contains 'TestLDAP' | Should Be $False
@@ -76,34 +87,55 @@ Describe -Name "General Project Validation: $env:BHProjectName" -Tag 'Validation
         $Commands -contains 'UnzipFile' | Should Be $False
         
         $Commands -contains 'Add-CAPubKeyToSSHAndSSHDConfig' | Should Be $True
+        $Commands -contains 'Add-PublicKeyToRemoteHost' | Should Be $True
         $Commands -contains 'Configure-VaultServerForLDAPAuth' | Should Be $True
         $Commands -contains 'Configure-VaultServerForSSHManagement' | Should Be $True
+        $Commands -contains 'Generate-AuthorizedPrincipalsFile' | Should Be $True
+        $Commands -contains 'Generate-SSHUserDirFileInfo' | Should Be $True
         $Commands -contains 'Get-LDAPCert' | Should Be $True
+        $Commands -contains 'Get-SSHClientAuthSanity' | Should Be $True
+        $Commands -contains 'Get-SSHFileInfo' | Should Be $True
         $Commands -contains 'Get-VaultAccessorLookup' | Should Be $True
         $Commands -contains 'Get-VaultLogin' | Should Be $True
         $Commands -contains 'Get-VaultTokenAccessors' | Should Be $True
         $Commands -contains 'Get-VaultTokens' | Should Be $True
         $Commands -contains 'Manage-StoredCredentials' | Should Be $True
         $Commands -contains 'New-SSHCredentials' | Should Be $True
+        $Commands -contains 'New-SSHKey' | Should Be $True
         $Commands -contains 'Revoke-VaultToken' | Should Be $True
         $Commands -contains 'Sign-SSHHostPublicKey' | Should Be $True
         $Commands -contains 'Sign-SSHUserPublicKey' | Should Be $True
+        $Commands -contains 'Validate-SSHPrivateKey' | Should Be $True
     }
 
     It "Module '$env:BHProjectName' Private Functions Are Available in Internal Scope" {
         $Module = Get-Module $env:BHProjectName
+        [bool]$Module.Invoke({Get-Item function:AddMySudoPwd}) | Should Be $True
+        [bool]$Module.Invoke({Get-Item function:AddWinRMTrustedHost}) | Should Be $True
         [bool]$Module.Invoke({Get-Item function:AddWinRMTrustLocalHost}) | Should Be $True
         [bool]$Module.Invoke({Get-Item function:ConvertFromHCLToPrintF}) | Should Be $True
+        [bool]$Module.Invoke({Get-Item function:DownloadNuGetPackage}) | Should Be $True
         [bool]$Module.Invoke({Get-Item function:GetComputerObjectsInLDAP}) | Should Be $True
         [bool]$Module.Invoke({Get-Item function:GetCurrentUser}) | Should Be $True
         [bool]$Module.Invoke({Get-Item function:GetDomainController}) | Should Be $True
+        [bool]$Module.Invoke({Get-Item function:GetDomainName}) | Should Be $True
         [bool]$Module.Invoke({Get-Item function:GetElevation}) | Should Be $True
         [bool]$Module.Invoke({Get-Item function:GetGroupObjectsInLDAP}) | Should Be $True
+        [bool]$Module.Invoke({Get-Item function:GetLDAPGroupAndUsers}) | Should Be $True
+        [bool]$Module.Invoke({Get-Item function:GetLDAPUserAndGroups}) | Should Be $True
+        [bool]$Module.Invoke({Get-Item function:GetLinuxOctalPermissions}) | Should Be $True
+        [bool]$Module.Invoke({Get-Item function:GetLocalGroupAndUsers}) | Should Be $True
+        [bool]$Module.Invoke({Get-Item function:GetLocalUserAndGroups}) | Should Be $True
         [bool]$Module.Invoke({Get-Item function:GetModuleDependencies}) | Should Be $True
+        [bool]$Module.Invoke({Get-Item function:GetMySudoStatus}) | Should Be $True
+        [bool]$Module.Invoke({Get-Item function:GetUserObjectsInLDAP}) | Should Be $True
+        [bool]$Module.Invoke({Get-Item function:InstallLinuxPackage}) | Should Be $True
+        [bool]$Module.Invoke({Get-Item function:InvokeModuleDependencies}) | Should Be $True
         [bool]$Module.Invoke({Get-Item function:InvokePSCompatibility}) | Should Be $True
         [bool]$Module.Invoke({Get-Item function:ManualPSGalleryModuleInstall}) | Should Be $True
+        [bool]$Module.Invoke({Get-Item function:NewCronToAddSudoPwd}) | Should Be $True
         [bool]$Module.Invoke({Get-Item function:NewUniqueString}) | Should Be $True
-        [bool]$Module.Invoke({Get-Item function:PauseForWarning}) | Should Be $True
+        [bool]$Module.Invoke({Get-Item function:RemoveMySudoPwd}) | Should Be $True
         [bool]$Module.Invoke({Get-Item function:ResolveHost}) | Should Be $True
         [bool]$Module.Invoke({Get-Item function:TestIsValidIPAddress}) | Should Be $True
         [bool]$Module.Invoke({Get-Item function:TestLDAP}) | Should Be $True
@@ -115,8 +147,8 @@ Describe -Name "General Project Validation: $env:BHProjectName" -Tag 'Validation
 # SIG # Begin signature block
 # MIIMiAYJKoZIhvcNAQcCoIIMeTCCDHUCAQExCzAJBgUrDgMCGgUAMGkGCisGAQQB
 # gjcCAQSgWzBZMDQGCisGAQQBgjcCAR4wJgIDAQAABBAfzDtgWUsITrck0sYpfvNR
-# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUW16b7A5ylhk4DxQ1JS+qj7Zb
-# PJygggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
+# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUqvoodJWZSLVAZH0wJwLlx08b
+# OHSgggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
 # 9w0BAQsFADAwMQwwCgYDVQQGEwNMQUIxDTALBgNVBAoTBFpFUk8xETAPBgNVBAMT
 # CFplcm9EQzAxMB4XDTE3MDkyMDIxMDM1OFoXDTE5MDkyMDIxMTM1OFowPTETMBEG
 # CgmSJomT8ixkARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMT
@@ -173,11 +205,11 @@ Describe -Name "General Project Validation: $env:BHProjectName" -Tag 'Validation
 # ARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMTB1plcm9TQ0EC
 # E1gAAAH5oOvjAv3166MAAQAAAfkwCQYFKw4DAhoFAKB4MBgGCisGAQQBgjcCAQwx
 # CjAIoAKAAKECgAAwGQYJKoZIhvcNAQkDMQwGCisGAQQBgjcCAQQwHAYKKwYBBAGC
-# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFPfVNOD7+AtHKKyF
-# f7Fx7Arh4XmvMA0GCSqGSIb3DQEBAQUABIIBAHCwRX3Jmu2tbg1rvywarnFmMSvf
-# kVzcUPvpUtCAAHYYk4ylEUwLGWNzQQCNUjAszm9cln51M/q64HgHeVG1QFFjJKiZ
-# lgZY1BFUiVD+2RMwY759AOl1599/3AsXsokuATasdfN2cwoXSCaZ1ES+EK66IcXt
-# daIOqp8QvyCVTCRBeIijb7uN49XqRgePDXeZdaeMMFQTQukjRaCS/qLCuBBiVyBI
-# G7d+O45Bc6DIJ1pneCh2lH8dsEEka6VTXUI1KBwPOCt6KOQZb1PkpaXgzIWyAQ66
-# gegc6dfLiwPteUkOmPZtvVx6IKszRMDyhD9bzu/NVOnSNJnszA+TOhIpc1A=
+# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFIpoyu/3j/MOr/2b
+# zyuw/HpJoVsWMA0GCSqGSIb3DQEBAQUABIIBAKN/oRJuq1K4AhXt+fXXmoZuLf8o
+# NmIm8oVYqeFkF71fcClg4yNYj1IZDvgHkHFTYJhc3V3g2wkupW1OCxl0IPxkHxCd
+# FQXKSDj7vlr5XaDJvwVr0wuySBE8O8AV7MmQhWJ+cDgOnpq14+kEf9q2rZ3IpyP1
+# 90vm+DRxTR9TiknBGe/Et1K6RPfQtekRloYQWz6Rp1acgKMtoCdoPMkFnJibkTUM
+# bysl0+DftrgGDaeR2YkxwMNNT1UvsDWBGNq6QqfV6I8LQafPP/Q8QidZflEk9Giw
+# R09WDavzVyD423Qr8GoudBdnygkRxGswbB4c/Y7g6jJVj+jBhhd10u32JhE=
 # SIG # End signature block

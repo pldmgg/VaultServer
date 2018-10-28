@@ -54,6 +54,17 @@ function Revoke-VaultToken {
         [string[]]$VaultUserToDelete # Should match .meta.username for the Accessor Lookup
     )
 
+    if ($PSVersionTable.Platform -eq "Unix" -or $PSVersionTable.OS -match "Darwin" -and $env:SudoPwdPrompt) {
+        if (GetElevation) {
+            Write-Error "You should not be running the VaultServer Module as root! Halting!"
+            $global:FunctionResult = "1"
+            return
+        }
+        RemoveMySudoPwd
+        NewCronToAddSudoPwd
+        $env:SudoPwdPrompt = $False
+    }
+
     # Make sure $VaultServerBaseUri is a valid Url
     try {
         $UriObject = [uri]$VaultServerBaseUri
@@ -75,7 +86,7 @@ function Revoke-VaultToken {
     }
 
     try {
-        $AccessorInfo = Get-VaultAccessorLookup -VaultServerBaseUri $VaultServerBaseUri -VaultAuthToken $ZeroAdminToken -ErrorAction Stop
+        $AccessorInfo = Get-VaultAccessorLookup -VaultServerBaseUri $VaultServerBaseUri -VaultAuthToken $VaultAuthToken -ErrorAction Stop
         if (!$AccessorInfo) {throw "Ther Get-VaultAccessorLookup function failed! Halting!"}
     }
     catch {
@@ -114,7 +125,7 @@ function Revoke-VaultToken {
 
     # Make sure it no longer exists
     try {
-        $AccessorInfo = Get-VaultAccessorLookup -VaultServerBaseUri $VaultServerBaseUri -VaultAuthToken $ZeroAdminToken -ErrorAction Stop
+        $AccessorInfo = Get-VaultAccessorLookup -VaultServerBaseUri $VaultServerBaseUri -VaultAuthToken $VaultAuthToken -ErrorAction Stop
         if (!$AccessorInfo) {throw "Ther Get-VaultAccessorLookup function failed! Halting!"}
     }
     catch {
@@ -136,8 +147,8 @@ function Revoke-VaultToken {
 # SIG # Begin signature block
 # MIIMiAYJKoZIhvcNAQcCoIIMeTCCDHUCAQExCzAJBgUrDgMCGgUAMGkGCisGAQQB
 # gjcCAQSgWzBZMDQGCisGAQQBgjcCAR4wJgIDAQAABBAfzDtgWUsITrck0sYpfvNR
-# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQU1BCTG2EjmibA3r1Myx67KA3a
-# bVugggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
+# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUENtNYebfzSRaF9CDLaLFNVTV
+# DJGgggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
 # 9w0BAQsFADAwMQwwCgYDVQQGEwNMQUIxDTALBgNVBAoTBFpFUk8xETAPBgNVBAMT
 # CFplcm9EQzAxMB4XDTE3MDkyMDIxMDM1OFoXDTE5MDkyMDIxMTM1OFowPTETMBEG
 # CgmSJomT8ixkARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMT
@@ -194,11 +205,11 @@ function Revoke-VaultToken {
 # ARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMTB1plcm9TQ0EC
 # E1gAAAH5oOvjAv3166MAAQAAAfkwCQYFKw4DAhoFAKB4MBgGCisGAQQBgjcCAQwx
 # CjAIoAKAAKECgAAwGQYJKoZIhvcNAQkDMQwGCisGAQQBgjcCAQQwHAYKKwYBBAGC
-# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFJyQV3OUpsT42UH1
-# qMeP/R9iqa45MA0GCSqGSIb3DQEBAQUABIIBAJ73heV5vEnVxQvDNuYcy5shqeoC
-# jU10g8V+piX0wi67fKH/Mr3uOX7ZPL6iER4lNgQlL/HL97IUP5wpipWUGo/O/O2K
-# 4peBmr2ibQ8sfdlEFjqy6Gi098os35WJz68P67sqPk2duAi022mIznqrpGXF0+T5
-# erl2c8S1973OedFlfQPMYdBQSPiMcBEcdn4CnZekATu2NLTyPjxy33um5WY17bgU
-# WrYjC7tQ4iw7a6/KdL6j/igrxHJDSvtHbknwfHowROPxSkStWzvuxOSUSe7gKfyt
-# TrsLBBVmlbat3gl05euvBHUQSRImH0GDuTEfSzpzJ6jZ8MN9y0CyJImL4os=
+# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFD5PerwIUU6LTciF
+# vEzJK1LbIiigMA0GCSqGSIb3DQEBAQUABIIBADnDqvb8gINrvwoxm5PfsR1+k+/6
+# 4GkTvqokL2aQq48z7Ae+2OUBGISXXbHGC7vDjt01vvDrbnZgtqkEBBa5myNDBQTf
+# 6/yj71ZwZ9CQNfQaDRq+VNDM+c+FIgtmKevFmeYxBe7j0tl88Qj0vwHPevtRYai2
+# DvwhagBYnCzq9d3yqNKBg/ncxqdK1AW77yJrz3B796f/A05wW6cQ/ru44IH6xWg3
+# 9jM2RVP5Agrz+Y4oIjNmd1KFiYlUrnWG9mG0n0BZ3tm+DxUYdjYB2dTrLjDxcxZh
+# gjq/JBG2LZYNGojLWWo0ry2hcv3jRpLossc7GdzL1iE+B0E3wXBHiS0PWKk=
 # SIG # End signature block

@@ -1,86 +1,89 @@
-function ManualPSGalleryModuleInstall {
+function GetLocalUserAndGroups {
     [CmdletBinding()]
-    Param (
-        [Parameter(Mandatory=$True)]
-        [string]$ModuleName,
+    Param()
 
-        [Parameter(Mandatory=$False)]
-        [switch]$PreRelease,
+    if (!$PSVersionTable.Platform -or $PSVersionTable.Platform -eq "Win32NT") {
+        $AllLocalUsers = Get-LocalUser
+        $AllLocalGroups = Get-LocalGroup
 
-        [Parameter(Mandatory=$False)]
-        [string]$DownloadDirectory
-    )
-
-    if (!$DownloadDirectory) {
-        $DownloadDirectory = $(Get-Location).Path
-    }
-
-    if (!$(Test-Path $DownloadDirectory)) {
-        Write-Error "The path $DownloadDirectory was not found! Halting!"
-        $global:FunctionResult = "1"
-        return
-    }
-
-    if (![bool]$($($env:PSModulePath -split ";") -match [regex]::Escape("$HOME\Documents\WindowsPowerShell\Modules"))) {
-        $env:PSModulePath = "$HOME\Documents\WindowsPowerShell\Modules;$env:PSModulePath"
-    }
-    if (!$(Test-Path "$HOME\Documents\WindowsPowerShell\Modules")) {
-        $null = New-Item -ItemType Directory "$HOME\Documents\WindowsPowerShell\Modules" -Force
-    }
-
-    if ($PreRelease) {
-        $searchUrl = "https://www.powershellgallery.com/api/v2/Packages?`$filter=Id eq '$ModuleName'"
-    }
-    else {
-        $searchUrl = "https://www.powershellgallery.com/api/v2/Packages?`$filter=Id eq '$ModuleName' and IsLatestVersion"
-    }
-    $ModuleInfo = Invoke-RestMethod $searchUrl
-    if (!$ModuleInfo -or $ModuleInfo.Count -eq 0) {
-        Write-Error "Unable to find Module Named $ModuleName! Halting!"
-        $global:FunctionResult = "1"
-        return
-    }
-    if ($PreRelease) {
-        if ($ModuleInfo.Count -gt 1) {
-            $ModuleInfo = $($ModuleInfo | Sort-Object -Property Updated | Where-Object {$_.properties.isPrerelease.'#text' -eq 'true'})[-1]
+        [System.Collections.ArrayList]$AllLocalGroupMembership = @()
+        foreach ($Group in $AllLocalGroups) {
+            $Users = Get-LocalGroupMember $Group | Where-Object {$_.PrincipalSource -eq "Local"} | foreach {
+                if ($_.Name -match '\\') {
+                    $($_.Name -split '\\')[-1]
+                }
+                else {
+                    $_.Name
+                }
+            }
+            if ($Users) {
+                $PSObject = [pscustomobject]@{
+                    Group   = $Group.Name
+                    Users   = [System.Collections.ArrayList]@($Users)
+                }
+                $null = $AllLocalGroupMembership.Add($PSObject)
+            }
         }
+
+        [System.Collections.ArrayList]$AllLocalUserGroups = @()
+        foreach ($User in $AllLocalUsers) {
+            $Groups = $($AllLocalGroupMembership | Where-Object {$_.Users -contains $User.Name}).Group
+            if ($Groups) {
+                $PSObject = [pscustomobject]@{
+                    User   = $User
+                    Groups = [System.Collections.ArrayList]@($Groups)
+                }
+                $null = $AllLocalUserGroups.Add($PSObject)
+            }
+        }
+        
+        $AllLocalUserGroups
     }
     
-    $OutFilePath = Join-Path $DownloadDirectory $($ModuleInfo.title.'#text' + $ModuleInfo.properties.version + '.zip')
-    if (Test-Path $OutFilePath) {Remove-Item $OutFilePath -Force}
-
-    try {
-        #Invoke-WebRequest $ModuleInfo.Content.src -OutFile $OutFilePath
-        # Download via System.Net.WebClient is a lot faster than Invoke-WebRequest...
-        $WebClient = [System.Net.WebClient]::new()
-        $WebClient.Downloadfile($ModuleInfo.Content.src, $OutFilePath)
-    }
-    catch {
-        Write-Error $_
-        $global:FunctionResult = "1"
-        return
-    }
-    
-    if (Test-Path "$DownloadDirectory\$ModuleName") {Remove-Item "$DownloadDirectory\$ModuleName" -Recurse -Force}
-    Expand-Archive $OutFilePath -DestinationPath "$DownloadDirectory\$ModuleName"
-
-    if ($DownloadDirectory -ne "$HOME\Documents\WindowsPowerShell\Modules") {
-        if (Test-Path "$HOME\Documents\WindowsPowerShell\Modules\$ModuleName") {
-            Remove-Item "$HOME\Documents\WindowsPowerShell\Modules\$ModuleName" -Recurse -Force
+    if ($PSVersionTable.Platform -eq "Unix" -or $PSVersionTable.OS -match "Darwin") {
+        $AllUsers =$(bash -c "getent passwd") | foreach {$($_ -split ':')[0]}
+        $AllGroups = $(bash -c "getent group") | foreach {$($_ -split ':')[0]}
+        [System.Collections.ArrayList]$UserAndGroups = foreach ($User in $AllUsers) {
+            $Groups = $(bash -c "getent group | grep $User") | foreach {$($_ -split ':')[0]}
+            [pscustomobject]@{
+                User    = $User
+                Groups  = [System.Collections.ArrayList]@($Groups)
+            }
         }
-        Copy-Item -Path "$DownloadDirectory\$ModuleName" -Recurse -Destination "$HOME\Documents\WindowsPowerShell\Modules"
 
-        Remove-Item "$DownloadDirectory\$ModuleName" -Recurse -Force
+        $HumanUsersPrep = bash -c "awk -F: '`$3 >= 1000 && `$1 != `"nobody`" {print `$1}' /etc/passwd"
+        $HumanUsers = $HumanUsersPrep | Where-Object {$_ -notmatch "nobody"}
+
+        $ActualSudoUsersPrep = foreach ($User in $AllUsers) {
+            bash -c "sudo -l -U $User"
+        }
+        $ActualSudoUsers = $ActualSudoUsersPrep -match "User.*may run .*:" | foreach {$($_ -replace 'User ','' -split ' may')[0]}
+
+        foreach ($User in $ActualSudoUsers) {
+            foreach ($obj in $UserAndGroups) {
+                if ($obj.User -eq $User) {
+                    $null = $obj.Groups.Add("sudousers")
+                }
+            }
+        }
+
+        foreach ($User in $HumanUsers) {
+            foreach ($obj in $UserAndGroups) {
+                if ($obj.User -eq $User) {
+                    $null = $obj.Groups.Add("humanusers")
+                }
+            }
+        }
+
+        $UserAndGroups
     }
-
-    Remove-Item $OutFilePath -Force
 }
 
 # SIG # Begin signature block
 # MIIMiAYJKoZIhvcNAQcCoIIMeTCCDHUCAQExCzAJBgUrDgMCGgUAMGkGCisGAQQB
 # gjcCAQSgWzBZMDQGCisGAQQBgjcCAR4wJgIDAQAABBAfzDtgWUsITrck0sYpfvNR
-# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUKehst4FRbIpIf5iTmu6+Y6IV
-# maigggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
+# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQU79uKXA7AJAap4vYglxO1VQrd
+# e7ygggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
 # 9w0BAQsFADAwMQwwCgYDVQQGEwNMQUIxDTALBgNVBAoTBFpFUk8xETAPBgNVBAMT
 # CFplcm9EQzAxMB4XDTE3MDkyMDIxMDM1OFoXDTE5MDkyMDIxMTM1OFowPTETMBEG
 # CgmSJomT8ixkARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMT
@@ -137,11 +140,11 @@ function ManualPSGalleryModuleInstall {
 # ARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMTB1plcm9TQ0EC
 # E1gAAAH5oOvjAv3166MAAQAAAfkwCQYFKw4DAhoFAKB4MBgGCisGAQQBgjcCAQwx
 # CjAIoAKAAKECgAAwGQYJKoZIhvcNAQkDMQwGCisGAQQBgjcCAQQwHAYKKwYBBAGC
-# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFG2P7uvTxEH17rkh
-# 2UG+pv1iX+6bMA0GCSqGSIb3DQEBAQUABIIBAH6Hm5HLF6QPiFfWK06x8u13CjTo
-# L40m7p1UTfu7MxK+pBNxKxa8C3Bn7UpXqS860RVUIFtTjUUDlXeqkjshFZ0EnKzW
-# LQsuq2lUyXqJq9xm/6TX4zg4ybd60LIhmuRkVTY2FoRKz4bc0NAop6wunjAHyh18
-# ZgHdqU9kiqoaqWhFa1VSK8KP/1a6BEIa3jTuTJYlsHtvg2Rfu2+w4w1wHM2JOV3z
-# 7v1gFHmzZHGkFTzrJoSXH78jhB6Ib5jiTvLGf2T7pfrwp3/MdebcvL1Nj0r1x683
-# c/ID7/4sIp6as84dsgljKrXGST8fZq1orFsBm3GgmZctmyZnLou4LOmJewo=
+# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFDd1ICRFWHdX4ffn
+# SJZoJ5v6DNL9MA0GCSqGSIb3DQEBAQUABIIBAGf5Rl+PG9YeyuGZxrRX0R0utdOu
+# ob85adZ0IznoWNF85C03QUNlXdDtViAviKeFCCYrmm3Phl6HM/nkPmeXGf2YQhi1
+# ZMAlyz/2v+Xbvoyg27hCp5eIVcNytSex4eypxSERW397AGVZcXlJlxb+nEoMfrTk
+# Oz7JiuJpsx9p/WwHvg6emNw9QqWTw28VEnYRqPa2AwGq3J3WhOIpe2fwXzZxcNVO
+# sPacpdW/+1wZjlkOPKgAia9oqhCUFvv/V7Hp0ISayFpsECZFN9Cji2jIMEqBnCse
+# UNY0z2K8fyIA1S/ocvWYaYOHnLzfi4vpnLAfo7JE1mZF1UOcu00x1mjCcWo=
 # SIG # End signature block
