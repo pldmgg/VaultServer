@@ -49,36 +49,7 @@ function DownloadNuGetPackage {
         [Parameter(Mandatory=$False)]
         [switch]$Silent
     )
-
-    #region >> Helper Functions
     
-    function Get-NativePath {
-        [CmdletBinding()]
-        Param( 
-            [Parameter(Mandatory=$True)]
-            [string[]]$PathAsStringArray
-        )
-    
-        $PathAsStringArray = foreach ($pathPart in $PathAsStringArray) {
-            $SplitAttempt = $pathPart -split [regex]::Escape([IO.Path]::DirectorySeparatorChar)
-            
-            if ($SplitAttempt.Count -gt 1) {
-                foreach ($obj in $SplitAttempt) {
-                    $obj
-                }
-            }
-            else {
-                $pathPart
-            }
-        }
-        $PathAsStringArray = $PathAsStringArray -join [IO.Path]::DirectorySeparatorChar
-    
-        $PathAsStringArray
-    
-    }
-    
-    #endregion >> Helper Functions
-
     #region >> Prep
 
     if ($PSVersionTable.Platform -ne $null -and $PSVersionTable.Platform -ne "Win32NT" -and !$NuGetPkgDownloadDirectory) {
@@ -372,8 +343,8 @@ function DownloadNuGetPackage {
 # SIG # Begin signature block
 # MIIMiAYJKoZIhvcNAQcCoIIMeTCCDHUCAQExCzAJBgUrDgMCGgUAMGkGCisGAQQB
 # gjcCAQSgWzBZMDQGCisGAQQBgjcCAR4wJgIDAQAABBAfzDtgWUsITrck0sYpfvNR
-# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUa9ooyBj4F6Sgauid7Cx9fux5
-# 5yygggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
+# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQU7hp6sU9NlqepGAP95AFiFvzK
+# Kg2gggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
 # 9w0BAQsFADAwMQwwCgYDVQQGEwNMQUIxDTALBgNVBAoTBFpFUk8xETAPBgNVBAMT
 # CFplcm9EQzAxMB4XDTE3MDkyMDIxMDM1OFoXDTE5MDkyMDIxMTM1OFowPTETMBEG
 # CgmSJomT8ixkARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMT
@@ -430,11 +401,11 @@ function DownloadNuGetPackage {
 # ARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMTB1plcm9TQ0EC
 # E1gAAAH5oOvjAv3166MAAQAAAfkwCQYFKw4DAhoFAKB4MBgGCisGAQQBgjcCAQwx
 # CjAIoAKAAKECgAAwGQYJKoZIhvcNAQkDMQwGCisGAQQBgjcCAQQwHAYKKwYBBAGC
-# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFG35P4xwNEHxLXnY
-# G9sdUxBm+30OMA0GCSqGSIb3DQEBAQUABIIBABmq8x2pNW7EOpVyYrnno8xK29CP
-# vIAQLQib3MPayZj0iVZ7kyHfFrWofT9fmdkx6UZSm+SM4Lqy/F5c4gQrT4C7rhkr
-# 3okr21YWxYyIpvscBODTMcchX+RFzDGY3hiwdQyM3wY23te+McCD96s9mlJmY2eq
-# U2nSHrzQupO427iiePPIpti5KLg++KGHogBCmk144LQMcEMtvtzFT6RBo66GcNjC
-# 1ydRWxAP0LOUSAg1G6vMeLrEH0JBkiPue3Py5C1dVP5jZnAlGnaGcjv3zPTeK4lu
-# rjHxpc2Eua/GNKmfS2pgoMZPM3d2wbboPnVtz+Ww6ZbOiyIArw0hJBmH+ys=
+# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFFNZOiZsF8AH8TCZ
+# NycIvZclstMAMA0GCSqGSIb3DQEBAQUABIIBAA6z0lmGvbGtY0DNLTGPdUozIBge
+# Bw52pQeuG8Vd5uLiBIiCGoDqeR3YX8T2lgg6EKcAtHUzWXKag5Bbu05aYFwxARP/
+# FG2Gp/NOP2paAZR1SGuDDFOR8MzIgN3if9cvKqx64gxi0f4Io5k+glM5cmSSceNY
+# dzmz3XyhFs6o8JqMhqTvcHHnZ/2HANqiuqMCem3UCcQ/qbjQTajeHqK1nG+Aa26c
+# vIlKIglAWDzNRUI4ad18RJex3ukIivzVI/JvoYA9Da4LYpjzWqbH0nSnktLBkHSB
+# YahbfVSURkToBxmyM6cceG3HF20ZdMMtVvAMpNX5q3tnlVPkYmQKQBjDhdk=
 # SIG # End signature block

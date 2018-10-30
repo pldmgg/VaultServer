@@ -2015,6 +2015,11 @@ function Configure-VaultServerForSSHManagement {
         You CAN use this parameter in conjunction with the -UserGroupToAdd parameter, and this function
         DOES check for repeats, so don't worry about overlap.
 
+    .PARAMETER LDAPCreds
+        This parameter is OPTIONAL, however, it is MANDATORY if this function is being used on Linux/MacOS.
+
+        This parameter takes a pscredential object that represents an LDAP account with permission to read the LDAP database.
+
     .EXAMPLE
         # Open an elevated PowerShell Session, import the module, and -
 
@@ -2033,7 +2038,10 @@ function Generate-AuthorizedPrincipalsFile {
 
         [Parameter(Mandatory=$False)]
         [ValidatePattern("[\w]+@[\w]+")]
-        [string[]]$UsersToAdd
+        [string[]]$UsersToAdd,
+
+        [Parameter(Mandatory=$False)]
+        [pscredential]$LDAPCreds
     )
 
     if ($PSVersionTable.Platform -eq "Unix" -or $PSVersionTable.OS -match "Darwin" -and $env:SudoPwdPrompt) {
@@ -2045,6 +2053,11 @@ function Generate-AuthorizedPrincipalsFile {
         RemoveMySudoPwd
         NewCronToAddSudoPwd
         $env:SudoPwdPrompt = $False
+
+        $ActualHostName = if ($env:HOSTNAME -match '\.') {$($env:HOSTNAME -split '\.')[0]} else {$env:HOSTNAME}
+    }
+    if (!$PSVersionTable.Platform -or $PSVersionTable.Platform -eq "Win32NT") {
+        $ActualHostName = $env:ComputerName
     }
 
     if (!$AuthorizedPrincipalsFileLocation) {
@@ -2068,7 +2081,24 @@ function Generate-AuthorizedPrincipalsFile {
 
     # Get the content of $AuthorizedPrincipalsFileLocation to make sure we don't add anything that is already in there
     if (Test-Path $AuthorizedPrincipalsFileLocation) {
-        $OriginalAuthPrincContent = Get-Content $AuthorizedPrincipalsFileLocation
+        try {
+            if ($PSVersionTable.Platform -eq "Unix" -or $PSVersionTable.OS -match "Darwin" -and !$(GetElevation)) {
+                $SBAsString = @(
+                    'Write-Host "`nOutputStartsBelow`n"'
+                    "Get-Content '$AuthorizedPrincipalsFileLocation' | ConvertTo-Json -Depth 3"
+                )
+                $SBAsString = $SBAsString -join "`n"
+                $OriginalAuthPrincContent = SudoPwsh -CmdString $SBAsString
+            }
+            else {
+                $OriginalAuthPrincContent = Get-Content $AuthorizedPrincipalsFileLocation
+            }
+        }
+        catch {
+            Write-Error $_
+            $global:FunctionResult = "1"
+            return
+        }
     }
 
     if ($(!$UserGroupToAdd -and !$UsersToAdd) -or $UserGroupToAdd -contains "AllUsers") {
@@ -2092,6 +2122,14 @@ function Generate-AuthorizedPrincipalsFile {
         }
     }
 
+    if ($PSVersionTable.Platform -eq "Unix" -or $PSVersionTable.OS -match "Darwin") {
+        if ($($AllUsers -or $DomainAdmins -or $DomainUsers) -and !$LDAPCreds) {
+            Write-Error "The Generate-AuthorizedPrincipalsFile function requires the -LDAPCreds parameter on Linux/MacOS! Halting!"
+            $global:FunctionResult = "1"
+            return
+        }
+    }
+
     try {
         $ThisDomainName = GetDomainName -ErrorAction Stop
         $PartOfDomain = $True
@@ -2111,102 +2149,117 @@ function Generate-AuthorizedPrincipalsFile {
 
     # Get ready to start writing to $sshdir\authorized_principals...
 
-    $StreamWriter = [System.IO.StreamWriter]::new($AuthorizedPrincipalsFileLocation, $True)
-    [System.Collections.ArrayList]$AccountsAdded = @()
+    [System.Collections.ArrayList]$AccountsReformatted = @()
 
     try {
         if ($LocalAdmins) {
             try {
-                $LocalAdminAccounts = GetLocalGroupAndUsers -ErrorAction Stop
+                if ($PSVersionTable.Platform -eq "Unix" -or $PSVersionTable.OS -match "Darwin" -and !$(GetElevation)) {
+                    $GetLocalGroupAndUsersAsString = ${Function:GetLocalGroupAndUsers}.Ast.Extent.Text
+                    $SBAsString = @(
+                        "`$GetLocalGroupAndUsersAsString = @'`n$GetLocalGroupAndUsersAsString`n'@"
+                        'Invoke-Expression $GetLocalGroupAndUsersAsString'
+                        'Write-Host "`nOutputStartsBelow`n"'
+                        'GetLocalGroupAndUsers | ConvertTo-Json -Depth 3'
+                    )
+                    $SBAsString = $SBAsString -join "`n"
+                    $LocalGroupAndUsers = SudoPwsh -CmdString $SBAsString
+                }
+                else {
+                    $LocalGroupAndUsers = GetLocalGroupAndUsers -ErrorAction Stop
+                }
             }
             catch {
                 throw $_.Exception.Message
             }
 
             if (!$PSVersionTable.Platform -or $PSVersionTable.Platform -eq "Win32NT") {
-                $LocalAdminAccounts = $($LocalAdminAccounts | Where-Object {$_.Group -eq "Administrators"}).Users
+                $LocalAdminAccounts = $($LocalGroupAndUsers | Where-Object {$_.Group -eq "Administrators"}).Users
 
-                $AccountsReformatted = foreach ($LocalAcctName in $LocalAdminAccounts) {
-                    $ActualHostName = $env:ComputerName
-
+                foreach ($LocalAcctName in $LocalAdminAccounts) {
                     $ReformattedName = "$LocalAcctName@$($ActualHostName.ToLowerInvariant())"
-                    $ReformattedName
+                    $null = $AccountsReformatted.Add($ReformattedName)
                 }
             }
             if ($PSVersionTable.Platform -eq "Unix" -or $PSVersionTable.OS -match "Darwin") {
-                $LocalAdminAccounts = $($LocalAdminAccounts | Where-Object {$_.Group -eq "SudoUsers"}).Users
+                $LocalAdminAccounts = $($LocalGroupAndUsers | Where-Object {$_.Group -eq "SudoUsers"}).Users
 
-                $AccountsReformatted = foreach ($LocalAcctName in $LocalAdminAccounts) {
-                    if ($env:HOSTNAME -match '\.') {
-                        $ActualHostName = $($env:HOSTNAME -split '\.')[0]
-                    }
-                    else {
-                        $ActualHostName = $env:HOSTNAME
-                    }
-
+                foreach ($LocalAcctName in $LocalAdminAccounts) {
                     $ReformattedName = "$LocalAcctName@$($ActualHostName.ToLowerInvariant())"
-                    $ReformattedName
-                }
-            }
-
-            foreach ($Acct in $AccountsReformatted) {
-                if ($AccountsAdded -notcontains $Acct -and $OriginalAuthPrincContent -notcontains $Acct) {
-                    # NOTE: $True below means that the content will *appended* to $AuthorizedPrincipalsFileLocation
-                    $StreamWriter.WriteLine($Acct)
-
-                    # Keep track of the accounts we're adding...
-                    $null = $AccountsAdded.Add($Acct)
+                    $null = $AccountsReformatted.Add($ReformattedName)
                 }
             }
         }
 
         if ($LocalUsers) {
             try {
-                $LocalAdminAccounts = GetLocalGroupAndUsers
+                if ($PSVersionTable.Platform -eq "Unix" -or $PSVersionTable.OS -match "Darwin" -and !$(GetElevation)) {
+                    $GetLocalGroupAndUsersAsString = ${Function:GetLocalGroupAndUsers}.Ast.Extent.Text
+                    $SBAsString = @(
+                        "`$GetLocalGroupAndUsersAsString = @'`n$GetLocalGroupAndUsersAsString`n'@"
+                        'Invoke-Expression $GetLocalGroupAndUsersAsString'
+                        'Write-Host "`nOutputStartsBelow`n"'
+                        'GetLocalGroupAndUsers | ConvertTo-Json -Depth 3'
+                    )
+                    $SBAsString = $SBAsString -join "`n"
+                    $LocalGroupAndUsers = SudoPwsh -CmdString $SBAsString
+                }
+                else {
+                    $LocalGroupAndUsers = GetLocalGroupAndUsers
+                }
             }
             catch {
                 throw $_.Exception.Message
             }
 
             if (!$PSVersionTable.Platform -or $PSVersionTable.Platform -eq "Win32NT") {
-                $LocalAdminAccounts = $($LocalAdminAccounts | Where-Object {$_.Group -eq "Users"}).Users
+                $LocalAdminAccounts = $($LocalGroupAndUsers | Where-Object {$_.Group -eq "Users"}).Users
             }
 
             if ($PSVersionTable.Platform -eq "Unix" -or $PSVersionTable.OS -match "Darwin") {
-                $LocalAdminAccounts = $($LocalAdminAccounts | Where-Object {$_.Group -eq "humanusers"}).Users
+                $LocalAdminAccounts = $($LocalGroupAndUsers | Where-Object {$_.Group -eq "humanusers"}).Users
             }
 
-            $AccountsReformatted = foreach ($LocalAcctName in $LocalAdminAccounts) {
-                $ActualHostName = $env:ComputerName
-
+            foreach ($LocalAcctName in $LocalAdminAccounts) {
                 $ReformattedName = "$LocalAcctName@$($ActualHostName.ToLowerInvariant())"
-                $ReformattedName
-            }
-
-            foreach ($Acct in $AccountsReformatted) {
-                if ($AccountsAdded -notcontains $Acct -and $OriginalAuthPrincContent -notcontains $Acct) {
-                    # NOTE: $True below means that the content will *appended* to $AuthorizedPrincipalsFileLocation
-                    $StreamWriter.WriteLine($Acct)
-
-                    # Keep track of the accounts we're adding...
-                    $null = $AccountsAdded.Add($Acct)
-                }
+                $null = $AccountsReformatted.Add($ReformattedName)
             }
         }
 
         if ($DomainAdmins) {
-            if (!$LDAPGroupInfo) {
+            if (!$LDAPGroupAndUsers) {
                 try {
-                    $LDAPGroupInfo = GetLDAPGroupAndUsers -ErrorAction Stop
-                    #if (!$LDAPGroupInfo) {throw "Problem with GetLDAPGroupAndUsers function! Halting!"}
+                    if ($PSVersionTable.Platform -eq "Unix" -or $PSVersionTable.OS -match "Darwin" -and !$(GetElevation)) {
+                        $LDAPUserName = $LDAPCreds.UserName
+                        $LDAPPwd = $LDAPCreds.GetNetworkCredential().Password
+                        $SBAsString = @(
+                            'Import-Module VaultServer'
+                            '$ThisModuleFunctionsStringArray = $(Get-Module VaultServer).Invoke({$FunctionsForSBUse})'
+                            '$ThisModuleFunctionsStringArray | Where-Object {$_ -ne $null} | foreach {Invoke-Expression $_ -ErrorAction SilentlyContinue}'
+                            "`$LDAPUserName = '$LDAPUserName'"
+                            "`$LDAPPwd = '$LDAPPwd'"
+                            '$LDAPCreds = [pscredential]::new($LDAPUserName,$(ConvertTo-SecureString -String $LDAPPwd -AsPlainText -Force))'
+                            '$LDAPGroupAndUsers = GetLDAPGroupAndUsers -LDAPCreds $LDAPCreds'
+                            'if ($LDAPGroupAndUsers) {'
+                            '    Write-Host "`nOutputStartsBelow`n"'
+                            '    $LDAPGroupAndUsers | ConvertTo-Json -Depth 3'
+                            '}'
+                        )
+                        $SBAsString = $SBAsString -join "`n"
+                        $LDAPGroupAndUsers = SudoPwsh -CmdString $SBAsString
+                    }
+                    else {
+                        $LDAPGroupAndUsers = GetLDAPGroupAndUsers -LDAPCreds $LDAPCreds -ErrorAction Stop
+                    }
+                    
                 }
                 catch {
                     throw $_.Exception.Message
                 }
             }
 
-            $LDAPGroups = $LDAPGroupInfo.Group
-            $DomainAdminsInfo = $LDAPGroupInfo | Where-Object {$_.Group -eq "Domain Admins"}
+            $LDAPGroups = $LDAPGroupAndUsers.Group
+            $DomainAdminsInfo = $LDAPGroupAndUsers | Where-Object {$_.Group -eq "Domain Admins"}
             if (!$DomainAdminsInfo) {
                 Write-Error "Unable to find the 'Domain Admins' Group in LDAP! Halting!"
                 $global:FunctionResult = "1"
@@ -2226,7 +2279,7 @@ function Generate-AuthorizedPrincipalsFile {
             if ($DomainAdminGroupAccounts.Count -gt 0) {
                 [System.Collections.Generic.List[PSObject]]$SubGroups = @()
                 foreach ($GroupAcct in $DomainAdminGroupAccounts) {
-                    $PotentialAdditionalUsers = $($LDAPGroupInfo | Where-Object {$_.Group -eq $GroupAcct}).Users
+                    $PotentialAdditionalUsers = $($LDAPGroupAndUsers | Where-Object {$_.Group -eq $GroupAcct}).Users
                     foreach ($UserOrGroup in $PotentialAdditionalUsers) {
                         if ($LDAPGroups -contains $UserOrGroup) {
                             if ($DomainAdminGroupAccounts -notcontains $UserOrGroup) {
@@ -2242,7 +2295,7 @@ function Generate-AuthorizedPrincipalsFile {
                 $SubGroupsCloned = $SudoGroups.Clone()
                 while ($SubGroups.Count -gt 0) {
                     foreach ($GroupAcct in $SubGroupsCloned) {
-                        $PotentialAdditionalUsers = $($LDAPGroupInfo | Where-Object {$_.Group -eq $GroupAcct}).Users
+                        $PotentialAdditionalUsers = $($LDAPGroupAndUsers | Where-Object {$_.Group -eq $GroupAcct}).Users
                         foreach ($UserOrGroup in $PotentialAdditionalUsers) {
                             if ($LDAPGroups -contains $UserOrGroup) {
                                 if ($DomainAdminGroupAccounts -notcontains $UserOrGroup -and $SubGroups -notcontains $UserOrGroup) {
@@ -2260,36 +2313,48 @@ function Generate-AuthorizedPrincipalsFile {
                 }
             }
 
-            $AccountsReformatted = $DomainAdminUserAccounts | foreach {
+            $DomainAdminUserAccounts | foreach {
                 if (![System.String]::IsNullOrWhiteSpace($_)) {
-                    $_ + "@" + $ThisDomainName.ToLowerInvariant()
-                }
-            }
-
-            foreach ($Acct in $AccountsReformatted) {
-                if ($AccountsAdded -notcontains $Acct -and $OriginalAuthPrincContent -notcontains $Acct) {
-                    # NOTE: $True below means that the content will *appended* to $AuthorizedPrincipalsFileLocation
-                    $StreamWriter.WriteLine($Acct)
-
-                    # Keep track of the accounts we're adding...
-                    $null = $AccountsAdded.Add($Acct)
+                    $ReformattedName = $_ + "@" + $ThisDomainName.ToLowerInvariant()
+                    $null = $AccountsReformatted.Add($ReformattedName)
                 }
             }
         }
 
         if ($DomainUsers) {
-            if (!$LDAPGroupInfo) {
+            if (!$LDAPGroupAndUsers) {
                 try {
-                    $LDAPGroupInfo = GetLDAPGroupAndUsers -ErrorAction Stop
-                    #if (!$LDAPGroupInfo) {throw "Problem with GetLDAPGroupAndUsers function! Halting!"}
+                    if ($PSVersionTable.Platform -eq "Unix" -or $PSVersionTable.OS -match "Darwin" -and !$(GetElevation)) {
+                        $LDAPUserName = $LDAPCreds.UserName
+                        $LDAPPwd = $LDAPCreds.GetNetworkCredential().Password
+                        $SBAsString = @(
+                            'Import-Module VaultServer'
+                            '$ThisModuleFunctionsStringArray = $(Get-Module VaultServer).Invoke({$FunctionsForSBUse})'
+                            '$ThisModuleFunctionsStringArray | Where-Object {$_ -ne $null} | foreach {Invoke-Expression $_ -ErrorAction SilentlyContinue}'
+                            "`$LDAPUserName = '$LDAPUserName'"
+                            "`$LDAPPwd = '$LDAPPwd'"
+                            '$LDAPCreds = [pscredential]::new($LDAPUserName,$(ConvertTo-SecureString -String $LDAPPwd -AsPlainText -Force))'
+                            '$LDAPGroupAndUsers = GetLDAPGroupAndUsers -LDAPCreds $LDAPCreds'
+                            'if ($LDAPGroupAndUsers) {'
+                            '    Write-Host "`nOutputStartsBelow`n"'
+                            '    $LDAPGroupAndUsers | ConvertTo-Json -Depth 3'
+                            '}'
+                        )
+                        $SBAsString = $SBAsString -join "`n"
+                        $LDAPGroupAndUsers = SudoPwsh -CmdString $SBAsString
+                    }
+                    else {
+                        $LDAPGroupAndUsers = GetLDAPGroupAndUsers -LDAPCreds $LDAPCreds -ErrorAction Stop
+                    }
+                    
                 }
                 catch {
                     throw $_.Exception.Message
                 }
             }
 
-            $LDAPGroups = $LDAPGroupInfo.Group
-            $DomainUsersInfo = $LDAPGroupInfo | Where-Object {$_.Group -eq "Domain Users"}
+            $LDAPGroups = $LDAPGroupAndUsers.Group
+            $DomainUsersInfo = $LDAPGroupAndUsers | Where-Object {$_.Group -eq "Domain Users"}
             if (!$DomainUsersInfo) {
                 Write-Error "Unable to find the 'Domain Users' Group in LDAP! Halting!"
                 $global:FunctionResult = "1"
@@ -2309,7 +2374,7 @@ function Generate-AuthorizedPrincipalsFile {
             if ($DomainUserGroupAccounts.Count -gt 0) {
                 [System.Collections.Generic.List[PSObject]]$SubGroups = @()
                 foreach ($GroupAcct in $DomainUserGroupAccounts) {
-                    $PotentialAdditionalUsers = $($LDAPGroupInfo | Where-Object {$_.Group -eq $GroupAcct}).Users
+                    $PotentialAdditionalUsers = $($LDAPGroupAndUsers | Where-Object {$_.Group -eq $GroupAcct}).Users
                     foreach ($UserOrGroup in $PotentialAdditionalUsers) {
                         if ($LDAPGroups -contains $UserOrGroup) {
                             if ($DomainUserGroupAccounts -notcontains $UserOrGroup) {
@@ -2325,7 +2390,7 @@ function Generate-AuthorizedPrincipalsFile {
                 $SubGroupsCloned = $SudoGroups.Clone()
                 while ($SubGroups.Count -gt 0) {
                     foreach ($GroupAcct in $SubGroupsCloned) {
-                        $PotentialAdditionalUsers = $($LDAPGroupInfo | Where-Object {$_.Group -eq $GroupAcct}).Users
+                        $PotentialAdditionalUsers = $($LDAPGroupAndUsers | Where-Object {$_.Group -eq $GroupAcct}).Users
                         foreach ($UserOrGroup in $PotentialAdditionalUsers) {
                             if ($LDAPGroups -contains $UserOrGroup) {
                                 if ($DomainUserGroupAccounts -notcontains $UserOrGroup -and $SubGroups -notcontains $UserOrGroup) {
@@ -2343,12 +2408,49 @@ function Generate-AuthorizedPrincipalsFile {
                 }
             }
 
-            $AccountsReformatted = $DomainUserUserAccounts | foreach {
+            $DomainUserUserAccounts | foreach {
                 if (![System.String]::IsNullOrWhiteSpace($_)) {
-                    $_ + "@" + $ThisDomainName.ToLowerInvariant()
+                    $ReformattedName = $_ + "@" + $ThisDomainName.ToLowerInvariant()
+                    $null = $AccountsReformatted.Add($ReformattedName)
                 }
             }
+        }
 
+        if ($UsersToAdd) {
+            $AccountsReformatted = $UsersToAdd
+        }
+
+        if ($PSVersionTable.Platform -eq "Unix" -or $PSVersionTable.OS -match "Darwin") {
+            $AccountsReformattedArrayString = $($AccountsReformatted | foreach {'"' + $_ + '"'}) -join ','
+            $SBAsString = @(
+                'try {'
+                "    `$AccountsReformatted = @($AccountsReformattedArrayString)"
+                "    `$AuthorizedPrincipalsFileLocation = '$AuthorizedPrincipalsFileLocation'"
+                '    $OriginalAuthPrincContent = Get-Content $AuthorizedPrincipalsFileLocation'
+                '    $StreamWriter = [System.IO.StreamWriter]::new($AuthorizedPrincipalsFileLocation, $True)'
+                '    [System.Collections.ArrayList]$AccountsAdded = @()'
+                '    foreach ($Acct in $AccountsReformatted) {'
+                '        if ($AccountsAdded -notcontains $Acct -and $OriginalAuthPrincContent -notcontains $Acct) {'
+                '            $StreamWriter.WriteLine($Acct)'
+                '            $null = $AccountsAdded.Add($Acct)'
+                '        }'
+                '    }'
+                '    $StreamWriter.Close()'
+                '    Write-Host "`nOutputStartsBelow`n"'
+                '    Get-Item $AuthorizedPrincipalsFileLocation | ConvertTo-Json -Depth 3'
+                '}'
+                'catch {'
+                '    $StreamWriter.Close()'
+                '    Write-Error $_'
+                '    return'
+                '}'
+            )
+            $SBAsString = $SBAsString -join "`n"
+            $AuthPrincFileItem = SudoPwsh -CmdString $SBAsString
+        }
+        else {
+            $StreamWriter = [System.IO.StreamWriter]::new($AuthorizedPrincipalsFileLocation, $True)
+            [System.Collections.ArrayList]$AccountsAdded = @()
             foreach ($Acct in $AccountsReformatted) {
                 if ($AccountsAdded -notcontains $Acct -and $OriginalAuthPrincContent -notcontains $Acct) {
                     # NOTE: $True below means that the content will *appended* to $AuthorizedPrincipalsFileLocation
@@ -2359,25 +2461,11 @@ function Generate-AuthorizedPrincipalsFile {
                 }
             }
         }
-
-        if ($UsersToAdd) {
-            foreach ($Acct in $UsersToAdd) {
-                if ($AccountsAdded -notcontains $Acct -and $OriginalAuthPrincContent -notcontains $Acct) {
-                    # NOTE: $True below means that the content will *appended* to $AuthorizedPrincipalsFileLocation
-                    $StreamWriter.WriteLine($Acct)
-
-                    # Keep track of the accounts we're adding...
-                    $null = $AccountsAdded.Add($Acct)
-                }
-            }
-        }
-
-        $StreamWriter.Close()
-
-        Get-Item $AuthorizedPrincipalsFileLocation
     }
     catch {
-        $StreamWriter.Close()
+        if ($StreamWriter) {
+            $StreamWriter.Close()
+        }
         Write-Error $_
         $global:FunctionResult = "1"
         return
@@ -2446,6 +2534,12 @@ function Generate-SSHUserDirFileInfo {
 
     if (!$PathToHomeDotSSHDirectory) {
         $PathToHomeDotSSHDirectory = Join-Path $HOME ".ssh"
+    }
+
+    if (!$(Test-Path $PathToHomeDotSSHDirectory)) {
+        Write-Error "The path $PathToHomeDotSSHDirectory was not found! Halting!"
+        $global:FunctionResult = "1"
+        return
     }
 
     # Get a list of all files under $HOME\.ssh
@@ -2775,6 +2869,52 @@ function Get-LDAPCert {
     }
     
     #endregion >> Main Body
+}
+
+
+<#
+    .SYNOPSIS
+        This function creates a string with the proper Directory Seperator Character (either '\' or '/') depending on the Operating System.
+
+    .DESCRIPTION
+        See .SYNOPSIS
+
+    .NOTES
+
+    .PARAMETER PathAsStringArray
+        This parameter is MANDATORY.
+
+        This parameter takes an array of strings, each of which represent a directory along the path to a file or directory.
+
+    .EXAMPLE
+        # Open an elevated PowerShell Session, import the module, and -
+
+        PS C:\Users\zeroadmin> Get-NativePath @("$HOME",'Documents','SubFolder','file.txt')
+        
+#>
+function Get-NativePath {
+    [CmdletBinding()]
+    Param( 
+        [Parameter(Mandatory=$True)]
+        [string[]]$PathAsStringArray
+    )
+
+    $PathAsStringArray = foreach ($pathPart in $PathAsStringArray) {
+        $SplitAttempt = $pathPart -split [regex]::Escape([IO.Path]::DirectorySeparatorChar)
+        
+        if ($SplitAttempt.Count -gt 1) {
+            foreach ($obj in $SplitAttempt) {
+                $obj
+            }
+        }
+        else {
+            $pathPart
+        }
+    }
+    $PathAsStringArray = $PathAsStringArray -join [IO.Path]::DirectorySeparatorChar
+
+    $PathAsStringArray
+
 }
 
 
@@ -8342,8 +8482,8 @@ if(Win32.CertStrToName(X509_ASN_ENCODING, DN, CERT_X500_NAME_STR, IntPtr.Zero, n
 # SIG # Begin signature block
 # MIIMiAYJKoZIhvcNAQcCoIIMeTCCDHUCAQExCzAJBgUrDgMCGgUAMGkGCisGAQQB
 # gjcCAQSgWzBZMDQGCisGAQQBgjcCAR4wJgIDAQAABBAfzDtgWUsITrck0sYpfvNR
-# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUQkoGDaQVjbFy0Jxq9a9bOrh3
-# LDugggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
+# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQU7VD4jAXw+oWpQLelyWs1BKNB
+# n9ugggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
 # 9w0BAQsFADAwMQwwCgYDVQQGEwNMQUIxDTALBgNVBAoTBFpFUk8xETAPBgNVBAMT
 # CFplcm9EQzAxMB4XDTE3MDkyMDIxMDM1OFoXDTE5MDkyMDIxMTM1OFowPTETMBEG
 # CgmSJomT8ixkARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMT
@@ -8400,11 +8540,11 @@ if(Win32.CertStrToName(X509_ASN_ENCODING, DN, CERT_X500_NAME_STR, IntPtr.Zero, n
 # ARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMTB1plcm9TQ0EC
 # E1gAAAH5oOvjAv3166MAAQAAAfkwCQYFKw4DAhoFAKB4MBgGCisGAQQBgjcCAQwx
 # CjAIoAKAAKECgAAwGQYJKoZIhvcNAQkDMQwGCisGAQQBgjcCAQQwHAYKKwYBBAGC
-# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFEZaJaAFrjMYO2UQ
-# XPdkcxUae1spMA0GCSqGSIb3DQEBAQUABIIBABuRUXjwdCrRT8+KlfbJU8fEJgHe
-# +0W+Sntar069lh8ea9feRP1h9LZJJ5DisPvyHAx+xcznWWzAl+zBgSZU4pyVh+h6
-# dgyrEn4k8YQpVUgo1oQKJSltO+DHrE7F4k32T9bJKPQTV3WBMCVZa1lFhVXbX7ZG
-# TmbnBFFaCZwyC+eGgR/9HVoGz0c1dB4yzuhNCIHCyeaKuk2pMJsCVrgWCtplCRP4
-# v1cl+bZdPR8aw8JDy7dJzS46dcqZSAOHagwP8vY9dSoyKJR5fDr/jh5R++iwY6Tk
-# Gg3f5Tl6dOVKU6wtP+lzL06MDd0fbWTm/YTrO1mO+TURJbrldWQDDekwZRc=
+# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFE3oj7kkUp9u15zS
+# Z6d5XkzdGRjyMA0GCSqGSIb3DQEBAQUABIIBAASBwnUWxFQdGr/GupvbqeXXxmbv
+# KpBaMoVfeV3nmFOX4dd3uXlZZrIG0p13Q8j1hPd1dBbtCKp+wbDK4Ozt9z5ukBL/
+# GKJm7+9XA8aJFCneSRrdWLcDPsGTHVPk8pwhvcrzgCeQlV+A08gQNSlZuZkwbSbV
+# xPH0lY/E+EAiNgBkIlrCmp7qwXwCckvbEL/EAxtlts6GU5c7EFVmQYWNccLgmp2J
+# Z2hwyN1mkfL5+D3pqxYapQc664p/emZ4QYoEmeZ3CHnWUAHinf70yJiNsJwcbvND
+# t3UvffRR3tMMYVehffa+U+IFmWVS/DnIWWNr+NufZkF9wzyEOAUabCDPt20=
 # SIG # End signature block

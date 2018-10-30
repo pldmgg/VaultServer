@@ -53,7 +53,7 @@ function GetDomainController {
         # Determine if we have the required Linux commands
         [System.Collections.ArrayList]$LinuxCommands = @(
             "host"
-            "hostname"
+            #"hostname"
         )
         if (!$Domain) {
             $null = $LinuxCommands.Add("domainname")
@@ -66,68 +66,28 @@ function GetDomainController {
             }
         }
         if ($CommandsNotPresent.Count -gt 0) {
-            Write-Error "The following Linux commands are required, but not present on $(hostname):`n$($CommandsNotPresent -join "`n")`nHalting!"
+            Write-Error "The following Linux commands are required, but not present on $env:HOSTNAME :`n$($CommandsNotPresent -join "`n")`nHalting!"
             $global:FunctionResult = "1"
             return
         }
 
-        $ThisHostNamePrep = hostname
+        #$ThisHostNamePrep = hostname
+        $THisHostNamePrep = $env:HOSTNAME
         $ThisHostName = $($ThisHostNamePrep -split "\.")[0]
 
         if (!$Domain) {
-            $Domain = domainname
-            if (!$Domain -or $Domain -eq "(none)") {
-                $EtcHostsContent = Get-Content "/etc/hosts"
-                $EtcHostsContentsArray = $(foreach ($HostLine in $EtcHostsContent) {
-                    $HostLine -split "[\s]" | foreach {$_.Trim()}
-                }) | Where-Object {![System.String]::IsNullOrWhiteSpace($_)}
-                $PotentialStringsWithDomainName = $EtcHostsContentsArray | Where-Object {
-                    $_ -notmatch "localhost" -and
-                    $_ -notmatch "localdomain" -and
-                    $_ -match "\." -and
-                    $_ -match "[a-zA-Z]"
-                } | Sort-Object | Get-Unique
-
-                if ($PotentialStringsWithDomainName.Count -eq 0) {
-                    Write-Error "Unable to determine domain for $(hostname)! Please use the -DomainName parameter and try again. Halting!"
-                    $global:FunctionResult = "1"
-                    return
-                }
-                
-                [System.Collections.ArrayList]$PotentialDomainsPrep = @()
-                foreach ($Line in $PotentialStringsWithDomainName) {
-                    if ($Line -match "^\.") {
-                        $null = $PotentialDomainsPrep.Add($Line.Substring(1,$($Line.Length-1)))
-                    }
-                    else {
-                        $null = $PotentialDomainsPrep.Add($Line)
-                    }
-                }
-                [System.Collections.ArrayList]$PotentialDomains = @()
-                foreach ($PotentialDomain in $PotentialDomainsPrep) {
-                    $RegexDomainPattern = "^([a-zA-Z0-9][a-zA-Z0-9-_]*\.)*[a-zA-Z0-9]*[a-zA-Z0-9-_]*[[a-zA-Z0-9]+$"
-                    if ($PotentialDomain -match $RegexDomainPattern) {
-                        $FinalPotentialDomain = $PotentialDomain -replace $ThisHostName,""
-                        if ($FinalPotentialDomain -match "^\.") {
-                            $null = $PotentialDomains.Add($FinalPotentialDomain.Substring(1,$($FinalPotentialDomain.Length-1)))
-                        }
-                        else {
-                            $null = $PotentialDomains.Add($FinalPotentialDomain)
-                        }
-                    }
-                }
-
-                if ($PotentialDomains.Count -eq 1) {
-                    $Domain = $PotentialDomains
-                }
-                else {
-                    $Domain = $PotentialDomains[0]
-                }
+            try {
+                $Domain = GetDomainName -ErrorAction Stop
+            }
+            catch {
+                Wrtite-Error $_
+                $global:FunctionResult = "1"
+                return
             }
         }
 
         if (!$Domain) {
-            Write-Error "Unable to determine domain for $(hostname)! Please use the -DomainName parameter and try again. Halting!"
+            Write-Error "Unable to determine domain for $ThisHostName! Please use the -DomainName parameter and try again. Halting!"
             $global:FunctionResult = "1"
             return
         }
@@ -307,8 +267,8 @@ function GetDomainController {
 # SIG # Begin signature block
 # MIIMiAYJKoZIhvcNAQcCoIIMeTCCDHUCAQExCzAJBgUrDgMCGgUAMGkGCisGAQQB
 # gjcCAQSgWzBZMDQGCisGAQQBgjcCAR4wJgIDAQAABBAfzDtgWUsITrck0sYpfvNR
-# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUTUKBbQMV400fEnmcGRCvKPXW
-# EFagggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
+# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUPUnjsWS/a/GpuUEAyqN81Cc7
+# L2Sgggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
 # 9w0BAQsFADAwMQwwCgYDVQQGEwNMQUIxDTALBgNVBAoTBFpFUk8xETAPBgNVBAMT
 # CFplcm9EQzAxMB4XDTE3MDkyMDIxMDM1OFoXDTE5MDkyMDIxMTM1OFowPTETMBEG
 # CgmSJomT8ixkARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMT
@@ -365,11 +325,11 @@ function GetDomainController {
 # ARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMTB1plcm9TQ0EC
 # E1gAAAH5oOvjAv3166MAAQAAAfkwCQYFKw4DAhoFAKB4MBgGCisGAQQBgjcCAQwx
 # CjAIoAKAAKECgAAwGQYJKoZIhvcNAQkDMQwGCisGAQQBgjcCAQQwHAYKKwYBBAGC
-# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFFFLkFRQXUA1174e
-# k5koT1m9Lz+gMA0GCSqGSIb3DQEBAQUABIIBACsmnAG71A0MJbuMKN1qpjY36TPS
-# SmV32CytmwtSgyW484DBz7wXpymY5T8nggzN5tnd9N3xXEwPNQVf58LZQsfNiG1k
-# IZqICxeimQL6IOIE83A8+Z6sYJbxx16IkpaCPVJ8vkbCVeOdRVd1VTXG45vwivWL
-# 1bZoaFwJXEU/zU9qKY4L+aK+IBiB/8eqMFMn/D0/wX0rHszN5fIQWJPGLrOdfwwO
-# /YkJxSLaHpcdPFstE+EUu9XCOtDbg6JoQJi2wXF123CCA+F2ar8c38e68tNKXkJO
-# ea6vt/6RKK0Zyb/K5Pl96et1BaPRUxoXbXhH7lK4+KBJVAD5UYIJn3HECY4=
+# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFJAt39JUZ2IhTKVm
+# oUDTbGY0nLUYMA0GCSqGSIb3DQEBAQUABIIBALMY6o/jUu0lxjcvRZXCUpvN0ROE
+# ufIEGUOua92adn3oj/o1/oynOfKo2j0Eqa2o3rfoJQ2dZ05q7yat/iauER/pC8iI
+# OqnRJVniaAtUQMsCgvOSNsOd+EkGtAH5rOG/Q6Apqm/vAqNseP5NgyY3CoQ/71UH
+# W/oy/oF1RTmsd5uAnkdGtsrWhNeWJSF4xOQ9GJo/3e/FLK6RIXxuclBJ2aXVBtHE
+# kCbtgyfMNmAIAeJNEyMvn6gls43vhnuf+j9ZX8wbv59r0vmpUPhJ23tYfKMeqeK1
+# nvEjrxIGOMCmKCpEQQH/TjN/4Pdkci/9GyklAZFCttrm8RSIcvpZa8p0OqU=
 # SIG # End signature block

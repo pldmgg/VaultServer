@@ -61,6 +61,12 @@ function Generate-SSHUserDirFileInfo {
         $PathToHomeDotSSHDirectory = Join-Path $HOME ".ssh"
     }
 
+    if (!$(Test-Path $PathToHomeDotSSHDirectory)) {
+        Write-Error "The path $PathToHomeDotSSHDirectory was not found! Halting!"
+        $global:FunctionResult = "1"
+        return
+    }
+
     # Get a list of all files under $HOME\.ssh
     [array]$SSHHomeFiles = Get-ChildItem -Path $PathToHomeDotSSHDirectory -File | Where-Object {$_.Name -ne "SSHDirectoryFileInfo.xml"}
 
@@ -111,8 +117,8 @@ function Generate-SSHUserDirFileInfo {
 # SIG # Begin signature block
 # MIIMiAYJKoZIhvcNAQcCoIIMeTCCDHUCAQExCzAJBgUrDgMCGgUAMGkGCisGAQQB
 # gjcCAQSgWzBZMDQGCisGAQQBgjcCAR4wJgIDAQAABBAfzDtgWUsITrck0sYpfvNR
-# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUq96s6BnJuRAQjcTUkEokf6Rh
-# c4agggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
+# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUoB0jh5YQ5udedCZPQ9MIid7m
+# nn2gggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
 # 9w0BAQsFADAwMQwwCgYDVQQGEwNMQUIxDTALBgNVBAoTBFpFUk8xETAPBgNVBAMT
 # CFplcm9EQzAxMB4XDTE3MDkyMDIxMDM1OFoXDTE5MDkyMDIxMTM1OFowPTETMBEG
 # CgmSJomT8ixkARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMT
@@ -169,11 +175,11 @@ function Generate-SSHUserDirFileInfo {
 # ARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMTB1plcm9TQ0EC
 # E1gAAAH5oOvjAv3166MAAQAAAfkwCQYFKw4DAhoFAKB4MBgGCisGAQQBgjcCAQwx
 # CjAIoAKAAKECgAAwGQYJKoZIhvcNAQkDMQwGCisGAQQBgjcCAQQwHAYKKwYBBAGC
-# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFBl4mj8NWmfVCEqG
-# A7DOMbRSHKFlMA0GCSqGSIb3DQEBAQUABIIBALVNjVI7dMgl/b29dpjX2yCoIFLy
-# DMTgSm9puKIsWGrQ0RPKpIO8r8FyBYB/yTPemJO8hJYG6hIU1KKdpdizR88MVyMp
-# pj3LHwjWI4qHGW9BI0MpzVxKYA7+35dtmvXsgqnH+3qooZvyYRF1NRXU9FTdbZwu
-# JbHQGHwOKIbWWDvaXbXsxFPfU9jBFVB8VCNN+ppafvi81+XcyF1baiyGjAYpaCCr
-# EHoCkdyrrIRNXM1Tkvgi6D99ZDOyE5pvDEcaPgu/gA25RT1poJsqzW8lsYwsOzFu
-# Z5NMPcmEaa4+erav/GBxr2rKkua7kQdsjnzfIEjXWfUftwD/R5lg1lfznEE=
+# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFBxU6jvwiQX9VdgK
+# XojldWr7p0iBMA0GCSqGSIb3DQEBAQUABIIBABTQVmxtdZIWeSA3+tmEDZxSBugh
+# mr1FdXO7FyY+g1SZSxNSmLWUaXhyc/EEUti8KR8nfvCInYqYOND+vACqYsNvN/zX
+# nR/blVp2fIN8LK0CYhzovM+6pBGBmlS+/fOzy9FbOpb3/2rYRjgZKC6nRgKIhCZZ
+# rp5FHr4y06fLxvFiIgX7NXs/T0BiAt6abSu+rHcgDVPdIPeF0rzMmi+qAjeqUIpx
+# Bce0yJDu9NHZh7p6EOc8Vi/KA7lWYJ4c0F1zZOrxMjqz4UN+CgclwEVmAa24BcMm
+# cIiRlEAbSjLpF2mHmY5WZTJKe5hio8+8TkOlBfBci7b/Xrode0kXmt8RAXM=
 # SIG # End signature block

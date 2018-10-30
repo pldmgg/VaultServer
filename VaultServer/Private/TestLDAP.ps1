@@ -14,11 +14,25 @@ function TestLDAP {
             if (![bool]$($CurrentlyLoadedAssemblies -match [regex]::Escape("Novell.Directory.Ldap.NETStandard"))) {
                 $NovellDownloadDir = "$HOME/Novell.Directory.Ldap.NETStandard"
                 if (Test-Path $NovellDownloadDir) {
-                    $null = Remove-Item -Path $NovellDownloadDir -Recurse -Force
-                }
+                    $AssemblyToLoadPath = Get-NativePath @(
+                        $HOME
+                        "Novell.Directory.Ldap.NETStandard"
+                        "Novell.Directory.Ldap.NETStandard"
+                        "lib"
+                        "netstandard1.3"
+                        "Novell.Directory.Ldap.NETStandard.dll"
+                    )
 
-                $NovellPackageInfo = DownloadNuGetPackage -AssemblyName "Novell.Directory.Ldap.NETStandard" -NuGetPkgDownloadDirectory $NovellDownloadDir -Silent
-                $AssemblyToLoadPath = $NovellPackageInfo.AssemblyToLoad
+                    if (!$(Test-Path $AssemblyToLoadPath)) {
+                        $null = Remove-Item -Path $NovellDownloadDir -Recurse -Force
+                        $NovellPackageInfo = DownloadNuGetPackage -AssemblyName "Novell.Directory.Ldap.NETStandard" -NuGetPkgDownloadDirectory $NovellDownloadDir -Silent
+                        $AssemblyToLoadPath = $NovellPackageInfo.AssemblyToLoad
+                    }
+                }
+                else {
+                    $NovellPackageInfo = DownloadNuGetPackage -AssemblyName "Novell.Directory.Ldap.NETStandard" -NuGetPkgDownloadDirectory $NovellDownloadDir -Silent
+                    $AssemblyToLoadPath = $NovellPackageInfo.AssemblyToLoad
+                }
 
                 if (![bool]$($CurrentlyLoadedAssemblies -match [regex]::Escape("Novell.Directory.Ldap.NETStandard"))) {
                     $null = Add-Type -Path $AssemblyToLoadPath
@@ -190,8 +204,8 @@ function TestLDAP {
 # SIG # Begin signature block
 # MIIMiAYJKoZIhvcNAQcCoIIMeTCCDHUCAQExCzAJBgUrDgMCGgUAMGkGCisGAQQB
 # gjcCAQSgWzBZMDQGCisGAQQBgjcCAR4wJgIDAQAABBAfzDtgWUsITrck0sYpfvNR
-# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUK5OtyUEbqz1TViTpCpSRqhLD
-# WxGgggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
+# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQU/hdzO0khIeXH2+KYU64daUfu
+# QzKgggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
 # 9w0BAQsFADAwMQwwCgYDVQQGEwNMQUIxDTALBgNVBAoTBFpFUk8xETAPBgNVBAMT
 # CFplcm9EQzAxMB4XDTE3MDkyMDIxMDM1OFoXDTE5MDkyMDIxMTM1OFowPTETMBEG
 # CgmSJomT8ixkARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMT
@@ -248,11 +262,11 @@ function TestLDAP {
 # ARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMTB1plcm9TQ0EC
 # E1gAAAH5oOvjAv3166MAAQAAAfkwCQYFKw4DAhoFAKB4MBgGCisGAQQBgjcCAQwx
 # CjAIoAKAAKECgAAwGQYJKoZIhvcNAQkDMQwGCisGAQQBgjcCAQQwHAYKKwYBBAGC
-# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFHdHaDhR+1PvsQFr
-# 6JHPzhdN1phMMA0GCSqGSIb3DQEBAQUABIIBAIL8fgzqnB58UAcUkM1Hj4kEbitc
-# 8ppu2O7z3eCG0lmISKj2tXfCwFjX3h6m9amP829U1zvE3Uug7ak4J5KnRqeW/hM8
-# MHe801+4e+5Pj2v0DMsa4Syqv3GTbVdIz6/gM3frfi6iEkeKw3891XMPS14NtXoD
-# ouOU6RmVezpFHOLfvIUeJoiEzkmEkp5HiW9K8pOSjY5QcL1z5IS8GhALqk+CMU2X
-# afZqYvPZVTEtbvjCD+J7tgLe9p9EcS2k+mx3z79J4t/9yTmk1cRRULGRe28VXc26
-# vuMJXRp9UpxbwUMmBRuZreChrvXbb4rbdrIWew2IT2CoHtIZ/lxH4k7BEoI=
+# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFNyymxrOkHktK1Pp
+# sm5ChlGGXmRaMA0GCSqGSIb3DQEBAQUABIIBAJ+899RLuR54HSjphPciBpbONbeH
+# i3q9U29YwWoWaoMSKfk+mh36pq2iF7cIQi477lLJaFsq0pq0wqHVYD+Wj1Dh0PJq
+# sHf7uCGhJwYPTPnMw6wp/um3AWeeiFG6IBA5lztf1Dyxtz5T/B/zxo8/KRvm3y60
+# Sl9xC2EXD00LtVLuP6cx4QRcU5t4cZZWvgFn6t439dgMXA5+oPqQbjpeTBX8ensF
+# xfaOSIPQx6AmNZyOSqRmwcbTxkIn1IVWWYeRSTsgX2UGTGk5efU/WOTUcwZWZVhs
+# kGhUPkTutaD3i996lMdyw9dkPwvLBKfSbWsUMghtoVvOMrOX5PX3iUlrdsw=
 # SIG # End signature block
