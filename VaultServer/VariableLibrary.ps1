@@ -26,6 +26,7 @@
     ${Function:NewUniqueString}.Ast.Extent.Text
     ${Function:RemoveMySudoPwd}.Ast.Extent.Text
     ${Function:ResolveHost}.Ast.Extent.Text
+    ${Function:SudoPwsh}.Ast.Extent.Text
     ${Function:TestIsValidIPAddress}.Ast.Extent.Text
     ${Function:TestLDAP}.Ast.Extent.Text
     ${Function:TestPort}.Ast.Extent.Text
@@ -33,10 +34,12 @@
     ${Function:Add-CAPubKeyToSSHAndSSHDConfig}.Ast.Extent.Text
     ${Function:Add-PublicKeyToRemoteHost}.Ast.Extent.Text
     ${Function:Configure-VaultServerForLDAPAuth}.Ast.Extent.Text
-    ${Function:ConfigureVaultServerForSSHManagement}.Ast.Extent.Text
+    ${Function:Configure-VaultServerForSSHManagement}.Ast.Extent.Text
+    ${Function:Get-LDAPCert}.Ast.Extent.Text
     ${Function:Generate-AuthorizedPrincipalsFile}.Ast.Extent.Text
     ${Function:Generate-SSHUserDirFileInfo}.Ast.Extent.Text
     ${Function:Get-LDAPCert}.Ast.Extent.Text
+    ${Function:Get-NativePath}.Ast.Extent.Text
     ${Function:Get-SSHClientAuthSanity}.Ast.Extent.Text
     ${Function:Get-SSHFileInfo}.Ast.Extent.Text
     ${Function:Get-VaultAccessorLookup}.Ast.Extent.Text
@@ -1266,8 +1269,8 @@ if(Win32.CertStrToName(X509_ASN_ENCODING, DN, CERT_X500_NAME_STR, IntPtr.Zero, n
 # SIG # Begin signature block
 # MIIMiAYJKoZIhvcNAQcCoIIMeTCCDHUCAQExCzAJBgUrDgMCGgUAMGkGCisGAQQB
 # gjcCAQSgWzBZMDQGCisGAQQBgjcCAR4wJgIDAQAABBAfzDtgWUsITrck0sYpfvNR
-# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUDnQ6UBaFKAApBz6AwzV7lBwZ
-# gIKgggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
+# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQU5RcDrkqJnzMXxJF7agMlfKN6
+# J0qgggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
 # 9w0BAQsFADAwMQwwCgYDVQQGEwNMQUIxDTALBgNVBAoTBFpFUk8xETAPBgNVBAMT
 # CFplcm9EQzAxMB4XDTE3MDkyMDIxMDM1OFoXDTE5MDkyMDIxMTM1OFowPTETMBEG
 # CgmSJomT8ixkARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMT
@@ -1324,11 +1327,11 @@ if(Win32.CertStrToName(X509_ASN_ENCODING, DN, CERT_X500_NAME_STR, IntPtr.Zero, n
 # ARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMTB1plcm9TQ0EC
 # E1gAAAH5oOvjAv3166MAAQAAAfkwCQYFKw4DAhoFAKB4MBgGCisGAQQBgjcCAQwx
 # CjAIoAKAAKECgAAwGQYJKoZIhvcNAQkDMQwGCisGAQQBgjcCAQQwHAYKKwYBBAGC
-# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFI+AUD02s3UvMMVc
-# UxXBs5AvGkt1MA0GCSqGSIb3DQEBAQUABIIBACKbLd9RrLIKX4V3pd0RSsf8tnqX
-# bJp4IaSf6hFiap91XqyzNEzeYA9Ow8DWVSWQ2cNSLVJ5Zl9Ppy4zAVouJp2uzKh5
-# 9CjujO1mCopzWh02SETj0sL9NK5VwGvcesN/WtxELFeK/NdINvwPcC9DNlWYfAnq
-# ebM0zbRc6RS8H3lFcegZA5LxWrNoeied/3sHXUoFiEPJOhgqSCvS/x6WWWALbit+
-# NKRSIu2X7vr6M8W7Y9LW0t/mH0SQfVtiERKUocuKIcz6Ta8NGCzK1PpJQqeJg3uR
-# 4NH2Mf0ThwoHTZRwy7nuCuUNCtkoQ9luE4+HKdA0g4QYYnI7Dz0RgV400Lk=
+# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFOYUGxlMaN7cn1+V
+# QS0KtUQLMq2LMA0GCSqGSIb3DQEBAQUABIIBAAL39FZqpm/k/LRC/eJPyuEvTF5U
+# SfkbTFiaT6ZdOTEZyueFjRZT/4LKrmXl+2xtPU3mQ6q1La5UHY/yIERZaUcMfvwH
+# H17Ern7bigY9ldFUcHL6/qcFtb3D53150ZXZQTqqL6fAYYRkjmRSpIGwFA0zgubt
+# t+fyyZ0daBfMoUQhYOyXujtdyIuOab6U/gYd8lFvJD3Jg6cZLbLMtXTgD3lKMxDA
+# /wunDp4XTW2I2DRsMEsoTvXx0USItnacKklLAaJeecflwfhDr3z4OtFTfoO7xN6U
+# JROzOLDbT1WJyyX3DYyPqDtU/nZJVAd7kVrjf0g3H9djNZU5A5E42HVyCsk=
 # SIG # End signature block

@@ -74,6 +74,12 @@
         on how you have LDAP configured, use the appropriate port number. If you are not sure,
         use the TestLDAP function to determine which ports are in use.
 
+    .PARAMETER UseOpenSSL
+        This parameter is OPTIONAL.
+
+        This parameter is a switch. If you would like to use openssl to determine your LDAP Server's Certificate
+        even .Net classes are sufficient in determining this information.
+
     .PARAMETER BindUserDN
         This parameter is MANDATORY.
 
@@ -182,6 +188,9 @@ function Configure-VaultServerForLDAPAuth {
         [ValidateSet(389,636,3268,3269)]
         [int]$LDAPServicePort,
 
+        [Parameter(Mandatory=$False)]
+        [switch]$UseOpenSSL,
+
         [Parameter(Mandatory=$True)]
         [string]$BindUserDN, # Should be a path to a User Account LDAP object, like cn=vault,ou=OrgUsers,dc=zero,dc=lab
 
@@ -204,9 +213,24 @@ function Configure-VaultServerForLDAPAuth {
         [string]$LDAPVaultAdminsSecurityGroupDN # Something like cn=VaultAdmins,ou=Groups,dc=zero,dc=lab
     )
 
-    #region >> Variable/Parameter Transforms and PreRun Prep
+    #region >> Prep
 
-    [Net.ServicePointManager]::SecurityProtocol = "tls12, tls11, tls"
+    if ($PSVersionTable.Platform -eq "Unix" -or $PSVersionTable.OS -match "Darwin" -and $env:SudoPwdPrompt) {
+        if (GetElevation) {
+            Write-Error "You should not be running the VaultServer Module as root! Halting!"
+            $global:FunctionResult = "1"
+            return
+        }
+        RemoveMySudoPwd
+        NewCronToAddSudoPwd
+        $env:SudoPwdPrompt = $False
+
+        $ActualHostName = if ($env:HOSTNAME -match '\.') {$($env:HOSTNAME -split '\.')[0]} else {$env:HOSTNAME}
+    }
+    if (!$PSVersionTable.Platform -or $PSVersionTable.Platform -eq "Win32NT") {
+        $ActualHostName = $env:ComputerName
+        [Net.ServicePointManager]::SecurityProtocol = "tls12, tls11, tls"
+    }
 
     # Create $Ouput Hashtable so we can add to it as we go and return whatever was done in case of error
     $Output = [ordered]@{}
@@ -237,87 +261,299 @@ function Configure-VaultServerForLDAPAuth {
         return
     }
 
-    # Make sure $LDAPBindCredentials work
-    $CurrentlyLoadedAssemblies = [System.AppDomain]::CurrentDomain.GetAssemblies()
+    if (!$PSVersionTable.Platform -or $PSVersionTable.Platform -eq "Win32NT") {
+        $CurrentlyLoadedAssemblies = [System.AppDomain]::CurrentDomain.GetAssemblies()
 
-    if (![bool]$($CurrentlyLoadedAssemblies -match "System.DirectoryServices.AccountManagement")) {
-        Add-Type -AssemblyName System.DirectoryServices.AccountManagement
-    }
-    $SimpleDomain = $LDAPServerNetworkInfo.Domain
-    $SimpleDomainWLDAPPort = $SimpleDomain + ":$LDAPServicePort"
-    [System.Collections.ArrayList]$DomainLDAPContainersPrep = @()
-    foreach ($Section in $($SimpleDomain -split "\.")) {
-        $null = $DomainLDAPContainersPrep.Add($Section)
-    }
-    $DomainLDAPContainers = $($DomainLDAPContainersPrep | foreach {"DC=$_"}) -join ", "
+        if (![bool]$($CurrentlyLoadedAssemblies -match "System.DirectoryServices.AccountManagement")) {
+            Add-Type -AssemblyName System.DirectoryServices.AccountManagement
+        }
+        $SimpleDomain = $LDAPServerNetworkInfo.Domain
+        $SimpleDomainWLDAPPort = $SimpleDomain + ":$LDAPServicePort"
+        [System.Collections.ArrayList]$DomainLDAPContainersPrep = @()
+        foreach ($Section in $($SimpleDomain -split "\.")) {
+            $null = $DomainLDAPContainersPrep.Add($Section)
+        }
+        $DomainLDAPContainers = $($DomainLDAPContainersPrep | foreach {"DC=$_"}) -join ", "
 
-    try {
-        $SimpleUserName = $($LDAPBindCredentials.UserName -split "\\")[1]
-        $PasswordInPlainText = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($LDAPBindCredentials.Password))
-        $PrincipleContext = [System.DirectoryServices.AccountManagement.PrincipalContext]::new(
-            [System.DirectoryServices.AccountManagement.ContextType]::Domain,
-            "$SimpleDomainWLDAPPort",
-            "$DomainLDAPContainers",
-            [System.DirectoryServices.AccountManagement.ContextOptions]::SimpleBind,
-            "$($LDAPBindCredentials.UserName)",
-            "$PasswordInPlainText"
-        )
-
+        # Make sure $LDAPBindCredentials work
         try {
-            $UserPrincipal = [System.DirectoryServices.AccountManagement.UserPrincipal]::FindByIdentity($PrincipleContext, [System.DirectoryServices.AccountManagement.IdentityType]::SamAccountName, "$SimpleUserName")
-            $LDAPBindCredentialsAreValid = $True
-        }
-        catch {
-            throw "The credentials provided to the -LDAPBindCredentials parameter are not valid for the domain $SimpleDomain! Halting!"
-        }
+            $SimpleUserName = $($LDAPBindCredentials.UserName -split "\\")[1]
+            $PasswordInPlainText = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($LDAPBindCredentials.Password))
+            $PrincipleContext = [System.DirectoryServices.AccountManagement.PrincipalContext]::new(
+                [System.DirectoryServices.AccountManagement.ContextType]::Domain,
+                "$SimpleDomainWLDAPPort",
+                "$DomainLDAPContainers",
+                [System.DirectoryServices.AccountManagement.ContextOptions]::SimpleBind,
+                "$($LDAPBindCredentials.UserName)",
+                "$PasswordInPlainText"
+            )
 
-        if ($LDAPBindCredentialsAreValid) {
-            # Determine if the User Account is locked
-            $AccountLocked = $UserPrincipal.IsAccountLockedOut()
+            try {
+                $UserPrincipal = [System.DirectoryServices.AccountManagement.UserPrincipal]::FindByIdentity($PrincipleContext, [System.DirectoryServices.AccountManagement.IdentityType]::SamAccountName, "$SimpleUserName")
+                $LDAPBindCredentialsAreValid = $True
+            }
+            catch {
+                throw "The credentials provided to the -LDAPBindCredentials parameter are not valid for the domain $SimpleDomain! Halting!"
+            }
 
-            if ($AccountLocked -eq $True) {
-                throw "The provided UserName $($LDAPBindCredentials.Username) is locked! Please unlock it before additional attempts at getting working credentials!"
+            if ($LDAPBindCredentialsAreValid) {
+                # Determine if the User Account is locked
+                $AccountLocked = $UserPrincipal.IsAccountLockedOut()
+
+                if ($AccountLocked -eq $True) {
+                    throw "The provided UserName $($LDAPBindCredentials.Username) is locked! Please unlock it before additional attempts at getting working credentials!"
+                }
             }
         }
-    }
-    catch {
-        Write-Error $_
-        $global:FunctionResult = "1"
-        return
-    }
+        catch {
+            Write-Error $_
+            $global:FunctionResult = "1"
+            return
+        }
 
+        # NOTE: With .Net, LDAP URIs always start with 'LDAP' - never lowercase and never with an 's|S' (i.e. never LDAPS|ldaps),
+        # regardless of port
+        $LDAPUri = "LDAP://$($LDAPServerNetworkInfo.FQDN):$LDAPServicePort"
 
-    # NOTE: With .Net, LDAP URIs always start with 'LDAP' - never lowercase and never with an 's|S' (i.e. never LDAPS|ldaps),
-    # regardless of port
-    $LDAPUri = "LDAP://$($LDAPServerNetworkInfo.FQDN):$LDAPServicePort"
+        # Make sure $LDAPUserOUDN exists
+        try {
+            $LDAPUserOUDNDirectoryEntry = [System.DirectoryServices.DirectoryEntry]("$LDAPUri/$LDAPUserOUDN")
+            $LDAPUserOUDNDirectoryEntry.Close()
+        }
+        catch {
+            Write-Error "The LDAP Object $LDAPUserOUDN cannot be found! Halting!"
+            $global:FunctionResult = "1"
+            return
+        }
 
-    # Make sure $LDAPUserOUDN exists
-    try {
-        $LDAPUserOUDNDirectoryEntry = [System.DirectoryServices.DirectoryEntry]("$LDAPUri/$LDAPUserOUDN")
-        $LDAPUserOUDNDirectoryEntry.Close()
+        # Make sure $LDAPGroupOUDN exists
+        try {
+            $LDAPGroupOUDNDirectoryEntry = [System.DirectoryServices.DirectoryEntry]("$LDAPUri/$LDAPGroupOUDN")
+            $LDAPGroupOUDNDirectoryEntry.Close()
+        }
+        catch {
+            Write-Error "The LDAP Object $LDAPGroupOUDN cannot be found! Halting!"
+            $global:FunctionResult = "1"
+            return
+        }
     }
-    catch {
-        Write-Error "The LDAP Object $LDAPUserOUDN cannot be found! Halting!"
-        $global:FunctionResult = "1"
-        return
-    }
+    if ($PSVersionTable.Platform -eq "Unix" -or $PSVersionTable.OS -match "Darwin") {
+        # Determine if we have the required Linux commands
+        [System.Collections.ArrayList]$LinuxCommands = @(
+            "echo"
+            "host"
+            "hostname"
+            "ldapsearch"
+        )
+        if (!$Domain) {
+            $null = $LinuxCommands.Add("domainname")
+        }
+        [System.Collections.ArrayList]$CommandsNotPresent = @()
+        foreach ($CommandName in $LinuxCommands) {
+            $CommandCheckResult = command -v $CommandName
+            if (!$CommandCheckResult) {
+                $null = $CommandsNotPresent.Add($CommandName)
+            }
+        }
 
-    # Make sure $LDAPGroupOUDN exists
-    try {
-        $LDAPGroupOUDNDirectoryEntry = [System.DirectoryServices.DirectoryEntry]("$LDAPUri/$LDAPGroupOUDN")
-        $LDAPGroupOUDNDirectoryEntry.Close()
-    }
-    catch {
-        Write-Error "The LDAP Object $LDAPGroupOUDN cannot be found! Halting!"
-        $global:FunctionResult = "1"
-        return
+        if ($CommandsNotPresent.Count -gt 0) {
+            [System.Collections.ArrayList]$FailedInstalls = @()
+            if ($CommandsNotPresent -contains "echo" -or $CommandsNotPresent -contains "whoami") {
+                try {
+                    #$null = InstallLinuxPackage -PossiblePackageNames "coreutils" -CommandName "echo"
+                    $InstallLinuxPackageAsString = ${Function:InstallLinuxPackage}.Ast.Extent.Text
+                    $SBAsString = @(
+                        "`$GetLocalGroupAndUsersAsString = @'`n$InstallLinuxPackageAsString`n'@"
+                        'try {'
+                        '    Invoke-Expression $InstallLinuxPackageAsString'
+                        '    $null = InstallLinuxPackage -PossiblePackageNames "coreutils" -CommandName "echo"'
+                        '    Write-Host "`nOutputStartsBelow`n"'
+                        '    "Done" | ConvertTo-Json -Depth 3'
+                        '}'
+                        'catch {'
+                        '    @("ErrorMsg",$_.Exception.Message) | ConvertTo-Json -Depth 3'
+                        '}'
+                    )
+                    $SBAsString = $SBAsString -join "`n"
+                    $InstallPackageResultPrep = SudoPwsh -CmdString $SBAsString
+
+                    if ($InstallPackageResultPrep.Output -match "ErrorMsg") {
+                        throw $InstallPackageResultPrep.Output[-1]
+                    }
+                    if ($InstallPackageResultPrep.OutputType -eq "Error") {
+                        if ($InstallPackageResultPrep.Output -match "ErrorMsg") {
+                            throw $InstallPackageResultPrep.Output[-1]
+                        }
+                        else {
+                            throw $InstallPackageResultPrep.Output
+                        }
+                    }
+                    $InstallPackageResult = $InstallPackageResultPrep.Output
+                }
+                catch {
+                    $null = $FailedInstalls.Add("coreutils")
+                }
+            }
+            if ($CommandsNotPresent -contains "host" -or $CommandsNotPresent -contains "hostname" -or $CommandsNotPresent -contains "domainname") {
+                try {
+                    #$null = InstallLinuxPackage -PossiblePackageNames @("dnsutils","bindutils","bind-utils","bind-tools") -CommandName "nslookup"
+                    $InstallLinuxPackageAsString = ${Function:InstallLinuxPackage}.Ast.Extent.Text
+                    $SBAsString = @(
+                        "`$GetLocalGroupAndUsersAsString = @'`n$InstallLinuxPackageAsString`n'@"
+                        'try {'
+                        '    Invoke-Expression $InstallLinuxPackageAsString'
+                        '    $null = InstallLinuxPackage -PossiblePackageNames @("dnsutils","bindutils","bind-utils","bind-tools") -CommandName "nslookup"'
+                        '    Write-Host "`nOutputStartsBelow`n"'
+                        '    "Done" | ConvertTo-Json -Depth 3'
+                        '}'
+                        'catch {'
+                        '    @("ErrorMsg",$_.Exception.Message) | ConvertTo-Json -Depth 3'
+                        '}'
+                    )
+                    $SBAsString = $SBAsString -join "`n"
+                    $InstallPackageResultPrep = SudoPwsh -CmdString $SBAsString
+
+                    if ($InstallPackageResultPrep.Output -match "ErrorMsg") {
+                        throw $InstallPackageResultPrep.Output[-1]
+                    }
+                    if ($InstallPackageResultPrep.OutputType -eq "Error") {
+                        if ($InstallPackageResultPrep.Output -match "ErrorMsg") {
+                            throw $InstallPackageResultPrep.Output[-1]
+                        }
+                        else {
+                            throw $InstallPackageResultPrep.Output
+                        }
+                    }
+                    $InstallPackageResult = $InstallPackageResultPrep.Output
+                }
+                catch {
+                    $null = $FailedInstalls.Add("dnsutils_bindutils_bind-utils_bind-tools")
+                }
+            }
+            if ($CommandsNotPresent -contains "ldapsearch") {
+                try {
+                    #$null = InstallLinuxPackage -PossiblePackageNames "openldap-clients" -CommandName "ldapsearch"
+                    $InstallLinuxPackageAsString = ${Function:InstallLinuxPackage}.Ast.Extent.Text
+                    $SBAsString = @(
+                        "`$GetLocalGroupAndUsersAsString = @'`n$InstallLinuxPackageAsString`n'@"
+                        'try {'
+                        '    Invoke-Expression $InstallLinuxPackageAsString'
+                        '    $null = InstallLinuxPackage -PossiblePackageNames "openldap-clients" -CommandName "ldapsearch"'
+                        '    Write-Host "`nOutputStartsBelow`n"'
+                        '    "Done" | ConvertTo-Json -Depth 3'
+                        '}'
+                        'catch {'
+                        '    @("ErrorMsg",$_.Exception.Message) | ConvertTo-Json -Depth 3'
+                        '}'
+                    )
+                    $SBAsString = $SBAsString -join "`n"
+                    $InstallPackageResultPrep = SudoPwsh -CmdString $SBAsString
+
+                    if ($InstallPackageResultPrep.Output -match "ErrorMsg") {
+                        throw $InstallPackageResultPrep.Output[-1]
+                    }
+                    if ($InstallPackageResultPrep.OutputType -eq "Error") {
+                        if ($InstallPackageResultPrep.Output -match "ErrorMsg") {
+                            throw $InstallPackageResultPrep.Output[-1]
+                        }
+                        else {
+                            throw $InstallPackageResultPrep.Output
+                        }
+                    }
+                    $InstallPackageResult = $InstallPackageResultPrep.Output
+                }
+                catch {
+                    $null = $FailedInstalls.Add("openldap-clients")
+                }
+            }
+    
+            if ($FailedInstalls.Count -gt 0) {
+                Write-Error "The following Linux packages are required, but were not able to be installed:`n$($FailedInstalls -join "`n")`nHalting!"
+                $global:FunctionResult = "1"
+                return
+            }
+        }
+
+        [System.Collections.ArrayList]$CommandsNotPresent = @()
+        foreach ($CommandName in $LinuxCommands) {
+            $CommandCheckResult = command -v $CommandName
+            if (!$CommandCheckResult) {
+                $null = $CommandsNotPresent.Add($CommandName)
+            }
+        }
+    
+        if ($CommandsNotPresent.Count -gt 0) {
+            Write-Error "The following Linux commands are required, but not present on $env:ComputerName:`n$($CommandsNotPresent -join "`n")`nHalting!"
+            $global:FunctionResult = "1"
+            return
+        }
+
+        try {
+            if ($Domain) {
+                $DomainControllerInfo = GetDomainController -Domain $Domain -ErrorAction Stop
+            }
+            else {
+                $DomainControllerInfo = GetDomainController -ErrorAction Stop
+            }
+    
+            if ($DomainControllerInfo.PrimaryDomainController -eq "unknown") {
+                $PDC = $DomainControllerInfo.FoundDomainControllers[0]
+            }
+            else {
+                $PDC = $DomainControllerInfo.PrimaryDomainController
+            }
+    
+            $LDAPInfo = TestLDAP -ADServerHostNameOrIP $PDC -ErrorAction Stop
+            if (!$DomainControllerInfo) {throw "Problem with GetDomainController function! Halting!"}
+            if (!$LDAPInfo) {throw "Problem with TestLDAP function! Halting!"}
+        }
+        catch {
+            Write-Error $_
+            $global:FunctionResult = "1"
+            return
+        }
+
+        $SimpleDomainPrep = $PDC -split "\."
+        $SimpleDomain = $SimpleDomainPrep[1..$($SimpleDomainPrep.Count-1)] -join "."
+        [System.Collections.ArrayList]$DomainLDAPContainersPrep = @()
+        foreach ($Section in $($SimpleDomain -split "\.")) {
+            $null = $DomainLDAPContainersPrep.Add($Section)
+        }
+        $DomainLDAPContainers = $($DomainLDAPContainersPrep | foreach {"DC=$_"}) -join ","
+        $BindUserName = $LDAPBindCredentials.UserName
+        $BindUserNameForExpect = $BindUserName -replace [regex]::Escape('\'),'\\\'
+        $BindPassword = $LDAPBindCredentials.GetNetworkCredential().Password
+
+        # Make sure $LDAPBindCredentials work
+        $ldapSearchOutput = ldapsearch -x -h $PDC -D $BindUserName -w $BindPassword -b "$DomainLDAPContainers" -s sub "(objectClass=group)" cn
+        if ($LASTEXITCODE -ne 0) {
+            Write-Error "The credentials provided to the -LDAPBindCredentials parameter are not valid for the domain $SimpleDomain! Halting!"
+            $global:FunctionResult = "1"
+            return
+        }
+
+        # Make sure $LDAPUserOUDN exists
+        $ldapSearchOutput = ldapsearch -x -h $PDC -D $BindUserName -w $BindPassword -b "$LDAPUserOUDN" -s sub "(objectClass=user)" cn
+        if ($ldapSearchOutput -match "No such object") {
+            Write-Error "The LDAP Object $LDAPUserOUDN cannot be found! Halting!"
+            $global:FunctionResult = "1"
+            return
+        }
+
+        # Make sure $LDAPGroupOUDN exists
+        $ldapSearchOutput = ldapsearch -x -h $PDC -D $BindUserName -w $BindPassword -b "$LDAPGroupOUDN" -s sub "(objectClass=user)" cn
+        if ($ldapSearchOutput -match "No such object") {
+            Write-Error "The LDAP Object $LDAPUserOUDN cannot be found! Halting!"
+            $global:FunctionResult = "1"
+            return
+        }
     }
 
     $HeadersParameters = @{
         "X-Vault-Token" = $VaultAuthToken
     }
 
-    #endregion >> Variable/Parameter Transforms and PreRun Prep
+    #endregion >> Prep
 
 
     #region >> Main Body
@@ -506,7 +742,13 @@ function Configure-VaultServerForLDAPAuth {
             ErrorAction                 = "Stop"
         }
         if ($LDAPServicePort -eq 389 -or $LDAPServicePort -eq 3268) {
+            $GetLDAPCertSplatParams.Add("AllowOpenSSLInstall",$True)
+        }
+        if ($UseOpenSSL) {
             $GetLDAPCertSplatParams.Add("UseOpenSSL",$True)
+            if ($GetLDAPCertSplatParams.Keys -notcontains "AllowOpenSSLInstall") {
+                $GetLDAPCertSplatParams.Add("AllowOpenSSLInstall",$True)
+            }
         }
 
         $GetLDAPCertResult = Get-LDAPCert @GetLDAPCertSplatParams
@@ -684,8 +926,8 @@ function Configure-VaultServerForLDAPAuth {
 # SIG # Begin signature block
 # MIIMiAYJKoZIhvcNAQcCoIIMeTCCDHUCAQExCzAJBgUrDgMCGgUAMGkGCisGAQQB
 # gjcCAQSgWzBZMDQGCisGAQQBgjcCAR4wJgIDAQAABBAfzDtgWUsITrck0sYpfvNR
-# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUc6iqE37M3fkvtMWnzFwLKTbV
-# d7agggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
+# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUbzX91AIeNo49G1Z/TjlPKmr2
+# YRagggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
 # 9w0BAQsFADAwMQwwCgYDVQQGEwNMQUIxDTALBgNVBAoTBFpFUk8xETAPBgNVBAMT
 # CFplcm9EQzAxMB4XDTE3MDkyMDIxMDM1OFoXDTE5MDkyMDIxMTM1OFowPTETMBEG
 # CgmSJomT8ixkARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMT
@@ -742,11 +984,11 @@ function Configure-VaultServerForLDAPAuth {
 # ARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMTB1plcm9TQ0EC
 # E1gAAAH5oOvjAv3166MAAQAAAfkwCQYFKw4DAhoFAKB4MBgGCisGAQQBgjcCAQwx
 # CjAIoAKAAKECgAAwGQYJKoZIhvcNAQkDMQwGCisGAQQBgjcCAQQwHAYKKwYBBAGC
-# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFBxKKs9gsvKh750T
-# ms2H5F1gfks7MA0GCSqGSIb3DQEBAQUABIIBAAo/WBaqEWUkxQmx3YsW3RTxJuFa
-# ZMR4pDChVQSe/DbhKZkSNr/eqK3jAAiAB5Umn89pcEWohUnYcVe44SFbMnVKZ+4t
-# WKCODT/8mAK3B007Rh95vagrxZWfzGc10WAEFu2XupLhOxOUmPpSseD+xjjikNig
-# YHHTU5mDKdBwW6saSxNAAUNpkMaw/WeVt4BTEqDXRK2uWMvqdupHgrAUws/nKe5p
-# BBJM9iq7HhiNKCwUlYzFDmJZ+CdgvXo5UzbYjxJPL9X89k7yiVrYpgMv+YPR4K1C
-# LMr2dzJ+UUJOtxKnqLCBLmP7rXposIykctBYtDtneZhyhOxvVjVpCPTuuNc=
+# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFFuVFo+GHoONlF5S
+# yaMf73tevUnFMA0GCSqGSIb3DQEBAQUABIIBABCwQsbA/vnVovVh9yHEc53LUtXN
+# LzsoE0uYaiJduleZCWhtc9aYyrVy8V449EyD9aTlQ93RY+Y4JYv4T91xA8r0FfTR
+# TklITgvYY/UbGRbz0FbwpV+M5Lcn/3TmftoeyGHLEXZXq7YRR60ClK94HfoeiMii
+# n0NamFsTOU5Mlka8uYeNXbSEvpH/6bgw1Ybo8TdwBEfldMzUbp6SST9FSam2XkIK
+# PHcdpSCaY73GLtR2ByX9pD9B+UauWqX9Zpr/K+yjFqb1SwiSWrrvuluqnv3uRzQJ
+# 5oqR8bkG+eHKk4U0zNam7yjchterVj/T4yFZgv59/IWeusaW4ZyhWZBu59s=
 # SIG # End signature block

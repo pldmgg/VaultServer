@@ -911,6 +911,68 @@ function Add-PublicKeyToRemoteHost {
 
 <#
     .SYNOPSIS
+        This function gets the SSL Certificate at the specified IP Address / Port
+        and returns an System.Security.Cryptography.X509Certificates.X509Certificate2 object.
+
+    .DESCRIPTION
+        See .SYNOPSIS
+
+    .NOTES
+
+    .PARAMETER IPAddress
+        This parameter is MANDATORY.
+
+        This parameter takes a string that represents an IP Address.
+
+    .PARAMETER Port
+        This parameter is MANDATORY.
+
+        This parameter takes an integer that represents a Port Number (443, 636, etc).
+
+    .EXAMPLE
+        # In the below example, 172.217.15.110 happens to be a google.com IP Address
+
+        PS C:\Users\zeroadmin> Check-Cert -IPAddress 172.217.15.110 -Port 443
+
+        Thumbprint                                Subject
+        ----------                                -------
+        8FBB134B2216D6C71CF4E4431ABD82182922AC7C  CN=*.google.com, O=Google Inc, L=Mountain View, S=California, C=US
+        
+#>
+function Check-Cert {
+    [CmdletBinding()]
+    Param (
+        [Parameter(Mandatory=$True)]
+        [string]$IPAddress,
+        
+        [Parameter(Mandatory=$True)]
+        [int]$Port
+    )
+    
+    try {
+        $TcpSocket = New-Object Net.Sockets.TcpClient($IPAddress,$Port)
+        $tcpstream = $TcpSocket.GetStream()
+        $Callback = {param($sender,$cert,$chain,$errors) return $true}
+        $SSLStream = New-Object -TypeName System.Net.Security.SSLStream -ArgumentList @($tcpstream, $True, $Callback)
+
+        try {
+            $SSLStream.AuthenticateAsClient($IPAddress)
+            $Certificate = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($SSLStream.RemoteCertificate)
+        }
+        finally {
+            $SSLStream.Dispose()
+        }
+    }
+    finally {
+        $TCPSocket.Dispose()
+    }
+    
+    $Certificate
+}
+
+
+<#
+    .SYNOPSIS
         This function uses the HashiCorp Vault Server's REST API to configure the Vault Server for
         LDAP Authrntication.
 
@@ -984,6 +1046,12 @@ function Add-PublicKeyToRemoteHost {
         This parameter takes an integer with possible values: 389, 636, 3268, or 3269. Depending
         on how you have LDAP configured, use the appropriate port number. If you are not sure,
         use the TestLDAP function to determine which ports are in use.
+
+    .PARAMETER UseOpenSSL
+        This parameter is OPTIONAL.
+
+        This parameter is a switch. If you would like to use openssl to determine your LDAP Server's Certificate
+        even .Net classes are sufficient in determining this information.
 
     .PARAMETER BindUserDN
         This parameter is MANDATORY.
@@ -1093,6 +1161,9 @@ function Configure-VaultServerForLDAPAuth {
         [ValidateSet(389,636,3268,3269)]
         [int]$LDAPServicePort,
 
+        [Parameter(Mandatory=$False)]
+        [switch]$UseOpenSSL,
+
         [Parameter(Mandatory=$True)]
         [string]$BindUserDN, # Should be a path to a User Account LDAP object, like cn=vault,ou=OrgUsers,dc=zero,dc=lab
 
@@ -1115,9 +1186,24 @@ function Configure-VaultServerForLDAPAuth {
         [string]$LDAPVaultAdminsSecurityGroupDN # Something like cn=VaultAdmins,ou=Groups,dc=zero,dc=lab
     )
 
-    #region >> Variable/Parameter Transforms and PreRun Prep
+    #region >> Prep
 
-    [Net.ServicePointManager]::SecurityProtocol = "tls12, tls11, tls"
+    if ($PSVersionTable.Platform -eq "Unix" -or $PSVersionTable.OS -match "Darwin" -and $env:SudoPwdPrompt) {
+        if (GetElevation) {
+            Write-Error "You should not be running the VaultServer Module as root! Halting!"
+            $global:FunctionResult = "1"
+            return
+        }
+        RemoveMySudoPwd
+        NewCronToAddSudoPwd
+        $env:SudoPwdPrompt = $False
+
+        $ActualHostName = if ($env:HOSTNAME -match '\.') {$($env:HOSTNAME -split '\.')[0]} else {$env:HOSTNAME}
+    }
+    if (!$PSVersionTable.Platform -or $PSVersionTable.Platform -eq "Win32NT") {
+        $ActualHostName = $env:ComputerName
+        [Net.ServicePointManager]::SecurityProtocol = "tls12, tls11, tls"
+    }
 
     # Create $Ouput Hashtable so we can add to it as we go and return whatever was done in case of error
     $Output = [ordered]@{}
@@ -1148,87 +1234,299 @@ function Configure-VaultServerForLDAPAuth {
         return
     }
 
-    # Make sure $LDAPBindCredentials work
-    $CurrentlyLoadedAssemblies = [System.AppDomain]::CurrentDomain.GetAssemblies()
+    if (!$PSVersionTable.Platform -or $PSVersionTable.Platform -eq "Win32NT") {
+        $CurrentlyLoadedAssemblies = [System.AppDomain]::CurrentDomain.GetAssemblies()
 
-    if (![bool]$($CurrentlyLoadedAssemblies -match "System.DirectoryServices.AccountManagement")) {
-        Add-Type -AssemblyName System.DirectoryServices.AccountManagement
-    }
-    $SimpleDomain = $LDAPServerNetworkInfo.Domain
-    $SimpleDomainWLDAPPort = $SimpleDomain + ":$LDAPServicePort"
-    [System.Collections.ArrayList]$DomainLDAPContainersPrep = @()
-    foreach ($Section in $($SimpleDomain -split "\.")) {
-        $null = $DomainLDAPContainersPrep.Add($Section)
-    }
-    $DomainLDAPContainers = $($DomainLDAPContainersPrep | foreach {"DC=$_"}) -join ", "
+        if (![bool]$($CurrentlyLoadedAssemblies -match "System.DirectoryServices.AccountManagement")) {
+            Add-Type -AssemblyName System.DirectoryServices.AccountManagement
+        }
+        $SimpleDomain = $LDAPServerNetworkInfo.Domain
+        $SimpleDomainWLDAPPort = $SimpleDomain + ":$LDAPServicePort"
+        [System.Collections.ArrayList]$DomainLDAPContainersPrep = @()
+        foreach ($Section in $($SimpleDomain -split "\.")) {
+            $null = $DomainLDAPContainersPrep.Add($Section)
+        }
+        $DomainLDAPContainers = $($DomainLDAPContainersPrep | foreach {"DC=$_"}) -join ", "
 
-    try {
-        $SimpleUserName = $($LDAPBindCredentials.UserName -split "\\")[1]
-        $PasswordInPlainText = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($LDAPBindCredentials.Password))
-        $PrincipleContext = [System.DirectoryServices.AccountManagement.PrincipalContext]::new(
-            [System.DirectoryServices.AccountManagement.ContextType]::Domain,
-            "$SimpleDomainWLDAPPort",
-            "$DomainLDAPContainers",
-            [System.DirectoryServices.AccountManagement.ContextOptions]::SimpleBind,
-            "$($LDAPBindCredentials.UserName)",
-            "$PasswordInPlainText"
-        )
-
+        # Make sure $LDAPBindCredentials work
         try {
-            $UserPrincipal = [System.DirectoryServices.AccountManagement.UserPrincipal]::FindByIdentity($PrincipleContext, [System.DirectoryServices.AccountManagement.IdentityType]::SamAccountName, "$SimpleUserName")
-            $LDAPBindCredentialsAreValid = $True
-        }
-        catch {
-            throw "The credentials provided to the -LDAPBindCredentials parameter are not valid for the domain $SimpleDomain! Halting!"
-        }
+            $SimpleUserName = $($LDAPBindCredentials.UserName -split "\\")[1]
+            $PasswordInPlainText = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($LDAPBindCredentials.Password))
+            $PrincipleContext = [System.DirectoryServices.AccountManagement.PrincipalContext]::new(
+                [System.DirectoryServices.AccountManagement.ContextType]::Domain,
+                "$SimpleDomainWLDAPPort",
+                "$DomainLDAPContainers",
+                [System.DirectoryServices.AccountManagement.ContextOptions]::SimpleBind,
+                "$($LDAPBindCredentials.UserName)",
+                "$PasswordInPlainText"
+            )
 
-        if ($LDAPBindCredentialsAreValid) {
-            # Determine if the User Account is locked
-            $AccountLocked = $UserPrincipal.IsAccountLockedOut()
+            try {
+                $UserPrincipal = [System.DirectoryServices.AccountManagement.UserPrincipal]::FindByIdentity($PrincipleContext, [System.DirectoryServices.AccountManagement.IdentityType]::SamAccountName, "$SimpleUserName")
+                $LDAPBindCredentialsAreValid = $True
+            }
+            catch {
+                throw "The credentials provided to the -LDAPBindCredentials parameter are not valid for the domain $SimpleDomain! Halting!"
+            }
 
-            if ($AccountLocked -eq $True) {
-                throw "The provided UserName $($LDAPBindCredentials.Username) is locked! Please unlock it before additional attempts at getting working credentials!"
+            if ($LDAPBindCredentialsAreValid) {
+                # Determine if the User Account is locked
+                $AccountLocked = $UserPrincipal.IsAccountLockedOut()
+
+                if ($AccountLocked -eq $True) {
+                    throw "The provided UserName $($LDAPBindCredentials.Username) is locked! Please unlock it before additional attempts at getting working credentials!"
+                }
             }
         }
-    }
-    catch {
-        Write-Error $_
-        $global:FunctionResult = "1"
-        return
-    }
+        catch {
+            Write-Error $_
+            $global:FunctionResult = "1"
+            return
+        }
 
+        # NOTE: With .Net, LDAP URIs always start with 'LDAP' - never lowercase and never with an 's|S' (i.e. never LDAPS|ldaps),
+        # regardless of port
+        $LDAPUri = "LDAP://$($LDAPServerNetworkInfo.FQDN):$LDAPServicePort"
 
-    # NOTE: With .Net, LDAP URIs always start with 'LDAP' - never lowercase and never with an 's|S' (i.e. never LDAPS|ldaps),
-    # regardless of port
-    $LDAPUri = "LDAP://$($LDAPServerNetworkInfo.FQDN):$LDAPServicePort"
+        # Make sure $LDAPUserOUDN exists
+        try {
+            $LDAPUserOUDNDirectoryEntry = [System.DirectoryServices.DirectoryEntry]("$LDAPUri/$LDAPUserOUDN")
+            $LDAPUserOUDNDirectoryEntry.Close()
+        }
+        catch {
+            Write-Error "The LDAP Object $LDAPUserOUDN cannot be found! Halting!"
+            $global:FunctionResult = "1"
+            return
+        }
 
-    # Make sure $LDAPUserOUDN exists
-    try {
-        $LDAPUserOUDNDirectoryEntry = [System.DirectoryServices.DirectoryEntry]("$LDAPUri/$LDAPUserOUDN")
-        $LDAPUserOUDNDirectoryEntry.Close()
+        # Make sure $LDAPGroupOUDN exists
+        try {
+            $LDAPGroupOUDNDirectoryEntry = [System.DirectoryServices.DirectoryEntry]("$LDAPUri/$LDAPGroupOUDN")
+            $LDAPGroupOUDNDirectoryEntry.Close()
+        }
+        catch {
+            Write-Error "The LDAP Object $LDAPGroupOUDN cannot be found! Halting!"
+            $global:FunctionResult = "1"
+            return
+        }
     }
-    catch {
-        Write-Error "The LDAP Object $LDAPUserOUDN cannot be found! Halting!"
-        $global:FunctionResult = "1"
-        return
-    }
+    if ($PSVersionTable.Platform -eq "Unix" -or $PSVersionTable.OS -match "Darwin") {
+        # Determine if we have the required Linux commands
+        [System.Collections.ArrayList]$LinuxCommands = @(
+            "echo"
+            "host"
+            "hostname"
+            "ldapsearch"
+        )
+        if (!$Domain) {
+            $null = $LinuxCommands.Add("domainname")
+        }
+        [System.Collections.ArrayList]$CommandsNotPresent = @()
+        foreach ($CommandName in $LinuxCommands) {
+            $CommandCheckResult = command -v $CommandName
+            if (!$CommandCheckResult) {
+                $null = $CommandsNotPresent.Add($CommandName)
+            }
+        }
 
-    # Make sure $LDAPGroupOUDN exists
-    try {
-        $LDAPGroupOUDNDirectoryEntry = [System.DirectoryServices.DirectoryEntry]("$LDAPUri/$LDAPGroupOUDN")
-        $LDAPGroupOUDNDirectoryEntry.Close()
-    }
-    catch {
-        Write-Error "The LDAP Object $LDAPGroupOUDN cannot be found! Halting!"
-        $global:FunctionResult = "1"
-        return
+        if ($CommandsNotPresent.Count -gt 0) {
+            [System.Collections.ArrayList]$FailedInstalls = @()
+            if ($CommandsNotPresent -contains "echo" -or $CommandsNotPresent -contains "whoami") {
+                try {
+                    #$null = InstallLinuxPackage -PossiblePackageNames "coreutils" -CommandName "echo"
+                    $InstallLinuxPackageAsString = ${Function:InstallLinuxPackage}.Ast.Extent.Text
+                    $SBAsString = @(
+                        "`$GetLocalGroupAndUsersAsString = @'`n$InstallLinuxPackageAsString`n'@"
+                        'try {'
+                        '    Invoke-Expression $InstallLinuxPackageAsString'
+                        '    $null = InstallLinuxPackage -PossiblePackageNames "coreutils" -CommandName "echo"'
+                        '    Write-Host "`nOutputStartsBelow`n"'
+                        '    "Done" | ConvertTo-Json -Depth 3'
+                        '}'
+                        'catch {'
+                        '    @("ErrorMsg",$_.Exception.Message) | ConvertTo-Json -Depth 3'
+                        '}'
+                    )
+                    $SBAsString = $SBAsString -join "`n"
+                    $InstallPackageResultPrep = SudoPwsh -CmdString $SBAsString
+
+                    if ($InstallPackageResultPrep.Output -match "ErrorMsg") {
+                        throw $InstallPackageResultPrep.Output[-1]
+                    }
+                    if ($InstallPackageResultPrep.OutputType -eq "Error") {
+                        if ($InstallPackageResultPrep.Output -match "ErrorMsg") {
+                            throw $InstallPackageResultPrep.Output[-1]
+                        }
+                        else {
+                            throw $InstallPackageResultPrep.Output
+                        }
+                    }
+                    $InstallPackageResult = $InstallPackageResultPrep.Output
+                }
+                catch {
+                    $null = $FailedInstalls.Add("coreutils")
+                }
+            }
+            if ($CommandsNotPresent -contains "host" -or $CommandsNotPresent -contains "hostname" -or $CommandsNotPresent -contains "domainname") {
+                try {
+                    #$null = InstallLinuxPackage -PossiblePackageNames @("dnsutils","bindutils","bind-utils","bind-tools") -CommandName "nslookup"
+                    $InstallLinuxPackageAsString = ${Function:InstallLinuxPackage}.Ast.Extent.Text
+                    $SBAsString = @(
+                        "`$GetLocalGroupAndUsersAsString = @'`n$InstallLinuxPackageAsString`n'@"
+                        'try {'
+                        '    Invoke-Expression $InstallLinuxPackageAsString'
+                        '    $null = InstallLinuxPackage -PossiblePackageNames @("dnsutils","bindutils","bind-utils","bind-tools") -CommandName "nslookup"'
+                        '    Write-Host "`nOutputStartsBelow`n"'
+                        '    "Done" | ConvertTo-Json -Depth 3'
+                        '}'
+                        'catch {'
+                        '    @("ErrorMsg",$_.Exception.Message) | ConvertTo-Json -Depth 3'
+                        '}'
+                    )
+                    $SBAsString = $SBAsString -join "`n"
+                    $InstallPackageResultPrep = SudoPwsh -CmdString $SBAsString
+
+                    if ($InstallPackageResultPrep.Output -match "ErrorMsg") {
+                        throw $InstallPackageResultPrep.Output[-1]
+                    }
+                    if ($InstallPackageResultPrep.OutputType -eq "Error") {
+                        if ($InstallPackageResultPrep.Output -match "ErrorMsg") {
+                            throw $InstallPackageResultPrep.Output[-1]
+                        }
+                        else {
+                            throw $InstallPackageResultPrep.Output
+                        }
+                    }
+                    $InstallPackageResult = $InstallPackageResultPrep.Output
+                }
+                catch {
+                    $null = $FailedInstalls.Add("dnsutils_bindutils_bind-utils_bind-tools")
+                }
+            }
+            if ($CommandsNotPresent -contains "ldapsearch") {
+                try {
+                    #$null = InstallLinuxPackage -PossiblePackageNames "openldap-clients" -CommandName "ldapsearch"
+                    $InstallLinuxPackageAsString = ${Function:InstallLinuxPackage}.Ast.Extent.Text
+                    $SBAsString = @(
+                        "`$GetLocalGroupAndUsersAsString = @'`n$InstallLinuxPackageAsString`n'@"
+                        'try {'
+                        '    Invoke-Expression $InstallLinuxPackageAsString'
+                        '    $null = InstallLinuxPackage -PossiblePackageNames "openldap-clients" -CommandName "ldapsearch"'
+                        '    Write-Host "`nOutputStartsBelow`n"'
+                        '    "Done" | ConvertTo-Json -Depth 3'
+                        '}'
+                        'catch {'
+                        '    @("ErrorMsg",$_.Exception.Message) | ConvertTo-Json -Depth 3'
+                        '}'
+                    )
+                    $SBAsString = $SBAsString -join "`n"
+                    $InstallPackageResultPrep = SudoPwsh -CmdString $SBAsString
+
+                    if ($InstallPackageResultPrep.Output -match "ErrorMsg") {
+                        throw $InstallPackageResultPrep.Output[-1]
+                    }
+                    if ($InstallPackageResultPrep.OutputType -eq "Error") {
+                        if ($InstallPackageResultPrep.Output -match "ErrorMsg") {
+                            throw $InstallPackageResultPrep.Output[-1]
+                        }
+                        else {
+                            throw $InstallPackageResultPrep.Output
+                        }
+                    }
+                    $InstallPackageResult = $InstallPackageResultPrep.Output
+                }
+                catch {
+                    $null = $FailedInstalls.Add("openldap-clients")
+                }
+            }
+    
+            if ($FailedInstalls.Count -gt 0) {
+                Write-Error "The following Linux packages are required, but were not able to be installed:`n$($FailedInstalls -join "`n")`nHalting!"
+                $global:FunctionResult = "1"
+                return
+            }
+        }
+
+        [System.Collections.ArrayList]$CommandsNotPresent = @()
+        foreach ($CommandName in $LinuxCommands) {
+            $CommandCheckResult = command -v $CommandName
+            if (!$CommandCheckResult) {
+                $null = $CommandsNotPresent.Add($CommandName)
+            }
+        }
+    
+        if ($CommandsNotPresent.Count -gt 0) {
+            Write-Error "The following Linux commands are required, but not present on $env:ComputerName:`n$($CommandsNotPresent -join "`n")`nHalting!"
+            $global:FunctionResult = "1"
+            return
+        }
+
+        try {
+            if ($Domain) {
+                $DomainControllerInfo = GetDomainController -Domain $Domain -ErrorAction Stop
+            }
+            else {
+                $DomainControllerInfo = GetDomainController -ErrorAction Stop
+            }
+    
+            if ($DomainControllerInfo.PrimaryDomainController -eq "unknown") {
+                $PDC = $DomainControllerInfo.FoundDomainControllers[0]
+            }
+            else {
+                $PDC = $DomainControllerInfo.PrimaryDomainController
+            }
+    
+            $LDAPInfo = TestLDAP -ADServerHostNameOrIP $PDC -ErrorAction Stop
+            if (!$DomainControllerInfo) {throw "Problem with GetDomainController function! Halting!"}
+            if (!$LDAPInfo) {throw "Problem with TestLDAP function! Halting!"}
+        }
+        catch {
+            Write-Error $_
+            $global:FunctionResult = "1"
+            return
+        }
+
+        $SimpleDomainPrep = $PDC -split "\."
+        $SimpleDomain = $SimpleDomainPrep[1..$($SimpleDomainPrep.Count-1)] -join "."
+        [System.Collections.ArrayList]$DomainLDAPContainersPrep = @()
+        foreach ($Section in $($SimpleDomain -split "\.")) {
+            $null = $DomainLDAPContainersPrep.Add($Section)
+        }
+        $DomainLDAPContainers = $($DomainLDAPContainersPrep | foreach {"DC=$_"}) -join ","
+        $BindUserName = $LDAPBindCredentials.UserName
+        $BindUserNameForExpect = $BindUserName -replace [regex]::Escape('\'),'\\\'
+        $BindPassword = $LDAPBindCredentials.GetNetworkCredential().Password
+
+        # Make sure $LDAPBindCredentials work
+        $ldapSearchOutput = ldapsearch -x -h $PDC -D $BindUserName -w $BindPassword -b "$DomainLDAPContainers" -s sub "(objectClass=group)" cn
+        if ($LASTEXITCODE -ne 0) {
+            Write-Error "The credentials provided to the -LDAPBindCredentials parameter are not valid for the domain $SimpleDomain! Halting!"
+            $global:FunctionResult = "1"
+            return
+        }
+
+        # Make sure $LDAPUserOUDN exists
+        $ldapSearchOutput = ldapsearch -x -h $PDC -D $BindUserName -w $BindPassword -b "$LDAPUserOUDN" -s sub "(objectClass=user)" cn
+        if ($ldapSearchOutput -match "No such object") {
+            Write-Error "The LDAP Object $LDAPUserOUDN cannot be found! Halting!"
+            $global:FunctionResult = "1"
+            return
+        }
+
+        # Make sure $LDAPGroupOUDN exists
+        $ldapSearchOutput = ldapsearch -x -h $PDC -D $BindUserName -w $BindPassword -b "$LDAPGroupOUDN" -s sub "(objectClass=user)" cn
+        if ($ldapSearchOutput -match "No such object") {
+            Write-Error "The LDAP Object $LDAPUserOUDN cannot be found! Halting!"
+            $global:FunctionResult = "1"
+            return
+        }
     }
 
     $HeadersParameters = @{
         "X-Vault-Token" = $VaultAuthToken
     }
 
-    #endregion >> Variable/Parameter Transforms and PreRun Prep
+    #endregion >> Prep
 
 
     #region >> Main Body
@@ -1417,7 +1715,13 @@ function Configure-VaultServerForLDAPAuth {
             ErrorAction                 = "Stop"
         }
         if ($LDAPServicePort -eq 389 -or $LDAPServicePort -eq 3268) {
+            $GetLDAPCertSplatParams.Add("AllowOpenSSLInstall",$True)
+        }
+        if ($UseOpenSSL) {
             $GetLDAPCertSplatParams.Add("UseOpenSSL",$True)
+            if ($GetLDAPCertSplatParams.Keys -notcontains "AllowOpenSSLInstall") {
+                $GetLDAPCertSplatParams.Add("AllowOpenSSLInstall",$True)
+            }
         }
 
         $GetLDAPCertResult = Get-LDAPCert @GetLDAPCertSplatParams
@@ -2085,10 +2389,28 @@ function Generate-AuthorizedPrincipalsFile {
             if ($PSVersionTable.Platform -eq "Unix" -or $PSVersionTable.OS -match "Darwin" -and !$(GetElevation)) {
                 $SBAsString = @(
                     'Write-Host "`nOutputStartsBelow`n"'
-                    "Get-Content '$AuthorizedPrincipalsFileLocation' | ConvertTo-Json -Depth 3"
+                    'try {'
+                    "    Get-Content '$AuthorizedPrincipalsFileLocation' | ConvertTo-Json -Depth 3"
+                    '}'
+                    'catch {'
+                    '    @("ErrorMsg",$_.Exception.Message) | ConvertTo-Json -Depth 3'
+                    '}'
                 )
                 $SBAsString = $SBAsString -join "`n"
-                $OriginalAuthPrincContent = SudoPwsh -CmdString $SBAsString
+                $OriginalAuthPrincContentPrep = SudoPwsh -CmdString $SBAsString
+
+                if ($OriginalAuthPrincContentPrep.Output -match "ErrorMsg") {
+                    throw $OriginalAuthPrincContentPrep.Output[-1]
+                }
+                if ($OriginalAuthPrincContentPrep.OutputType -eq "Error") {
+                    if ($OriginalAuthPrincContentPrep.Output -match "ErrorMsg") {
+                        throw $OriginalAuthPrincContentPrep.Output[-1]
+                    }
+                    else {
+                        throw $OriginalAuthPrincContentPrep.Output
+                    }
+                }
+                $OriginalAuthPrincContent = $OriginalAuthPrincContentPrep.Output
             }
             else {
                 $OriginalAuthPrincContent = Get-Content $AuthorizedPrincipalsFileLocation
@@ -2160,10 +2482,28 @@ function Generate-AuthorizedPrincipalsFile {
                         "`$GetLocalGroupAndUsersAsString = @'`n$GetLocalGroupAndUsersAsString`n'@"
                         'Invoke-Expression $GetLocalGroupAndUsersAsString'
                         'Write-Host "`nOutputStartsBelow`n"'
-                        'GetLocalGroupAndUsers | ConvertTo-Json -Depth 3'
+                        'try {'
+                        '    GetLocalGroupAndUsers | ConvertTo-Json -Depth 3'
+                        '}'
+                        'catch {'
+                        '    @("ErrorMsg",$_.Exception.Message) | ConvertTo-Json -Depth 3'
+                        '}'
                     )
                     $SBAsString = $SBAsString -join "`n"
-                    $LocalGroupAndUsers = SudoPwsh -CmdString $SBAsString
+                    $LocalGroupAndUsersPrep = SudoPwsh -CmdString $SBAsString
+
+                    if ($LocalGroupAndUsersPrep.Output -match "ErrorMsg") {
+                        throw $LocalGroupAndUsersPrep.Output[-1]
+                    }
+                    if ($LocalGroupAndUsersPrep.OutputType -eq "Error") {
+                        if ($LocalGroupAndUsersPrep.Output -match "ErrorMsg") {
+                            throw $LocalGroupAndUsersPrep.Output[-1]
+                        }
+                        else {
+                            throw $LocalGroupAndUsersPrep.Output
+                        }
+                    }
+                    $LocalGroupAndUsers = $LocalGroupAndUsersPrep.Output
                 }
                 else {
                     $LocalGroupAndUsers = GetLocalGroupAndUsers -ErrorAction Stop
@@ -2199,10 +2539,28 @@ function Generate-AuthorizedPrincipalsFile {
                         "`$GetLocalGroupAndUsersAsString = @'`n$GetLocalGroupAndUsersAsString`n'@"
                         'Invoke-Expression $GetLocalGroupAndUsersAsString'
                         'Write-Host "`nOutputStartsBelow`n"'
-                        'GetLocalGroupAndUsers | ConvertTo-Json -Depth 3'
+                        'try {'
+                        '    GetLocalGroupAndUsers | ConvertTo-Json -Depth 3'
+                        '}'
+                        'catch {'
+                        '    @("ErrorMsg",$_.Exception.Message) | ConvertTo-Json -Depth 3'
+                        '}'
                     )
                     $SBAsString = $SBAsString -join "`n"
-                    $LocalGroupAndUsers = SudoPwsh -CmdString $SBAsString
+                    $LocalGroupAndUsersPrep = SudoPwsh -CmdString $SBAsString
+
+                    if ($LocalGroupAndUsersPrep.Output -match "ErrorMsg") {
+                        throw $LocalGroupAndUsersPrep.Output[-1]
+                    }
+                    if ($LocalGroupAndUsersPrep.OutputType -eq "Error") {
+                        if ($LocalGroupAndUsersPrep.Output -match "ErrorMsg") {
+                            throw $LocalGroupAndUsersPrep.Output[-1]
+                        }
+                        else {
+                            throw $LocalGroupAndUsersPrep.Output
+                        }
+                    }
+                    $LocalGroupAndUsers = $LocalGroupAndUsersPrep.Output
                 }
                 else {
                     $LocalGroupAndUsers = GetLocalGroupAndUsers
@@ -2233,20 +2591,41 @@ function Generate-AuthorizedPrincipalsFile {
                         $LDAPUserName = $LDAPCreds.UserName
                         $LDAPPwd = $LDAPCreds.GetNetworkCredential().Password
                         $SBAsString = @(
-                            'Import-Module VaultServer'
-                            '$ThisModuleFunctionsStringArray = $(Get-Module VaultServer).Invoke({$FunctionsForSBUse})'
-                            '$ThisModuleFunctionsStringArray | Where-Object {$_ -ne $null} | foreach {Invoke-Expression $_ -ErrorAction SilentlyContinue}'
-                            "`$LDAPUserName = '$LDAPUserName'"
-                            "`$LDAPPwd = '$LDAPPwd'"
-                            '$LDAPCreds = [pscredential]::new($LDAPUserName,$(ConvertTo-SecureString -String $LDAPPwd -AsPlainText -Force))'
-                            '$LDAPGroupAndUsers = GetLDAPGroupAndUsers -LDAPCreds $LDAPCreds'
-                            'if ($LDAPGroupAndUsers) {'
-                            '    Write-Host "`nOutputStartsBelow`n"'
-                            '    $LDAPGroupAndUsers | ConvertTo-Json -Depth 3'
+                            'try {'
+                            '    Import-Module VaultServer'
+                            '    $ThisModuleFunctionsStringArray = $(Get-Module VaultServer).Invoke({$FunctionsForSBUse})'
+                            '    $ThisModuleFunctionsStringArray | Where-Object {$_ -ne $null} | foreach {Invoke-Expression $_ -ErrorAction SilentlyContinue}'
+                            "    `$LDAPUserName = '$LDAPUserName'"
+                            "    `$LDAPPwd = '$LDAPPwd'"
+                            '    $LDAPCreds = [pscredential]::new($LDAPUserName,$(ConvertTo-SecureString -String $LDAPPwd -AsPlainText -Force))'
+                            '    $LDAPGroupAndUsers = GetLDAPGroupAndUsers -LDAPCreds $LDAPCreds'
+                            '    if ($LDAPGroupAndUsers) {'
+                            '        Write-Host "`nOutputStartsBelow`n"'
+                            '        $LDAPGroupAndUsers | ConvertTo-Json -Depth 3'
+                            '    }'
+                            '    else {'
+                            '        throw "The GetLDAPGroupAndUsers function failed!"'
+                            '    }'
+                            '}'
+                            'catch {'
+                            '    @("ErrorMsg",$_.Exception.Message) | ConvertTo-Json -Depth 3'
                             '}'
                         )
                         $SBAsString = $SBAsString -join "`n"
-                        $LDAPGroupAndUsers = SudoPwsh -CmdString $SBAsString
+                        $LDAPGroupAndUsersPrep = SudoPwsh -CmdString $SBAsString
+
+                        if ($LDAPGroupAndUsersPrep.Output -match "ErrorMsg") {
+                            throw $LDAPGroupAndUsersPrep.Output[-1]
+                        }
+                        if ($LDAPGroupAndUsersPrep.OutputType -eq "Error") {
+                            if ($LDAPGroupAndUsersPrep.Output -match "ErrorMsg") {
+                                throw $LDAPGroupAndUsersPrep.Output[-1]
+                            }
+                            else {
+                                throw $LDAPGroupAndUsersPrep.Output
+                            }
+                        }
+                        $LDAPGroupAndUsers = $LDAPGroupAndUsersPrep.Output
                     }
                     else {
                         $LDAPGroupAndUsers = GetLDAPGroupAndUsers -LDAPCreds $LDAPCreds -ErrorAction Stop
@@ -2328,20 +2707,41 @@ function Generate-AuthorizedPrincipalsFile {
                         $LDAPUserName = $LDAPCreds.UserName
                         $LDAPPwd = $LDAPCreds.GetNetworkCredential().Password
                         $SBAsString = @(
-                            'Import-Module VaultServer'
-                            '$ThisModuleFunctionsStringArray = $(Get-Module VaultServer).Invoke({$FunctionsForSBUse})'
-                            '$ThisModuleFunctionsStringArray | Where-Object {$_ -ne $null} | foreach {Invoke-Expression $_ -ErrorAction SilentlyContinue}'
-                            "`$LDAPUserName = '$LDAPUserName'"
-                            "`$LDAPPwd = '$LDAPPwd'"
-                            '$LDAPCreds = [pscredential]::new($LDAPUserName,$(ConvertTo-SecureString -String $LDAPPwd -AsPlainText -Force))'
-                            '$LDAPGroupAndUsers = GetLDAPGroupAndUsers -LDAPCreds $LDAPCreds'
-                            'if ($LDAPGroupAndUsers) {'
-                            '    Write-Host "`nOutputStartsBelow`n"'
-                            '    $LDAPGroupAndUsers | ConvertTo-Json -Depth 3'
+                            'try {'
+                            '    Import-Module VaultServer'
+                            '    $ThisModuleFunctionsStringArray = $(Get-Module VaultServer).Invoke({$FunctionsForSBUse})'
+                            '    $ThisModuleFunctionsStringArray | Where-Object {$_ -ne $null} | foreach {Invoke-Expression $_ -ErrorAction SilentlyContinue}'
+                            "    `$LDAPUserName = '$LDAPUserName'"
+                            "    `$LDAPPwd = '$LDAPPwd'"
+                            '    $LDAPCreds = [pscredential]::new($LDAPUserName,$(ConvertTo-SecureString -String $LDAPPwd -AsPlainText -Force))'
+                            '    $LDAPGroupAndUsers = GetLDAPGroupAndUsers -LDAPCreds $LDAPCreds'
+                            '    if ($LDAPGroupAndUsers) {'
+                            '        Write-Host "`nOutputStartsBelow`n"'
+                            '        $LDAPGroupAndUsers | ConvertTo-Json -Depth 3'
+                            '    }'
+                            '    else {'
+                            '        throw "The GetLDAPGroupAndUsers function failed!"'
+                            '    }'
+                            '}'
+                            'catch {'
+                            '    @("ErrorMsg",$_.Exception.Message) | ConvertTo-Json -Depth 3'
                             '}'
                         )
                         $SBAsString = $SBAsString -join "`n"
-                        $LDAPGroupAndUsers = SudoPwsh -CmdString $SBAsString
+                        $LDAPGroupAndUsersPrep = SudoPwsh -CmdString $SBAsString
+
+                        if ($LDAPGroupAndUsersPrep.Output -match "ErrorMsg") {
+                            throw $LDAPGroupAndUsersPrep.Output[-1]
+                        }
+                        if ($LDAPGroupAndUsersPrep.OutputType -eq "Error") {
+                            if ($LDAPGroupAndUsersPrep.Output -match "ErrorMsg") {
+                                throw $LDAPGroupAndUsersPrep.Output[-1]
+                            }
+                            else {
+                                throw $LDAPGroupAndUsersPrep.Output
+                            }
+                        }
+                        $LDAPGroupAndUsers = $LDAPGroupAndUsersPrep.Output
                     }
                     else {
                         $LDAPGroupAndUsers = GetLDAPGroupAndUsers -LDAPCreds $LDAPCreds -ErrorAction Stop
@@ -2441,12 +2841,24 @@ function Generate-AuthorizedPrincipalsFile {
                 '}'
                 'catch {'
                 '    $StreamWriter.Close()'
-                '    Write-Error $_'
-                '    return'
+                '    @("Error",$_.Exception.Message) | ConvertTo-Json -Depth 3'
                 '}'
             )
             $SBAsString = $SBAsString -join "`n"
-            $AuthPrincFileItem = SudoPwsh -CmdString $SBAsString
+            $AuthPrincFileItemPrep = SudoPwsh -CmdString $SBAsString
+
+            if ($AuthPrincFileItemPrep.Output -match "ErrorMsg") {
+                throw $AuthPrincFileItemPrep.Output[-1]
+            }
+            if ($AuthPrincFileItemPrep.OutputType -eq "Error") {
+                if ($AuthPrincFileItemPrep.Output -match "ErrorMsg") {
+                    throw $AuthPrincFileItemPrep.Output[-1]
+                }
+                else {
+                    throw $AuthPrincFileItemPrep.Output
+                }
+            }
+            $AuthPrincFileItem = $AuthPrincFileItemPrep.Output
         }
         else {
             $StreamWriter = [System.IO.StreamWriter]::new($AuthorizedPrincipalsFileLocation, $True)
@@ -2564,7 +2976,7 @@ function Generate-SSHUserDirFileInfo {
 
             $GetSSHFileInfoResult = Get-SSHFileInfo -PathToKeyFile $File -ErrorAction Stop -WarningAction SilentlyContinue
             if (!$GetSSHFileInfoResult) {
-                Write-Verbose "'$File' is definitley not a valid Public Key, Private Key, or Public Key Certificate!"
+                Write-Verbose "'$File' is definitely not a valid Public Key, Private Key, or Public Key Certificate!"
             }
 
             # Sample Output:
@@ -2629,13 +3041,17 @@ function Generate-SSHUserDirFileInfo {
         This parameter takes an integer that represents a port number that the LDAP Server is using that
         provides a TLS Certificate. Valid values are: 389, 636, 3268, 3269
 
+    .PARAMETER AllowOpenSSLInstall
+        This parameter is OPTIONAL.
+
+        This parameter is a switch. If used, if openssl is necessary and not available or not at least version
+        1.1.1, it will be installed/upgraded.
+    
     .PARAMETER UseOpenSSL
-        This parameter is OPTIONAL. However, if $Port is 389 or 3268, then this parameter is MANDATORY.
+        This parameter is OPTIONAL.
 
-        This parameter is a switch. If used, the latest OpenSSL available from
-        http://wiki.overbyte.eu/wiki/index.php/ICS_Download will be downloaded and made available
-        in the current PowerShell Session's $env:Path.
-
+        This parameter is a switch. If you would like to use openssl in situations where you don't necessarily
+        need to (i.e. when the LDAP -Port number is 636 or 3269), use this switch.
 
     .EXAMPLE
         # Open an elevated PowerShell Session, import the module, and -
@@ -2652,6 +3068,9 @@ function Get-LDAPCert {
         [Parameter(Mandatory=$True)]
         [ValidateSet(389,636,3268,3269)]
         [int]$Port,
+
+        [Parameter(Mandatory=$False)]
+        [switch]$AllowOpenSSLInstall,
 
         [Parameter(Mandatory=$False)]
         [switch]$UseOpenSSL
@@ -2673,19 +3092,197 @@ function Get-LDAPCert {
     
 
     #region >> Main Body
-
-    if ($UseOpenSSL) {
-        # Check is openssl.exe is already available
+    
+    if ($Port -eq 389 -or $Port -eq 3268 -or $UseOpenSSL) {    
+        # Check is openssl is already available
         if ([bool]$(Get-Command openssl -ErrorAction SilentlyContinue)) {
-            # Check to make sure the version is at least 1.1.0
-            $OpenSSLExeInfo = Get-Item $(Get-Command openssl).Source
-            $OpenSSLExeVersion = [version]$($OpenSSLExeInfo.VersionInfo.ProductVersion -split '-')[0]
-        }
+            # Check to make sure the version is at least 1.1.1 (September 2018)
+            $OpenSSLVersionPrep = $($(openssl version) | Select-String -Pattern "OpenSSL [0-9]").Line
+            $OpenSSLVersionPrep = $($OpenSSLVersionPrep | Select-String -Pattern "[0-9]+\.[0-9]+\.[0-9]+").Matches.Value.Trim()
+            $OpenSSLVersion = [version]$OpenSSLVersionPrep
 
-        # We need at least vertion 1.1.0 of OpenSSL
-        if ($OpenSSLExeVersion.Major -lt 1 -or 
-        $($OpenSSLExeVersion.Major -eq 1 -and $OpenSSLExeVersion.Minor -lt 1)
-        ) {
+            if ($OpenSSLVersion -lt [version]"1.1.1" -and !$AllowOpenSSLInstall) {
+                $ErrMsg = "The version of openssl installed on this system (i.e. $($OpenSSLVersion.ToString()) is less than the required version of 1.1.1! " +
+                "Please use the -AllowOpenSSLInstall switch and try again. Halting!"
+                Write-Error $ErrMsg
+                $global:FunctionResult = "1"
+                return
+            }
+
+            if ($OpenSSLVersion -lt [version]"1.1.1") {
+                $InstallOpenSSL = $True
+            }
+        }
+        else {
+            if (!$AllowOpenSSLInstall) {
+                $ErrMsg = "The $($MyInvocation.MyCommand.Name) function requires openssl if the LDAP port is 389 or 3268, or if you used the -UseOpenSSL switch. " +
+                "Since openssl cannot be found on this system, you must use the -AllowOpenSSLInstall switch to allow for openssl installation! Halting!"
+                Write-Error $ErrMsg
+                $global:FunctionResult = "1"
+                return
+            }
+            else {
+                $InstallOpenSSL = $True
+            }
+        }
+    }
+
+    if ($InstallOpenSSL) {
+        if ($PSVersionTable.Platform -eq "Unix" -or $PSVersionTable.OS -match "Darwin") {
+            if (!$(Get-Command tar -ErrorAction SilentlyContinue)) {
+                $MissingCmd = "tar"
+            }
+            if ($MissingCmd) {
+                $ErrMsg = "The $($MyInvocation.MyCommand.Name) function requires openssl version 1.1.1, but version $($OpenSSLVersion.ToString()) is installed. " +
+                "Installing version 1.1.1 requires building from source, which requies '$MissingCmd', which cannot be found on $env:HOSTNAME! Halting!"
+                Write-Error $ErrMsg
+                $global:FunctionResult = "1"
+                return
+            }
+
+            if ($(Get-Command apt -ErrorAction SilentlyContinue)) {
+                try {
+                    $SBAsString = @(
+                        'try {'
+                        '    apt-get update'
+                        '    apt-get -y install build-essential checkinstall zlib1g-dev libtemplate-perl'
+                        '    if ($LASTEXITCODE -ne 0) {throw "apt failed!"}'
+                        '    Write-Host "`nOutputStartsBelow`n"'
+                        '    "Done" | ConvertTo-Json -Depth 3'
+                        '}'
+                        'catch {'
+                        '    @("ErrorMsg",$_.Exception.Message) | ConvertTo-Json -Depth 3'
+                        '}'
+                    )
+                    $SBAsString = $SBAsString -join "`n"
+                    $AptResultPrep = SudoPwsh -CmdString $SBAsString
+
+                    if ($AptResultPrep.Output -match "ErrorMsg") {
+                        throw $AptResultPrep.Output[-1]
+                    }
+                    if ($AptResultPrep.OutputType -eq "Error") {
+                        if ($AptResultPrep.Output -match "ErrorMsg") {
+                            throw $AptResultPrep.Output[-1]
+                        }
+                        else {
+                            throw $AptResultPrep.Output
+                        }
+                    }
+                    $AptResult = $AptResultPrep.Output
+                }
+                catch {
+                    Write-Error $_
+                    $global:FunctionResult = "1"
+                    return
+                }
+            }
+            elseif ($(Get-Command yum -ErrorAction SilentlyContinue)) {
+                try {
+                    $SBAsString = @(
+                        'try {'
+                        "    yum -y group install 'Development Tools'"
+                        '    if ($LASTEXITCODE -ne 0) {throw "yum failed!"}'
+                        '    yum -y install perl-core libtemplate-perl zlib-devel'
+                        '    if ($LASTEXITCODE -ne 0) {throw "yum failed!"}'
+                        '    Write-Host "`nOutputStartsBelow`n"'
+                        '    "Done" | ConvertTo-Json -Depth 3'
+                        '}'
+                        'catch {'
+                        '    @("ErrorMsg",$_.Exception.Message) | ConvertTo-Json -Depth 3'
+                        '}'
+                    )
+                    $SBAsString = $SBAsString -join "`n"
+                    $YumResultPrep = SudoPwsh -CmdString $SBAsString
+
+                    if ($YumResultPrep.Output -match "ErrorMsg") {
+                        throw $YumResultPrep.Output[-1]
+                    }
+                    if ($YumResultPrep.OutputType -eq "Error") {
+                        if ($YumResultPrep.Output -match "ErrorMsg") {
+                            throw $YumResultPrep.Output[-1]
+                        }
+                        else {
+                            throw $YumResultPrep.Output
+                        }
+                    }
+                    $YumResult = $YumResultPrep.Output
+                }
+                catch {
+                    Write-Error $_
+                    $global:FunctionResult = "1"
+                    return
+                }
+            }
+
+            $IWRResult = Invoke-WebRequest -Uri "https://github.com/openssl/openssl/releases"
+            $DLUri = "https://github.com" + $($IWRResult.Links.href -match "\.tar\.gz")[0]
+            $OutFileName = $DLUri | Split-Path -Leaf
+            $OutFilePath = Join-Path $HOME $OutFileName
+            $null = Invoke-WebRequest -Uri $DLUri -OutFile $OutFilePath
+            Push-Location $HOME
+            $null = tar -xzvf $OutFileName
+            $ExpandedArchiveDir = $(Get-ChildItem -Directory | Sort-Object -Property CreationTime)[0].FullName
+            Push-Location $ExpandedArchiveDir
+            $null =  ./config
+            $null = make
+            $null = make test
+            try {
+                [System.Collections.Generic.List[string]]$SBAsString = @(
+                    'try {'
+                    "    Push-Location '$HOME/$ExpandedArchiveDir'"
+                    '    make install'
+                    '    if ($LASTEXITCODE -ne 0) {throw "`"make install failed!`""}'
+                )
+                if (Get-Command yum -ErrorAction SilentlyContinue) {
+                    $null = $SBAsString.Add('    cp /usr/local/lib64/libssl.* /usr/lib64/')
+                    $null = $SBAsString.Add('    cp /usr/local/lib64/libcrypto.* /usr/lib64/')
+                }
+                if (Get-Command apt -ErrorAction SilentlyContinue) {
+                    $null = $SBAsString.Add('    bash -c "export LD_LIBRARY_PATH=/usr/local/lib"')
+                    $null = $SBAsString.Add("    `$env:LD_LIBRARY_PATH = '/usr/local/lib'")
+                }
+                $null = $SBAsString.Add('    Write-Host "`nOutputStartsBelow`n"')
+                $null = $SBAsString.Add('    "Done" | ConvertTo-Json -Depth 3')
+                $null = $SBAsString.Add('}')
+                $null = $SBAsString.Add('catch {')
+                $null = $SBAsString.Add('    @("ErrorMsg",$_.Exception.Message) | ConvertTo-Json -Depth 3')
+                $null = $SBAsString.Add('}')
+                $SBAsString = $SBAsString -join "`n"
+                $MakeResultPrep = SudoPwsh -CmdString $SBAsString
+                
+                if ($MakeResultPrep.Output -match "ErrorMsg") {
+                    throw $MakeResultPrep.Output[-1]
+                }
+                if ($MakeResultPrep.OutputType -eq "Error") {
+                    if ($MakeResultPrep.Output -match "ErrorMsg") {
+                        throw $MakeResultPrep.Output[-1]
+                    }
+                    else {
+                        throw $MakeResultPrep.Output
+                    }
+                }
+                $MakeResult = $MakeResultPrep.Output
+                Pop-Location
+                Pop-Location
+
+                bash -c "export LD_LIBRARY_PATH=/usr/local/lib"
+                $env:LD_LIBRARY_PATH = '/usr/local/lib'
+            }
+            catch {
+                Write-Error $_
+                $global:FunctionResult = "1"
+                Pop-Location
+                Pop-Location
+                return
+            }
+
+            if (![bool]$(Get-Command openssl -ErrorAction SilentlyContinue)) {
+                Write-Error "Problem finding setting openssl after install! Halting!"
+                $global:FunctionResult = "1"
+                return
+            }
+        }
+        if (!$PSVersionTable.Platform -or $PSVersionTable.Platform -eq "Win32NT") {
             [Net.ServicePointManager]::SecurityProtocol = "tls12, tls11, tls"
             $OpenSSLWinBinariesUrl = "http://wiki.overbyte.eu/wiki/index.php/ICS_Download"
             $IWRResult = Invoke-WebRequest -Uri $OpenSSLWinBinariesUrl
@@ -2718,22 +3315,26 @@ function Get-LDAPCert {
                 # Place $ExpansionDirectory at start so latest openssl.exe get priority
                 $env:Path = "$ExpansionDirectory;$env:Path"
             }
+
+            if (![bool]$(Get-Command openssl -ErrorAction SilentlyContinue)) {
+                Write-Error "Problem finding setting openssl after install! Halting!"
+                $global:FunctionResult = "1"
+                return
+            }
         }
 
-        if (![bool]$(Get-Command openssl -ErrorAction SilentlyContinue)) {
-            Write-Error "Problem setting openssl.exe to `$env:Path! Halting!"
+        $OpenSSLVersionPrep = $($(openssl version) | Select-String -Pattern "OpenSSL [0-9]").Line
+        $OpenSSLVersionPrep = $($OpenSSLVersionPrep | Select-String -Pattern "[0-9]+\.[0-9]+\.[0-9]+").Matches.Value.Trim()
+        $OpenSSLVersion = [version]$OpenSSLVersionPrep
+
+        if ($OpenSSLVersion -lt [version]"1.1.1") {
+            Write-Error "The version of openssl currently available $($OpenSSLVersion.ToString()) is less than '1.1.1'! Halting!"
             $global:FunctionResult = "1"
             return
         }
     }
 
     if ($Port -eq 389 -or $Port -eq 3268) {
-        if (!$UseOpenSSL) {
-            Write-Error "Unable to get LDAP Certificate on port $Port using StartTLS without openssl.exe! Try the -UseOpenSSL switch. Halting!"
-            $global:FunctionResult = "1"
-            return
-        }
-
         $ProcessInfo = New-Object System.Diagnostics.ProcessStartInfo
         #$ProcessInfo.WorkingDirectory = $BinaryPath | Split-Path -Parent
         $ProcessInfo.FileName = $(Get-Command openssl).Source
@@ -2746,7 +3347,7 @@ function Get-LDAPCert {
         $Process = New-Object System.Diagnostics.Process
         $Process.StartInfo = $ProcessInfo
         $Process.Start() | Out-Null
-        # Sometimes openssl.exe hangs, so, we'll give it 5 seconds before killing
+        # Sometimes openssl hangs, so, we'll give it 5 seconds before killing
         # Below $FinishedInAlottedTime returns boolean true/false
         $FinishedInAlottedTime = $Process.WaitForExit(5000)
         if (!$FinishedInAlottedTime) {
@@ -2789,7 +3390,7 @@ function Get-LDAPCert {
             $Process = New-Object System.Diagnostics.Process
             $Process.StartInfo = $ProcessInfo
             $Process.Start() | Out-Null
-            # Sometimes openssl.exe hangs, so, we'll give it 5 seconds before killing
+            # Sometimes openssl hangs, so, we'll give it 5 seconds before killing
             # Below $FinishedInAlottedTime returns boolean true/false
             $FinishedInAlottedTime = $Process.WaitForExit(5000)
             if (!$FinishedInAlottedTime) {
@@ -2839,6 +3440,12 @@ function Get-LDAPCert {
     }
     $CertChainInPemFormat = $($CertsInPemFormat | Out-String).Trim()
 
+    <#
+    $RootCAX509Cert2Obj = $CertificateChain.ChainElements.Certificate | Where-Object {
+        $($_.Issuer | Select-String -Pattern "^CN=[a-zA-Z0-9]+").Matches.Value -eq
+        $($_.Subject | Select-String -Pattern "^CN=[a-zA-Z0-9]+").Matches.Value
+    }
+    #>
     $RootCAX509Cert2Obj = $CertificateChain.ChainElements.Certificate | Where-Object {$_.Issuer -eq $_.Subject}
     $RootCAPublicCertInPemFormatPrep = "-----BEGIN CERTIFICATE-----`n" + 
         [System.Convert]::ToBase64String($RootCAX509Cert2Obj.RawData, [System.Base64FormattingOptions]::InsertLineBreaks) + 
@@ -7242,6 +7849,7 @@ if ($PSVersionTable.Platform -eq "Win32NT" -and $PSVersionTable.PSEdition -eq "C
     ${Function:NewUniqueString}.Ast.Extent.Text
     ${Function:RemoveMySudoPwd}.Ast.Extent.Text
     ${Function:ResolveHost}.Ast.Extent.Text
+    ${Function:SudoPwsh}.Ast.Extent.Text
     ${Function:TestIsValidIPAddress}.Ast.Extent.Text
     ${Function:TestLDAP}.Ast.Extent.Text
     ${Function:TestPort}.Ast.Extent.Text
@@ -7249,10 +7857,12 @@ if ($PSVersionTable.Platform -eq "Win32NT" -and $PSVersionTable.PSEdition -eq "C
     ${Function:Add-CAPubKeyToSSHAndSSHDConfig}.Ast.Extent.Text
     ${Function:Add-PublicKeyToRemoteHost}.Ast.Extent.Text
     ${Function:Configure-VaultServerForLDAPAuth}.Ast.Extent.Text
-    ${Function:ConfigureVaultServerForSSHManagement}.Ast.Extent.Text
+    ${Function:Configure-VaultServerForSSHManagement}.Ast.Extent.Text
+    ${Function:Get-LDAPCert}.Ast.Extent.Text
     ${Function:Generate-AuthorizedPrincipalsFile}.Ast.Extent.Text
     ${Function:Generate-SSHUserDirFileInfo}.Ast.Extent.Text
     ${Function:Get-LDAPCert}.Ast.Extent.Text
+    ${Function:Get-NativePath}.Ast.Extent.Text
     ${Function:Get-SSHClientAuthSanity}.Ast.Extent.Text
     ${Function:Get-SSHFileInfo}.Ast.Extent.Text
     ${Function:Get-VaultAccessorLookup}.Ast.Extent.Text
@@ -8482,8 +9092,8 @@ if(Win32.CertStrToName(X509_ASN_ENCODING, DN, CERT_X500_NAME_STR, IntPtr.Zero, n
 # SIG # Begin signature block
 # MIIMiAYJKoZIhvcNAQcCoIIMeTCCDHUCAQExCzAJBgUrDgMCGgUAMGkGCisGAQQB
 # gjcCAQSgWzBZMDQGCisGAQQBgjcCAR4wJgIDAQAABBAfzDtgWUsITrck0sYpfvNR
-# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQU7VD4jAXw+oWpQLelyWs1BKNB
-# n9ugggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
+# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUk8b1UQucDlhoLTVBkxs9y9Rm
+# ZPigggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
 # 9w0BAQsFADAwMQwwCgYDVQQGEwNMQUIxDTALBgNVBAoTBFpFUk8xETAPBgNVBAMT
 # CFplcm9EQzAxMB4XDTE3MDkyMDIxMDM1OFoXDTE5MDkyMDIxMTM1OFowPTETMBEG
 # CgmSJomT8ixkARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMT
@@ -8540,11 +9150,11 @@ if(Win32.CertStrToName(X509_ASN_ENCODING, DN, CERT_X500_NAME_STR, IntPtr.Zero, n
 # ARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMTB1plcm9TQ0EC
 # E1gAAAH5oOvjAv3166MAAQAAAfkwCQYFKw4DAhoFAKB4MBgGCisGAQQBgjcCAQwx
 # CjAIoAKAAKECgAAwGQYJKoZIhvcNAQkDMQwGCisGAQQBgjcCAQQwHAYKKwYBBAGC
-# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFE3oj7kkUp9u15zS
-# Z6d5XkzdGRjyMA0GCSqGSIb3DQEBAQUABIIBAASBwnUWxFQdGr/GupvbqeXXxmbv
-# KpBaMoVfeV3nmFOX4dd3uXlZZrIG0p13Q8j1hPd1dBbtCKp+wbDK4Ozt9z5ukBL/
-# GKJm7+9XA8aJFCneSRrdWLcDPsGTHVPk8pwhvcrzgCeQlV+A08gQNSlZuZkwbSbV
-# xPH0lY/E+EAiNgBkIlrCmp7qwXwCckvbEL/EAxtlts6GU5c7EFVmQYWNccLgmp2J
-# Z2hwyN1mkfL5+D3pqxYapQc664p/emZ4QYoEmeZ3CHnWUAHinf70yJiNsJwcbvND
-# t3UvffRR3tMMYVehffa+U+IFmWVS/DnIWWNr+NufZkF9wzyEOAUabCDPt20=
+# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFKLYyi4VEclHrs+P
+# cS3GVdOfyndyMA0GCSqGSIb3DQEBAQUABIIBAAIitBZohXVIHUiP0RD2/O0vJWLM
+# x94F4gOA3QIiWGlxE8y35ohyPTHH4yyUfenKe3x8UB66a7tnYwcUygD6XK14op3o
+# sOCpHLAxh04e3/H5BZxuZox2YiOBfhxClXvUhuTbbcaX2NPH39heq4pn2o2rXgu+
+# JJDBFpLedGpJB4clOi4Te6m3p5nC+IOsLWbT0jXt/ZW7+DU3nVu8qgH0LS9TwK0h
+# XC7pMT/PBqLb9YHzX85XEGTay95gW94ox4vg1fqRkQ8PKreDtAIa7xzyIPWPxPvk
+# iW6J5jvI+m3o0WSe97tsIbr3TUNuakBfa7wbQP3PV7geTdVYCIIMNCZ7Bg0=
 # SIG # End signature block

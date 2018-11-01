@@ -1,37 +1,69 @@
-function SudoPwsh {
-    [CmdletBinding()]
-    Param(
-        [Parameter(Mandatory=$True)]
-        [string]$CmdString
-    )
+<#
+    .SYNOPSIS
+        This function gets the SSL Certificate at the specified IP Address / Port
+        and returns an System.Security.Cryptography.X509Certificates.X509Certificate2 object.
 
-    $Bytes = [System.Text.Encoding]::Unicode.GetBytes($CmdString)
-    $EncodedCommand = [Convert]::ToBase64String($Bytes)
-    $EncCmdOutput = sudo pwsh -EncodedCommand $EncodedCommand
-    $IndexOfOutputFlag = $EncCmdOutput.IndexOf($($EncCmdOutput | Where-Object {$_ -match '^OutputStartsBelow'}))
-    $StartIndex = $IndexOfOutputFlag+2
-    $EndIndex = $EncCmdOutput.Count-1
-    $JsonOutput = $EncCmdOutput[$StartIndex..$EndIndex]
+    .DESCRIPTION
+        See .SYNOPSIS
+
+    .NOTES
+
+    .PARAMETER IPAddress
+        This parameter is MANDATORY.
+
+        This parameter takes a string that represents an IP Address.
+
+    .PARAMETER Port
+        This parameter is MANDATORY.
+
+        This parameter takes an integer that represents a Port Number (443, 636, etc).
+
+    .EXAMPLE
+        # In the below example, 172.217.15.110 happens to be a google.com IP Address
+
+        PS C:\Users\zeroadmin> Check-Cert -IPAddress 172.217.15.110 -Port 443
+
+        Thumbprint                                Subject
+        ----------                                -------
+        8FBB134B2216D6C71CF4E4431ABD82182922AC7C  CN=*.google.com, O=Google Inc, L=Mountain View, S=California, C=US
+        
+#>
+function Check-Cert {
+    [CmdletBinding()]
+    Param (
+        [Parameter(Mandatory=$True)]
+        [string]$IPAddress,
+        
+        [Parameter(Mandatory=$True)]
+        [int]$Port
+    )
+    
     try {
-        $Result = $JsonOutput | ConvertFrom-Json
-        [pscustomobject]@{
-            OutputType      = "Success"
-            Output          = $Result
+        $TcpSocket = New-Object Net.Sockets.TcpClient($IPAddress,$Port)
+        $tcpstream = $TcpSocket.GetStream()
+        $Callback = {param($sender,$cert,$chain,$errors) return $true}
+        $SSLStream = New-Object -TypeName System.Net.Security.SSLStream -ArgumentList @($tcpstream, $True, $Callback)
+
+        try {
+            $SSLStream.AuthenticateAsClient($IPAddress)
+            $Certificate = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($SSLStream.RemoteCertificate)
+        }
+        finally {
+            $SSLStream.Dispose()
         }
     }
-    catch {
-        [pscustomobject]@{
-            OutputType      = "Error"
-            Output          = $JsonOutput
-        }
+    finally {
+        $TCPSocket.Dispose()
     }
+    
+    $Certificate
 }
 
 # SIG # Begin signature block
 # MIIMiAYJKoZIhvcNAQcCoIIMeTCCDHUCAQExCzAJBgUrDgMCGgUAMGkGCisGAQQB
 # gjcCAQSgWzBZMDQGCisGAQQBgjcCAR4wJgIDAQAABBAfzDtgWUsITrck0sYpfvNR
-# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUdwcWQMs4WVJMINba2dz1kJiE
-# +FOgggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
+# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUXTT/wqMwvtilvjo4XqPRA+VG
+# CJCgggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
 # 9w0BAQsFADAwMQwwCgYDVQQGEwNMQUIxDTALBgNVBAoTBFpFUk8xETAPBgNVBAMT
 # CFplcm9EQzAxMB4XDTE3MDkyMDIxMDM1OFoXDTE5MDkyMDIxMTM1OFowPTETMBEG
 # CgmSJomT8ixkARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMT
@@ -88,11 +120,11 @@ function SudoPwsh {
 # ARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMTB1plcm9TQ0EC
 # E1gAAAH5oOvjAv3166MAAQAAAfkwCQYFKw4DAhoFAKB4MBgGCisGAQQBgjcCAQwx
 # CjAIoAKAAKECgAAwGQYJKoZIhvcNAQkDMQwGCisGAQQBgjcCAQQwHAYKKwYBBAGC
-# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFNg6NdBCq2a/VLFL
-# NLew3lnt4uHUMA0GCSqGSIb3DQEBAQUABIIBAGZ5WReVj0bnVxdSwvXWPsmERIiw
-# veDHtkGDGycc1uwz6NGpR4zTfI5UtbOSNf8hw9JkBIqfgiRjkdta7nryM+FFSwyk
-# wMT5DXHOzucsRfPrrAAN6+1WpIX1eX+4BUEaXVONveq2GKadxDS/RMdiYMxcluec
-# Svfpdq+eMhHyvys5PFrWGnEaswwGpPjwXzRqKM16HoOzX2YfdCmM/5Li6gaIDrWP
-# RhN2hrmGHuDghEoYJL0memQbcodV6NnbpZjxt7+WBUiQcyoKOBzVA1K0xtOsfyon
-# l9Q7bvxhD/mowzRViyMl2DVrqpIqi0v72ATB45iFI6nUmlEfZO+LN1R3Qrg=
+# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFFxjHrWS6qEG/I1C
+# 66tueWYAL+SDMA0GCSqGSIb3DQEBAQUABIIBAH5JcY3NwxYbvON0SlWa5qMmddhF
+# DkHYIRJ+tGurHNOBfCa3KVZiKSQ1X1NdDDrZyKV52AeMyWNklKIgHa63+yl9a2iU
+# O8ddwmyL6hIEmgp35Ni2Qpx91G0j+1RsOcW5XxRIGaYFmFRKuEb+RrAXPtxB6i4H
+# EeBHp3vA69Irrqu+xtxP+yLug0ubOAkMDQzENELH6+6CJkTNL2Y7H80oRndYst0z
+# b/ZAu4z/fENB+7WexZ1zHvVITeJAub9d9PC96I82sCby/iSYAPNBVNLlWZvAUj1M
+# 1YbPPv67rY3Vdy6/iqnvitK6c8Nf6AoLJ10izoRCnJrjVx2XdlLr7gYY+HY=
 # SIG # End signature block

@@ -37,13 +37,17 @@
         This parameter takes an integer that represents a port number that the LDAP Server is using that
         provides a TLS Certificate. Valid values are: 389, 636, 3268, 3269
 
+    .PARAMETER AllowOpenSSLInstall
+        This parameter is OPTIONAL.
+
+        This parameter is a switch. If used, if openssl is necessary and not available or not at least version
+        1.1.1, it will be installed/upgraded.
+    
     .PARAMETER UseOpenSSL
-        This parameter is OPTIONAL. However, if $Port is 389 or 3268, then this parameter is MANDATORY.
+        This parameter is OPTIONAL.
 
-        This parameter is a switch. If used, the latest OpenSSL available from
-        http://wiki.overbyte.eu/wiki/index.php/ICS_Download will be downloaded and made available
-        in the current PowerShell Session's $env:Path.
-
+        This parameter is a switch. If you would like to use openssl in situations where you don't necessarily
+        need to (i.e. when the LDAP -Port number is 636 or 3269), use this switch.
 
     .EXAMPLE
         # Open an elevated PowerShell Session, import the module, and -
@@ -60,6 +64,9 @@ function Get-LDAPCert {
         [Parameter(Mandatory=$True)]
         [ValidateSet(389,636,3268,3269)]
         [int]$Port,
+
+        [Parameter(Mandatory=$False)]
+        [switch]$AllowOpenSSLInstall,
 
         [Parameter(Mandatory=$False)]
         [switch]$UseOpenSSL
@@ -81,19 +88,197 @@ function Get-LDAPCert {
     
 
     #region >> Main Body
-
-    if ($UseOpenSSL) {
-        # Check is openssl.exe is already available
+    
+    if ($Port -eq 389 -or $Port -eq 3268 -or $UseOpenSSL) {    
+        # Check is openssl is already available
         if ([bool]$(Get-Command openssl -ErrorAction SilentlyContinue)) {
-            # Check to make sure the version is at least 1.1.0
-            $OpenSSLExeInfo = Get-Item $(Get-Command openssl).Source
-            $OpenSSLExeVersion = [version]$($OpenSSLExeInfo.VersionInfo.ProductVersion -split '-')[0]
-        }
+            # Check to make sure the version is at least 1.1.1 (September 2018)
+            $OpenSSLVersionPrep = $($(openssl version) | Select-String -Pattern "OpenSSL [0-9]").Line
+            $OpenSSLVersionPrep = $($OpenSSLVersionPrep | Select-String -Pattern "[0-9]+\.[0-9]+\.[0-9]+").Matches.Value.Trim()
+            $OpenSSLVersion = [version]$OpenSSLVersionPrep
 
-        # We need at least vertion 1.1.0 of OpenSSL
-        if ($OpenSSLExeVersion.Major -lt 1 -or 
-        $($OpenSSLExeVersion.Major -eq 1 -and $OpenSSLExeVersion.Minor -lt 1)
-        ) {
+            if ($OpenSSLVersion -lt [version]"1.1.1" -and !$AllowOpenSSLInstall) {
+                $ErrMsg = "The version of openssl installed on this system (i.e. $($OpenSSLVersion.ToString()) is less than the required version of 1.1.1! " +
+                "Please use the -AllowOpenSSLInstall switch and try again. Halting!"
+                Write-Error $ErrMsg
+                $global:FunctionResult = "1"
+                return
+            }
+
+            if ($OpenSSLVersion -lt [version]"1.1.1") {
+                $InstallOpenSSL = $True
+            }
+        }
+        else {
+            if (!$AllowOpenSSLInstall) {
+                $ErrMsg = "The $($MyInvocation.MyCommand.Name) function requires openssl if the LDAP port is 389 or 3268, or if you used the -UseOpenSSL switch. " +
+                "Since openssl cannot be found on this system, you must use the -AllowOpenSSLInstall switch to allow for openssl installation! Halting!"
+                Write-Error $ErrMsg
+                $global:FunctionResult = "1"
+                return
+            }
+            else {
+                $InstallOpenSSL = $True
+            }
+        }
+    }
+
+    if ($InstallOpenSSL) {
+        if ($PSVersionTable.Platform -eq "Unix" -or $PSVersionTable.OS -match "Darwin") {
+            if (!$(Get-Command tar -ErrorAction SilentlyContinue)) {
+                $MissingCmd = "tar"
+            }
+            if ($MissingCmd) {
+                $ErrMsg = "The $($MyInvocation.MyCommand.Name) function requires openssl version 1.1.1, but version $($OpenSSLVersion.ToString()) is installed. " +
+                "Installing version 1.1.1 requires building from source, which requies '$MissingCmd', which cannot be found on $env:HOSTNAME! Halting!"
+                Write-Error $ErrMsg
+                $global:FunctionResult = "1"
+                return
+            }
+
+            if ($(Get-Command apt -ErrorAction SilentlyContinue)) {
+                try {
+                    $SBAsString = @(
+                        'try {'
+                        '    apt-get update'
+                        '    apt-get -y install build-essential checkinstall zlib1g-dev libtemplate-perl'
+                        '    if ($LASTEXITCODE -ne 0) {throw "apt failed!"}'
+                        '    Write-Host "`nOutputStartsBelow`n"'
+                        '    "Done" | ConvertTo-Json -Depth 3'
+                        '}'
+                        'catch {'
+                        '    @("ErrorMsg",$_.Exception.Message) | ConvertTo-Json -Depth 3'
+                        '}'
+                    )
+                    $SBAsString = $SBAsString -join "`n"
+                    $AptResultPrep = SudoPwsh -CmdString $SBAsString
+
+                    if ($AptResultPrep.Output -match "ErrorMsg") {
+                        throw $AptResultPrep.Output[-1]
+                    }
+                    if ($AptResultPrep.OutputType -eq "Error") {
+                        if ($AptResultPrep.Output -match "ErrorMsg") {
+                            throw $AptResultPrep.Output[-1]
+                        }
+                        else {
+                            throw $AptResultPrep.Output
+                        }
+                    }
+                    $AptResult = $AptResultPrep.Output
+                }
+                catch {
+                    Write-Error $_
+                    $global:FunctionResult = "1"
+                    return
+                }
+            }
+            elseif ($(Get-Command yum -ErrorAction SilentlyContinue)) {
+                try {
+                    $SBAsString = @(
+                        'try {'
+                        "    yum -y group install 'Development Tools'"
+                        '    if ($LASTEXITCODE -ne 0) {throw "yum failed!"}'
+                        '    yum -y install perl-core libtemplate-perl zlib-devel'
+                        '    if ($LASTEXITCODE -ne 0) {throw "yum failed!"}'
+                        '    Write-Host "`nOutputStartsBelow`n"'
+                        '    "Done" | ConvertTo-Json -Depth 3'
+                        '}'
+                        'catch {'
+                        '    @("ErrorMsg",$_.Exception.Message) | ConvertTo-Json -Depth 3'
+                        '}'
+                    )
+                    $SBAsString = $SBAsString -join "`n"
+                    $YumResultPrep = SudoPwsh -CmdString $SBAsString
+
+                    if ($YumResultPrep.Output -match "ErrorMsg") {
+                        throw $YumResultPrep.Output[-1]
+                    }
+                    if ($YumResultPrep.OutputType -eq "Error") {
+                        if ($YumResultPrep.Output -match "ErrorMsg") {
+                            throw $YumResultPrep.Output[-1]
+                        }
+                        else {
+                            throw $YumResultPrep.Output
+                        }
+                    }
+                    $YumResult = $YumResultPrep.Output
+                }
+                catch {
+                    Write-Error $_
+                    $global:FunctionResult = "1"
+                    return
+                }
+            }
+
+            $IWRResult = Invoke-WebRequest -Uri "https://github.com/openssl/openssl/releases"
+            $DLUri = "https://github.com" + $($IWRResult.Links.href -match "\.tar\.gz")[0]
+            $OutFileName = $DLUri | Split-Path -Leaf
+            $OutFilePath = Join-Path $HOME $OutFileName
+            $null = Invoke-WebRequest -Uri $DLUri -OutFile $OutFilePath
+            Push-Location $HOME
+            $null = tar -xzvf $OutFileName
+            $ExpandedArchiveDir = $(Get-ChildItem -Directory | Sort-Object -Property CreationTime)[0].FullName
+            Push-Location $ExpandedArchiveDir
+            $null =  ./config
+            $null = make
+            $null = make test
+            try {
+                [System.Collections.Generic.List[string]]$SBAsString = @(
+                    'try {'
+                    "    Push-Location '$HOME/$ExpandedArchiveDir'"
+                    '    make install'
+                    '    if ($LASTEXITCODE -ne 0) {throw "`"make install failed!`""}'
+                )
+                if (Get-Command yum -ErrorAction SilentlyContinue) {
+                    $null = $SBAsString.Add('    cp /usr/local/lib64/libssl.* /usr/lib64/')
+                    $null = $SBAsString.Add('    cp /usr/local/lib64/libcrypto.* /usr/lib64/')
+                }
+                if (Get-Command apt -ErrorAction SilentlyContinue) {
+                    $null = $SBAsString.Add('    bash -c "export LD_LIBRARY_PATH=/usr/local/lib"')
+                    $null = $SBAsString.Add("    `$env:LD_LIBRARY_PATH = '/usr/local/lib'")
+                }
+                $null = $SBAsString.Add('    Write-Host "`nOutputStartsBelow`n"')
+                $null = $SBAsString.Add('    "Done" | ConvertTo-Json -Depth 3')
+                $null = $SBAsString.Add('}')
+                $null = $SBAsString.Add('catch {')
+                $null = $SBAsString.Add('    @("ErrorMsg",$_.Exception.Message) | ConvertTo-Json -Depth 3')
+                $null = $SBAsString.Add('}')
+                $SBAsString = $SBAsString -join "`n"
+                $MakeResultPrep = SudoPwsh -CmdString $SBAsString
+                
+                if ($MakeResultPrep.Output -match "ErrorMsg") {
+                    throw $MakeResultPrep.Output[-1]
+                }
+                if ($MakeResultPrep.OutputType -eq "Error") {
+                    if ($MakeResultPrep.Output -match "ErrorMsg") {
+                        throw $MakeResultPrep.Output[-1]
+                    }
+                    else {
+                        throw $MakeResultPrep.Output
+                    }
+                }
+                $MakeResult = $MakeResultPrep.Output
+                Pop-Location
+                Pop-Location
+
+                bash -c "export LD_LIBRARY_PATH=/usr/local/lib"
+                $env:LD_LIBRARY_PATH = '/usr/local/lib'
+            }
+            catch {
+                Write-Error $_
+                $global:FunctionResult = "1"
+                Pop-Location
+                Pop-Location
+                return
+            }
+
+            if (![bool]$(Get-Command openssl -ErrorAction SilentlyContinue)) {
+                Write-Error "Problem finding setting openssl after install! Halting!"
+                $global:FunctionResult = "1"
+                return
+            }
+        }
+        if (!$PSVersionTable.Platform -or $PSVersionTable.Platform -eq "Win32NT") {
             [Net.ServicePointManager]::SecurityProtocol = "tls12, tls11, tls"
             $OpenSSLWinBinariesUrl = "http://wiki.overbyte.eu/wiki/index.php/ICS_Download"
             $IWRResult = Invoke-WebRequest -Uri $OpenSSLWinBinariesUrl
@@ -126,22 +311,26 @@ function Get-LDAPCert {
                 # Place $ExpansionDirectory at start so latest openssl.exe get priority
                 $env:Path = "$ExpansionDirectory;$env:Path"
             }
+
+            if (![bool]$(Get-Command openssl -ErrorAction SilentlyContinue)) {
+                Write-Error "Problem finding setting openssl after install! Halting!"
+                $global:FunctionResult = "1"
+                return
+            }
         }
 
-        if (![bool]$(Get-Command openssl -ErrorAction SilentlyContinue)) {
-            Write-Error "Problem setting openssl.exe to `$env:Path! Halting!"
+        $OpenSSLVersionPrep = $($(openssl version) | Select-String -Pattern "OpenSSL [0-9]").Line
+        $OpenSSLVersionPrep = $($OpenSSLVersionPrep | Select-String -Pattern "[0-9]+\.[0-9]+\.[0-9]+").Matches.Value.Trim()
+        $OpenSSLVersion = [version]$OpenSSLVersionPrep
+
+        if ($OpenSSLVersion -lt [version]"1.1.1") {
+            Write-Error "The version of openssl currently available $($OpenSSLVersion.ToString()) is less than '1.1.1'! Halting!"
             $global:FunctionResult = "1"
             return
         }
     }
 
     if ($Port -eq 389 -or $Port -eq 3268) {
-        if (!$UseOpenSSL) {
-            Write-Error "Unable to get LDAP Certificate on port $Port using StartTLS without openssl.exe! Try the -UseOpenSSL switch. Halting!"
-            $global:FunctionResult = "1"
-            return
-        }
-
         $ProcessInfo = New-Object System.Diagnostics.ProcessStartInfo
         #$ProcessInfo.WorkingDirectory = $BinaryPath | Split-Path -Parent
         $ProcessInfo.FileName = $(Get-Command openssl).Source
@@ -154,7 +343,7 @@ function Get-LDAPCert {
         $Process = New-Object System.Diagnostics.Process
         $Process.StartInfo = $ProcessInfo
         $Process.Start() | Out-Null
-        # Sometimes openssl.exe hangs, so, we'll give it 5 seconds before killing
+        # Sometimes openssl hangs, so, we'll give it 5 seconds before killing
         # Below $FinishedInAlottedTime returns boolean true/false
         $FinishedInAlottedTime = $Process.WaitForExit(5000)
         if (!$FinishedInAlottedTime) {
@@ -197,7 +386,7 @@ function Get-LDAPCert {
             $Process = New-Object System.Diagnostics.Process
             $Process.StartInfo = $ProcessInfo
             $Process.Start() | Out-Null
-            # Sometimes openssl.exe hangs, so, we'll give it 5 seconds before killing
+            # Sometimes openssl hangs, so, we'll give it 5 seconds before killing
             # Below $FinishedInAlottedTime returns boolean true/false
             $FinishedInAlottedTime = $Process.WaitForExit(5000)
             if (!$FinishedInAlottedTime) {
@@ -247,6 +436,12 @@ function Get-LDAPCert {
     }
     $CertChainInPemFormat = $($CertsInPemFormat | Out-String).Trim()
 
+    <#
+    $RootCAX509Cert2Obj = $CertificateChain.ChainElements.Certificate | Where-Object {
+        $($_.Issuer | Select-String -Pattern "^CN=[a-zA-Z0-9]+").Matches.Value -eq
+        $($_.Subject | Select-String -Pattern "^CN=[a-zA-Z0-9]+").Matches.Value
+    }
+    #>
     $RootCAX509Cert2Obj = $CertificateChain.ChainElements.Certificate | Where-Object {$_.Issuer -eq $_.Subject}
     $RootCAPublicCertInPemFormatPrep = "-----BEGIN CERTIFICATE-----`n" + 
         [System.Convert]::ToBase64String($RootCAX509Cert2Obj.RawData, [System.Base64FormattingOptions]::InsertLineBreaks) + 
@@ -282,8 +477,8 @@ function Get-LDAPCert {
 # SIG # Begin signature block
 # MIIMiAYJKoZIhvcNAQcCoIIMeTCCDHUCAQExCzAJBgUrDgMCGgUAMGkGCisGAQQB
 # gjcCAQSgWzBZMDQGCisGAQQBgjcCAR4wJgIDAQAABBAfzDtgWUsITrck0sYpfvNR
-# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUVQ2UKbeGniPs5k50NdZt8Mrm
-# zNagggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
+# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUs8jD8RQv9mhR/whEqs2F36wn
+# tVqgggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
 # 9w0BAQsFADAwMQwwCgYDVQQGEwNMQUIxDTALBgNVBAoTBFpFUk8xETAPBgNVBAMT
 # CFplcm9EQzAxMB4XDTE3MDkyMDIxMDM1OFoXDTE5MDkyMDIxMTM1OFowPTETMBEG
 # CgmSJomT8ixkARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMT
@@ -340,11 +535,11 @@ function Get-LDAPCert {
 # ARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMTB1plcm9TQ0EC
 # E1gAAAH5oOvjAv3166MAAQAAAfkwCQYFKw4DAhoFAKB4MBgGCisGAQQBgjcCAQwx
 # CjAIoAKAAKECgAAwGQYJKoZIhvcNAQkDMQwGCisGAQQBgjcCAQQwHAYKKwYBBAGC
-# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFNTEbgVOtuRKLoA3
-# jyGK4QDTcA62MA0GCSqGSIb3DQEBAQUABIIBAGJNyRCAq5n2HsyfXnoxLjCINF81
-# tiB8Iej/l1X+A1u8EuCttPYKNYlSTUqW9Z/rg3iFlBx8ta23p3MaKS3TZkGjh6Y9
-# s+cm+71aQETfg2tFk8jfp8Vu/kSs0Ay6L/cwFKxiTjQt2ViTBABRi51TgSnCFJtK
-# pPeKwvSZFiFk90OAKxiRMlM7cE1jUG4pktm/xhHZeVNYE34C+1nhb/kfeHPk8njd
-# s6QmqAExmTU+A2IQj2mErew1pTblOHVvlJGc8wzGskLv9jwnHCHN6JcLG3R4m8Fw
-# yaNlgTQ+NVOH129F1DDzwqrQiJihyq2LsG3c5CtVvfsPjZWsCigbH2wgCKg=
+# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFBVvPGae47sSiprs
+# EPXr4OXDJX5oMA0GCSqGSIb3DQEBAQUABIIBACMcOjAOOG+6jk4oV+zNNpNIKjQx
+# DT/Qcg0KQlyVQu7Mq4bRGXbejy8ThJQB7NOZy+8SX/caQKQFObbxNa+p7f7nAWso
+# CTPKyE1hQWrV3/ZHcIbxqPLlVuYRAdAOsMGKsEnPyEvam649cn9PlUyHHx5orTMX
+# exrzdQ3/SlDvAryVKQVjBP/B4puUDb8fMejNEYeJFYzA6qVn1YeWPYWokOY7PE/W
+# f/HSOw24GPHwA+Kjw0smUpYVuVp7ar6v3Kw1hu++6AT4y4886M2zQnB+yt8v/NTP
+# QFSoXaPdc9A6N2Z2hMHSX8D32CbQxA2ytfWRorO3Nkv0Oo56EhJWmgtMyzc=
 # SIG # End signature block

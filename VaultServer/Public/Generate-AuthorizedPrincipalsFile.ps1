@@ -133,10 +133,28 @@ function Generate-AuthorizedPrincipalsFile {
             if ($PSVersionTable.Platform -eq "Unix" -or $PSVersionTable.OS -match "Darwin" -and !$(GetElevation)) {
                 $SBAsString = @(
                     'Write-Host "`nOutputStartsBelow`n"'
-                    "Get-Content '$AuthorizedPrincipalsFileLocation' | ConvertTo-Json -Depth 3"
+                    'try {'
+                    "    Get-Content '$AuthorizedPrincipalsFileLocation' | ConvertTo-Json -Depth 3"
+                    '}'
+                    'catch {'
+                    '    @("ErrorMsg",$_.Exception.Message) | ConvertTo-Json -Depth 3'
+                    '}'
                 )
                 $SBAsString = $SBAsString -join "`n"
-                $OriginalAuthPrincContent = SudoPwsh -CmdString $SBAsString
+                $OriginalAuthPrincContentPrep = SudoPwsh -CmdString $SBAsString
+
+                if ($OriginalAuthPrincContentPrep.Output -match "ErrorMsg") {
+                    throw $OriginalAuthPrincContentPrep.Output[-1]
+                }
+                if ($OriginalAuthPrincContentPrep.OutputType -eq "Error") {
+                    if ($OriginalAuthPrincContentPrep.Output -match "ErrorMsg") {
+                        throw $OriginalAuthPrincContentPrep.Output[-1]
+                    }
+                    else {
+                        throw $OriginalAuthPrincContentPrep.Output
+                    }
+                }
+                $OriginalAuthPrincContent = $OriginalAuthPrincContentPrep.Output
             }
             else {
                 $OriginalAuthPrincContent = Get-Content $AuthorizedPrincipalsFileLocation
@@ -208,10 +226,28 @@ function Generate-AuthorizedPrincipalsFile {
                         "`$GetLocalGroupAndUsersAsString = @'`n$GetLocalGroupAndUsersAsString`n'@"
                         'Invoke-Expression $GetLocalGroupAndUsersAsString'
                         'Write-Host "`nOutputStartsBelow`n"'
-                        'GetLocalGroupAndUsers | ConvertTo-Json -Depth 3'
+                        'try {'
+                        '    GetLocalGroupAndUsers | ConvertTo-Json -Depth 3'
+                        '}'
+                        'catch {'
+                        '    @("ErrorMsg",$_.Exception.Message) | ConvertTo-Json -Depth 3'
+                        '}'
                     )
                     $SBAsString = $SBAsString -join "`n"
-                    $LocalGroupAndUsers = SudoPwsh -CmdString $SBAsString
+                    $LocalGroupAndUsersPrep = SudoPwsh -CmdString $SBAsString
+
+                    if ($LocalGroupAndUsersPrep.Output -match "ErrorMsg") {
+                        throw $LocalGroupAndUsersPrep.Output[-1]
+                    }
+                    if ($LocalGroupAndUsersPrep.OutputType -eq "Error") {
+                        if ($LocalGroupAndUsersPrep.Output -match "ErrorMsg") {
+                            throw $LocalGroupAndUsersPrep.Output[-1]
+                        }
+                        else {
+                            throw $LocalGroupAndUsersPrep.Output
+                        }
+                    }
+                    $LocalGroupAndUsers = $LocalGroupAndUsersPrep.Output
                 }
                 else {
                     $LocalGroupAndUsers = GetLocalGroupAndUsers -ErrorAction Stop
@@ -247,10 +283,28 @@ function Generate-AuthorizedPrincipalsFile {
                         "`$GetLocalGroupAndUsersAsString = @'`n$GetLocalGroupAndUsersAsString`n'@"
                         'Invoke-Expression $GetLocalGroupAndUsersAsString'
                         'Write-Host "`nOutputStartsBelow`n"'
-                        'GetLocalGroupAndUsers | ConvertTo-Json -Depth 3'
+                        'try {'
+                        '    GetLocalGroupAndUsers | ConvertTo-Json -Depth 3'
+                        '}'
+                        'catch {'
+                        '    @("ErrorMsg",$_.Exception.Message) | ConvertTo-Json -Depth 3'
+                        '}'
                     )
                     $SBAsString = $SBAsString -join "`n"
-                    $LocalGroupAndUsers = SudoPwsh -CmdString $SBAsString
+                    $LocalGroupAndUsersPrep = SudoPwsh -CmdString $SBAsString
+
+                    if ($LocalGroupAndUsersPrep.Output -match "ErrorMsg") {
+                        throw $LocalGroupAndUsersPrep.Output[-1]
+                    }
+                    if ($LocalGroupAndUsersPrep.OutputType -eq "Error") {
+                        if ($LocalGroupAndUsersPrep.Output -match "ErrorMsg") {
+                            throw $LocalGroupAndUsersPrep.Output[-1]
+                        }
+                        else {
+                            throw $LocalGroupAndUsersPrep.Output
+                        }
+                    }
+                    $LocalGroupAndUsers = $LocalGroupAndUsersPrep.Output
                 }
                 else {
                     $LocalGroupAndUsers = GetLocalGroupAndUsers
@@ -281,20 +335,41 @@ function Generate-AuthorizedPrincipalsFile {
                         $LDAPUserName = $LDAPCreds.UserName
                         $LDAPPwd = $LDAPCreds.GetNetworkCredential().Password
                         $SBAsString = @(
-                            'Import-Module VaultServer'
-                            '$ThisModuleFunctionsStringArray = $(Get-Module VaultServer).Invoke({$FunctionsForSBUse})'
-                            '$ThisModuleFunctionsStringArray | Where-Object {$_ -ne $null} | foreach {Invoke-Expression $_ -ErrorAction SilentlyContinue}'
-                            "`$LDAPUserName = '$LDAPUserName'"
-                            "`$LDAPPwd = '$LDAPPwd'"
-                            '$LDAPCreds = [pscredential]::new($LDAPUserName,$(ConvertTo-SecureString -String $LDAPPwd -AsPlainText -Force))'
-                            '$LDAPGroupAndUsers = GetLDAPGroupAndUsers -LDAPCreds $LDAPCreds'
-                            'if ($LDAPGroupAndUsers) {'
-                            '    Write-Host "`nOutputStartsBelow`n"'
-                            '    $LDAPGroupAndUsers | ConvertTo-Json -Depth 3'
+                            'try {'
+                            '    Import-Module VaultServer'
+                            '    $ThisModuleFunctionsStringArray = $(Get-Module VaultServer).Invoke({$FunctionsForSBUse})'
+                            '    $ThisModuleFunctionsStringArray | Where-Object {$_ -ne $null} | foreach {Invoke-Expression $_ -ErrorAction SilentlyContinue}'
+                            "    `$LDAPUserName = '$LDAPUserName'"
+                            "    `$LDAPPwd = '$LDAPPwd'"
+                            '    $LDAPCreds = [pscredential]::new($LDAPUserName,$(ConvertTo-SecureString -String $LDAPPwd -AsPlainText -Force))'
+                            '    $LDAPGroupAndUsers = GetLDAPGroupAndUsers -LDAPCreds $LDAPCreds'
+                            '    if ($LDAPGroupAndUsers) {'
+                            '        Write-Host "`nOutputStartsBelow`n"'
+                            '        $LDAPGroupAndUsers | ConvertTo-Json -Depth 3'
+                            '    }'
+                            '    else {'
+                            '        throw "The GetLDAPGroupAndUsers function failed!"'
+                            '    }'
+                            '}'
+                            'catch {'
+                            '    @("ErrorMsg",$_.Exception.Message) | ConvertTo-Json -Depth 3'
                             '}'
                         )
                         $SBAsString = $SBAsString -join "`n"
-                        $LDAPGroupAndUsers = SudoPwsh -CmdString $SBAsString
+                        $LDAPGroupAndUsersPrep = SudoPwsh -CmdString $SBAsString
+
+                        if ($LDAPGroupAndUsersPrep.Output -match "ErrorMsg") {
+                            throw $LDAPGroupAndUsersPrep.Output[-1]
+                        }
+                        if ($LDAPGroupAndUsersPrep.OutputType -eq "Error") {
+                            if ($LDAPGroupAndUsersPrep.Output -match "ErrorMsg") {
+                                throw $LDAPGroupAndUsersPrep.Output[-1]
+                            }
+                            else {
+                                throw $LDAPGroupAndUsersPrep.Output
+                            }
+                        }
+                        $LDAPGroupAndUsers = $LDAPGroupAndUsersPrep.Output
                     }
                     else {
                         $LDAPGroupAndUsers = GetLDAPGroupAndUsers -LDAPCreds $LDAPCreds -ErrorAction Stop
@@ -376,20 +451,41 @@ function Generate-AuthorizedPrincipalsFile {
                         $LDAPUserName = $LDAPCreds.UserName
                         $LDAPPwd = $LDAPCreds.GetNetworkCredential().Password
                         $SBAsString = @(
-                            'Import-Module VaultServer'
-                            '$ThisModuleFunctionsStringArray = $(Get-Module VaultServer).Invoke({$FunctionsForSBUse})'
-                            '$ThisModuleFunctionsStringArray | Where-Object {$_ -ne $null} | foreach {Invoke-Expression $_ -ErrorAction SilentlyContinue}'
-                            "`$LDAPUserName = '$LDAPUserName'"
-                            "`$LDAPPwd = '$LDAPPwd'"
-                            '$LDAPCreds = [pscredential]::new($LDAPUserName,$(ConvertTo-SecureString -String $LDAPPwd -AsPlainText -Force))'
-                            '$LDAPGroupAndUsers = GetLDAPGroupAndUsers -LDAPCreds $LDAPCreds'
-                            'if ($LDAPGroupAndUsers) {'
-                            '    Write-Host "`nOutputStartsBelow`n"'
-                            '    $LDAPGroupAndUsers | ConvertTo-Json -Depth 3'
+                            'try {'
+                            '    Import-Module VaultServer'
+                            '    $ThisModuleFunctionsStringArray = $(Get-Module VaultServer).Invoke({$FunctionsForSBUse})'
+                            '    $ThisModuleFunctionsStringArray | Where-Object {$_ -ne $null} | foreach {Invoke-Expression $_ -ErrorAction SilentlyContinue}'
+                            "    `$LDAPUserName = '$LDAPUserName'"
+                            "    `$LDAPPwd = '$LDAPPwd'"
+                            '    $LDAPCreds = [pscredential]::new($LDAPUserName,$(ConvertTo-SecureString -String $LDAPPwd -AsPlainText -Force))'
+                            '    $LDAPGroupAndUsers = GetLDAPGroupAndUsers -LDAPCreds $LDAPCreds'
+                            '    if ($LDAPGroupAndUsers) {'
+                            '        Write-Host "`nOutputStartsBelow`n"'
+                            '        $LDAPGroupAndUsers | ConvertTo-Json -Depth 3'
+                            '    }'
+                            '    else {'
+                            '        throw "The GetLDAPGroupAndUsers function failed!"'
+                            '    }'
+                            '}'
+                            'catch {'
+                            '    @("ErrorMsg",$_.Exception.Message) | ConvertTo-Json -Depth 3'
                             '}'
                         )
                         $SBAsString = $SBAsString -join "`n"
-                        $LDAPGroupAndUsers = SudoPwsh -CmdString $SBAsString
+                        $LDAPGroupAndUsersPrep = SudoPwsh -CmdString $SBAsString
+
+                        if ($LDAPGroupAndUsersPrep.Output -match "ErrorMsg") {
+                            throw $LDAPGroupAndUsersPrep.Output[-1]
+                        }
+                        if ($LDAPGroupAndUsersPrep.OutputType -eq "Error") {
+                            if ($LDAPGroupAndUsersPrep.Output -match "ErrorMsg") {
+                                throw $LDAPGroupAndUsersPrep.Output[-1]
+                            }
+                            else {
+                                throw $LDAPGroupAndUsersPrep.Output
+                            }
+                        }
+                        $LDAPGroupAndUsers = $LDAPGroupAndUsersPrep.Output
                     }
                     else {
                         $LDAPGroupAndUsers = GetLDAPGroupAndUsers -LDAPCreds $LDAPCreds -ErrorAction Stop
@@ -489,12 +585,24 @@ function Generate-AuthorizedPrincipalsFile {
                 '}'
                 'catch {'
                 '    $StreamWriter.Close()'
-                '    Write-Error $_'
-                '    return'
+                '    @("Error",$_.Exception.Message) | ConvertTo-Json -Depth 3'
                 '}'
             )
             $SBAsString = $SBAsString -join "`n"
-            $AuthPrincFileItem = SudoPwsh -CmdString $SBAsString
+            $AuthPrincFileItemPrep = SudoPwsh -CmdString $SBAsString
+
+            if ($AuthPrincFileItemPrep.Output -match "ErrorMsg") {
+                throw $AuthPrincFileItemPrep.Output[-1]
+            }
+            if ($AuthPrincFileItemPrep.OutputType -eq "Error") {
+                if ($AuthPrincFileItemPrep.Output -match "ErrorMsg") {
+                    throw $AuthPrincFileItemPrep.Output[-1]
+                }
+                else {
+                    throw $AuthPrincFileItemPrep.Output
+                }
+            }
+            $AuthPrincFileItem = $AuthPrincFileItemPrep.Output
         }
         else {
             $StreamWriter = [System.IO.StreamWriter]::new($AuthorizedPrincipalsFileLocation, $True)
@@ -523,8 +631,8 @@ function Generate-AuthorizedPrincipalsFile {
 # SIG # Begin signature block
 # MIIMiAYJKoZIhvcNAQcCoIIMeTCCDHUCAQExCzAJBgUrDgMCGgUAMGkGCisGAQQB
 # gjcCAQSgWzBZMDQGCisGAQQBgjcCAR4wJgIDAQAABBAfzDtgWUsITrck0sYpfvNR
-# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUEuN7t0ZK28AsyCNghDDzH8Re
-# YxWgggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
+# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQU4g121WNT/1i3IJteGfSQ+Zet
+# XJegggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
 # 9w0BAQsFADAwMQwwCgYDVQQGEwNMQUIxDTALBgNVBAoTBFpFUk8xETAPBgNVBAMT
 # CFplcm9EQzAxMB4XDTE3MDkyMDIxMDM1OFoXDTE5MDkyMDIxMTM1OFowPTETMBEG
 # CgmSJomT8ixkARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMT
@@ -581,11 +689,11 @@ function Generate-AuthorizedPrincipalsFile {
 # ARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMTB1plcm9TQ0EC
 # E1gAAAH5oOvjAv3166MAAQAAAfkwCQYFKw4DAhoFAKB4MBgGCisGAQQBgjcCAQwx
 # CjAIoAKAAKECgAAwGQYJKoZIhvcNAQkDMQwGCisGAQQBgjcCAQQwHAYKKwYBBAGC
-# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFLXDi1GnPVj9kEtM
-# EAXMtIoIJltGMA0GCSqGSIb3DQEBAQUABIIBAE85vksJOg6B8x7pWpN4e1Zi2e/g
-# dTn55tb3Q5ljUTpSL0xIu2X9k4UVwAx1vnyDQX+HOaADRSCFzh7V26eWFbyo0htb
-# mCLflycqaEHSp3oN3Z1a/aUH4trzCEdswO/BgGXGhDZm7uhG5WdAecUXCQhctN65
-# NtC4U8u/S+6elh5yAmI+hpP41eUDBkax4sQ/E8Rh8zhsJZx4oDvf/5AboqmRTGSY
-# WS/C1EVpHitkvzJHSVzVu6rGXr/DfEJgzq4fa+rdfBLJC+UBzjLd6tQ4TzHZXkeg
-# uq1mxwm7udDmIfxCVAy5ZwoD9gAlseEttpRl5Or9JvlKXxhT4ZOh8qfC75M=
+# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFHqL+cDergoW8SND
+# dcdJKRvTnjTWMA0GCSqGSIb3DQEBAQUABIIBALWpuXlAghJ8606i8KgWIZNr77N+
+# 1bRgapg7EowRVrjjOSlvj6MUffjjawwG/yLgc8emBY9G7aOKiWtBitZo+XC/5qZw
+# HoMX3X8bPWLLmBenv7E+J6d2vOp5UJnZbLSHMDP5YRZNN6STzYwijLy2rHC2ip3/
+# UzhqyJ/WDF188ZGq5dEyed6dWL8TuxF13h0nY5eRTRpJ66aEvQVBX5L9LGGdBV9W
+# BcA/K6seXU1iiocClmmO/j7Zys2iYPs6aJBK3wgZ8gjxNTOtUZlV0qnZASV5NMnb
+# sPSaatA37nCJ456vQ/NDv8yj6gUIXhLh48doRwRi6k+QjWPF2zN6sV3h+Mk=
 # SIG # End signature block

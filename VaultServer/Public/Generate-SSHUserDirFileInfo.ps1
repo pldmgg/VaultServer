@@ -89,7 +89,7 @@ function Generate-SSHUserDirFileInfo {
 
             $GetSSHFileInfoResult = Get-SSHFileInfo -PathToKeyFile $File -ErrorAction Stop -WarningAction SilentlyContinue
             if (!$GetSSHFileInfoResult) {
-                Write-Verbose "'$File' is definitley not a valid Public Key, Private Key, or Public Key Certificate!"
+                Write-Verbose "'$File' is definitely not a valid Public Key, Private Key, or Public Key Certificate!"
             }
 
             # Sample Output:
@@ -117,8 +117,8 @@ function Generate-SSHUserDirFileInfo {
 # SIG # Begin signature block
 # MIIMiAYJKoZIhvcNAQcCoIIMeTCCDHUCAQExCzAJBgUrDgMCGgUAMGkGCisGAQQB
 # gjcCAQSgWzBZMDQGCisGAQQBgjcCAR4wJgIDAQAABBAfzDtgWUsITrck0sYpfvNR
-# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUoB0jh5YQ5udedCZPQ9MIid7m
-# nn2gggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
+# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUDydqH/RVWMshppYa67i/3XOC
+# YYugggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
 # 9w0BAQsFADAwMQwwCgYDVQQGEwNMQUIxDTALBgNVBAoTBFpFUk8xETAPBgNVBAMT
 # CFplcm9EQzAxMB4XDTE3MDkyMDIxMDM1OFoXDTE5MDkyMDIxMTM1OFowPTETMBEG
 # CgmSJomT8ixkARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMT
@@ -175,11 +175,11 @@ function Generate-SSHUserDirFileInfo {
 # ARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMTB1plcm9TQ0EC
 # E1gAAAH5oOvjAv3166MAAQAAAfkwCQYFKw4DAhoFAKB4MBgGCisGAQQBgjcCAQwx
 # CjAIoAKAAKECgAAwGQYJKoZIhvcNAQkDMQwGCisGAQQBgjcCAQQwHAYKKwYBBAGC
-# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFBxU6jvwiQX9VdgK
-# XojldWr7p0iBMA0GCSqGSIb3DQEBAQUABIIBABTQVmxtdZIWeSA3+tmEDZxSBugh
-# mr1FdXO7FyY+g1SZSxNSmLWUaXhyc/EEUti8KR8nfvCInYqYOND+vACqYsNvN/zX
-# nR/blVp2fIN8LK0CYhzovM+6pBGBmlS+/fOzy9FbOpb3/2rYRjgZKC6nRgKIhCZZ
-# rp5FHr4y06fLxvFiIgX7NXs/T0BiAt6abSu+rHcgDVPdIPeF0rzMmi+qAjeqUIpx
-# Bce0yJDu9NHZh7p6EOc8Vi/KA7lWYJ4c0F1zZOrxMjqz4UN+CgclwEVmAa24BcMm
-# cIiRlEAbSjLpF2mHmY5WZTJKe5hio8+8TkOlBfBci7b/Xrode0kXmt8RAXM=
+# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFB0r4M2tVo+1Iu3w
+# 2YPy6oxT+OQGMA0GCSqGSIb3DQEBAQUABIIBAKNYF2fQeo1EgQ3cjn96qPw5xdD1
+# qkKNJw4Kz1R7s8NiNxzsA8KJxn9c1BDsOhK/zVR5h/ksz5f07Fcem/GH3hh31M56
+# 2l8vZg6I6gImqOy8lyLR9Xo5jQJm+i4f9UVpyBKlsmb3Ucq4a/Dp2hJ1Qf8NHmLX
+# Zna8v0fgbYyGSNZ3MvcxIwhSbPmQVk/FLjVByn74MGp9pjINbtgD7Pck9d9AX4pU
+# WFv+g3cPqiTD8bScn4LozyzO60Mcgp/KP0ZGGDlP4yc8CB2CAesTSluDO5gy5ui2
+# AddHfi5Usn1foN3xRjBjUSY/YDdWKADD1rHm/IagaNt1WbW4MlqqIAUcrnc=
 # SIG # End signature block
