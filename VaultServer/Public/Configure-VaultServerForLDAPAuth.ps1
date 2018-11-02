@@ -278,7 +278,8 @@ function Configure-VaultServerForLDAPAuth {
         # Make sure $LDAPBindCredentials work
         try {
             $SimpleUserName = $($LDAPBindCredentials.UserName -split "\\")[1]
-            $PasswordInPlainText = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($LDAPBindCredentials.Password))
+            #$PasswordInPlainText = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($LDAPBindCredentials.Password))
+            $BindPassword = $PasswordInPlainText = $LDAPBindCredentials.GetNetworkCredential().Password
             $PrincipleContext = [System.DirectoryServices.AccountManagement.PrincipalContext]::new(
                 [System.DirectoryServices.AccountManagement.ContextType]::Domain,
                 "$SimpleDomainWLDAPPort",
@@ -522,7 +523,7 @@ function Configure-VaultServerForLDAPAuth {
         $DomainLDAPContainers = $($DomainLDAPContainersPrep | foreach {"DC=$_"}) -join ","
         $BindUserName = $LDAPBindCredentials.UserName
         $BindUserNameForExpect = $BindUserName -replace [regex]::Escape('\'),'\\\'
-        $BindPassword = $LDAPBindCredentials.GetNetworkCredential().Password
+        $BindPassword = $PasswordInPlainText = $LDAPBindCredentials.GetNetworkCredential().Password
 
         # Make sure $LDAPBindCredentials work
         $ldapSearchOutput = ldapsearch -x -h $PDC -D $BindUserName -w $BindPassword -b "$DomainLDAPContainers" -s sub "(objectClass=group)" cn
@@ -829,15 +830,25 @@ function Configure-VaultServerForLDAPAuth {
         #   vault write auth/ldap/groups/VaultAdmins policies=custom-root
 
         # Make sure $LDAPVaultAdminsSecurityGroupDN exists
-        try {
-            $LDAPVaultAdminsSecurityGroupDNDirectoryEntry = [System.DirectoryServices.DirectoryEntry]("$LDAPUri/$LDAPVaultAdminsSecurityGroupDN")
-            $LDAPVaultAdminsSecurityGroupDNDirectoryEntry.Close()
+        if (!$PSVersionTable.Platform -or $PSVersionTable.Platform -eq "Win32NT") {
+            try {
+                $LDAPVaultAdminsSecurityGroupDNDirectoryEntry = [System.DirectoryServices.DirectoryEntry]("$LDAPUri/$LDAPVaultAdminsSecurityGroupDN")
+                $LDAPVaultAdminsSecurityGroupDNDirectoryEntry.Close()
+            }
+            catch {
+                Write-Error "The LDAP Object $LDAPVaultAdminsSecurityGroupDN cannot be found! Halting!"
+                $global:FunctionResult = "1"
+                if ($Output.Count -gt 0) {[pscustomobject]$Output}
+                return
+            }
         }
-        catch {
-            Write-Error "The LDAP Object $LDAPVaultAdminsSecurityGroupDN cannot be found! Halting!"
-            $global:FunctionResult = "1"
-            if ($Output.Count -gt 0) {[pscustomobject]$Output}
-            return
+        if ($PSVersionTable.Platform -eq "Unix" -or $PSVersionTable.OS -match "Darwin") {
+            $ldapSearchOutput = ldapsearch -x -h $PDC -D $BindUserName -w $BindPassword -b "$LDAPVaultAdminsSecurityGroupDN" -s sub "(objectClass=user)" cn
+            if ($ldapSearchOutput -match "No such object") {
+                Write-Error "The LDAP Object $LDAPVaultAdminsSecurityGroupDN cannot be found! Halting!"
+                $global:FunctionResult = "1"
+                return
+            }
         }
 
         $jsonRequest = @"
@@ -875,15 +886,25 @@ function Configure-VaultServerForLDAPAuth {
         #   vault write auth/ldap/groups/VaultUsers policies=vaultusers
 
         # Make sure $LDAPVaultUsersSecurityGroupDN exists
-        try {
-            $LDAPVaultUsersSecurityGroupDNDirectoryEntry = [System.DirectoryServices.DirectoryEntry]("$LDAPUri/$LDAPVaultUsersSecurityGroupDN")
-            $LDAPVaultUsersSecurityGroupDNDirectoryEntry.Close()
+        if (!$PSVersionTable.Platform -or $PSVersionTable.Platform -eq "Win32NT") {
+            try {
+                $LDAPVaultUsersSecurityGroupDNDirectoryEntry = [System.DirectoryServices.DirectoryEntry]("$LDAPUri/$LDAPVaultUsersSecurityGroupDN")
+                $LDAPVaultUsersSecurityGroupDNDirectoryEntry.Close()
+            }
+            catch {
+                Write-Error "The LDAP Object $LDAPVaultUsersSecurityGroupDN cannot be found! Halting!"
+                if ($Output.Count -gt 0) {[pscustomobject]$Output}
+                $global:FunctionResult = "1"
+                return
+            }
         }
-        catch {
-            Write-Error "The LDAP Object $LDAPVaultUsersSecurityGroupDN cannot be found! Halting!"
-            if ($Output.Count -gt 0) {[pscustomobject]$Output}
-            $global:FunctionResult = "1"
-            return
+        if ($PSVersionTable.Platform -eq "Unix" -or $PSVersionTable.OS -match "Darwin") {
+            $ldapSearchOutput = ldapsearch -x -h $PDC -D $BindUserName -w $BindPassword -b "$LDAPVaultUsersSecurityGroupDN" -s sub "(objectClass=user)" cn
+            if ($ldapSearchOutput -match "No such object") {
+                Write-Error "The LDAP Object $LDAPVaultUsersSecurityGroupDN cannot be found! Halting!"
+                $global:FunctionResult = "1"
+                return
+            }
         }
 
         $jsonRequest = @"
@@ -926,8 +947,8 @@ function Configure-VaultServerForLDAPAuth {
 # SIG # Begin signature block
 # MIIMiAYJKoZIhvcNAQcCoIIMeTCCDHUCAQExCzAJBgUrDgMCGgUAMGkGCisGAQQB
 # gjcCAQSgWzBZMDQGCisGAQQBgjcCAR4wJgIDAQAABBAfzDtgWUsITrck0sYpfvNR
-# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUbzX91AIeNo49G1Z/TjlPKmr2
-# YRagggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
+# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUoLNc+3s4JEpM7Zkm1Tl9sJUh
+# eIWgggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
 # 9w0BAQsFADAwMQwwCgYDVQQGEwNMQUIxDTALBgNVBAoTBFpFUk8xETAPBgNVBAMT
 # CFplcm9EQzAxMB4XDTE3MDkyMDIxMDM1OFoXDTE5MDkyMDIxMTM1OFowPTETMBEG
 # CgmSJomT8ixkARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMT
@@ -984,11 +1005,11 @@ function Configure-VaultServerForLDAPAuth {
 # ARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMTB1plcm9TQ0EC
 # E1gAAAH5oOvjAv3166MAAQAAAfkwCQYFKw4DAhoFAKB4MBgGCisGAQQBgjcCAQwx
 # CjAIoAKAAKECgAAwGQYJKoZIhvcNAQkDMQwGCisGAQQBgjcCAQQwHAYKKwYBBAGC
-# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFFuVFo+GHoONlF5S
-# yaMf73tevUnFMA0GCSqGSIb3DQEBAQUABIIBABCwQsbA/vnVovVh9yHEc53LUtXN
-# LzsoE0uYaiJduleZCWhtc9aYyrVy8V449EyD9aTlQ93RY+Y4JYv4T91xA8r0FfTR
-# TklITgvYY/UbGRbz0FbwpV+M5Lcn/3TmftoeyGHLEXZXq7YRR60ClK94HfoeiMii
-# n0NamFsTOU5Mlka8uYeNXbSEvpH/6bgw1Ybo8TdwBEfldMzUbp6SST9FSam2XkIK
-# PHcdpSCaY73GLtR2ByX9pD9B+UauWqX9Zpr/K+yjFqb1SwiSWrrvuluqnv3uRzQJ
-# 5oqR8bkG+eHKk4U0zNam7yjchterVj/T4yFZgv59/IWeusaW4ZyhWZBu59s=
+# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFAkyHtfgXQKqcPPn
+# Z59+wHikPB+ZMA0GCSqGSIb3DQEBAQUABIIBAJ78vWFOwAvChF5IfdurnFvudeft
+# ko+MQ2Qm8SiK41PnLyt9kHuC4ENogZDhk4/kJXJyFOFOWCtJjAcVELtSuJpsGGHp
+# /fMvYbMiWVPQeMMu2phIm5HRmS4fUHIwj3GQR9iuiFnTuDpmd457KROvVCArOKaS
+# 1GXLFJntY1orxwxoAAsCiRkmdZYc0K/w6+X5DeOoAvAxqip8YZh87uImoWrjoMms
+# T4jCVcRR4kQDn71zhu+mwzXEcdmBMPnZKhlFvwMt/x9UGy9N1b82xVzXjj8a0twP
+# lj47116r7L+vUd1RDAkPVSC+YQKJtUfoUuocYqvmd/07tl6s+mzoB+EIkRM=
 # SIG # End signature block

@@ -72,7 +72,7 @@ function Get-VaultLogin {
         return
     }
     $IWRSplatParams = @{
-        Uri         = "$VaultServerBaseUri/auth/ldap/login/$UserName "
+        Uri         = "$VaultServerBaseUri/auth/ldap/login/$UserName"
         Body        = $JsonRequestAsSingleLineString
         Method      = "Post"
     }
@@ -97,8 +97,8 @@ function Get-VaultLogin {
 # SIG # Begin signature block
 # MIIMiAYJKoZIhvcNAQcCoIIMeTCCDHUCAQExCzAJBgUrDgMCGgUAMGkGCisGAQQB
 # gjcCAQSgWzBZMDQGCisGAQQBgjcCAR4wJgIDAQAABBAfzDtgWUsITrck0sYpfvNR
-# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUEOyaMoZzoysOUVgMU15OKMMZ
-# zhKgggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
+# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUi1jFjaycQXAu69jYOexQe/tY
+# 1hegggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
 # 9w0BAQsFADAwMQwwCgYDVQQGEwNMQUIxDTALBgNVBAoTBFpFUk8xETAPBgNVBAMT
 # CFplcm9EQzAxMB4XDTE3MDkyMDIxMDM1OFoXDTE5MDkyMDIxMTM1OFowPTETMBEG
 # CgmSJomT8ixkARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMT
@@ -155,11 +155,11 @@ function Get-VaultLogin {
 # ARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMTB1plcm9TQ0EC
 # E1gAAAH5oOvjAv3166MAAQAAAfkwCQYFKw4DAhoFAKB4MBgGCisGAQQBgjcCAQwx
 # CjAIoAKAAKECgAAwGQYJKoZIhvcNAQkDMQwGCisGAQQBgjcCAQQwHAYKKwYBBAGC
-# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFJixnxliVhkOJb17
-# 7ybTpggo5dg+MA0GCSqGSIb3DQEBAQUABIIBACSMdJuyJ+xxj6l0F8UjdKBG+hjF
-# WntSCBpAmuLH/tOdY0CJOk6UelA0ZpuOsUxi7sgu5mKsbzwYKBIxw5l0pbsybuki
-# M7SUUB+m1eqEsfmPpoW3Mo3TOKSXq9B//6H45c+d7duYInXbomt1U+7rSNhyPUWD
-# QbuzgadGklNPW3gCHkPeLDkkxey0sB/iBQDtK9Ae7MiW6SuzRKfxxiOKcGK/+mud
-# p5IgOb4zNuVKiZhVW4ovdaalj8gLjJ9yu8VTrDNTUvC9AFI2qEYjhDRnn+7Z8hgB
-# cbo4DZizzeJyE+jJH48X1yhew9z+cMHoHLXztHTPWQl7/05pkhXxDl0JGBA=
+# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFDw7vPzHmHjIwUtZ
+# pOAXtqLyeyA8MA0GCSqGSIb3DQEBAQUABIIBAHYj5v6B16UaJp2+6/b4YByS7HJT
+# yT2XiWkha5qScVWvCRdU1F4mvXZHPJIDX4PlrAAD2gZxbUn0CWEhm7DrLPXUf8v0
+# TZJucUc9Rzx4IW86ngmitER+EJQrPT72xYMOI2BTUPP2CGB5qgqlO2akPdFd2vYP
+# M2+u1dM+wHPURhbcUM2f8vcQHHjo0DFIG70Otc6IZh+i6HnHiuT1fEY1Qt0t5Gow
+# 08Ylw1wjWCgXw7OdJWoh5GTZw5sh9GYAwQH6mqrNB7N/okpD9xS+PDF7h/eWozwc
+# 2jH43lUuvj2KnPV2vYCS1MZsHNlpOWHRTvc7yrca0qMqdzz5mAIBv06Uqbc=
 # SIG # End signature block
