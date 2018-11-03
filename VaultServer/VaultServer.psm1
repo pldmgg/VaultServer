@@ -209,6 +209,11 @@ if (!$PSVersionTable.Platform -or $PSVersionTable.Platform -eq "Win32NT") {
         You CAN use this parameter in conjunction with the -AuthorizedUserPrincipals parameter, and this function
         DOES check for repeats, so don't worry about overlap.
 
+    .PARAMETER LDAPCreds
+        This parameter is OPTIONAL, however, it is MANDATORY if this function is being used on Linux/MacOS.
+
+        This parameter takes a pscredential object that represents an LDAP account with permission to read the LDAP database.
+
     .PARAMETER VaultSSHHostSigningUrl
         This parameter is OPTIONAL, but highly recommended.
 
@@ -269,6 +274,9 @@ function Add-CAPubKeyToSSHAndSSHDConfig {
         [ValidateSet("AllUsers","LocalAdmins","LocalUsers","DomainAdmins","DomainUsers")]
         [string[]]$AuthorizedPrincipalsUserGroup,
 
+        [Parameter(Mandatory=$False)]
+        [pscredential]$LDAPCreds,
+
         # Use the below $VaultSSHHostSigningUrl and $VaultAuthToken parameters if you want
         # C:\ProgramData\ssh\ssh_host_rsa_key.pub signed by the Vault Host Signing CA. This is highly recommended.
         [Parameter(Mandatory=$False)]
@@ -322,6 +330,18 @@ function Add-CAPubKeyToSSHAndSSHDConfig {
         return
     }
 
+    if ($(!$AuthorizedPrincipalsUserGroup -and !$AuthorizedUserPrincipals) -or
+    $AuthorizedPrincipalsUserGroup -contains "AllUsers" -or
+    $($AuthorizedPrincipalsUserGroup -contains "LocalAdmins" -and $AuthorizedPrincipalsUserGroup -contains "LocalUsers" -and
+    $AuthorizedPrincipalsUserGroup -contains "DomainAdmins" -and $AuthorizedPrincipalsUserGroup -contains "DomainAdmins")
+    ) {
+        if (!$LDAPCreds -and $($PSVersionTable.Platform -eq "Unix" -or $PSVersionTable.OS -match "Darwin")) {
+            Write-Error "The $($MyInvocation.MyCommand.Name) function requires the -LDAPCreds parameter on Linux/MacOS! Halting!"
+            $global:FunctionResult = "1"
+            return
+        }
+    }
+
     if ($($VaultSSHHostSigningUrl -and !$VaultAuthToken) -or $(!$VaultSSHHostSigningUrl -and $VaultAuthToken)) {
         $ErrMsg = "If you would like this function to facilitate signing $env:ComputerName's ssh_host_rsa_key.pub, " +
         "both -VaultSSHHostSigningUrl and -VaultAuthToken parameters are required! Halting!"
@@ -342,7 +362,7 @@ function Add-CAPubKeyToSSHAndSSHDConfig {
         $SSHAgentProcesses = Get-Process -Name ssh-agent -IncludeUserName -ErrorAction SilentlyContinue | Where-Object {$_.UserName -eq $env:USER}
         if ($SSHAgentProcesses.Count -gt 0) {
             $LatestSSHAgentProcess = $(@($SSHAgentProcesses) | Sort-Object StartTime)[-1]
-            $env:SSH_AUTH_SOCK = $(Get-ChildItem /tmp -Recurse -File | Where-Object {$_.FullName -match "\.$($LatestSSHAgentProcess.Id-1)"}).FullName
+            $env:SSH_AUTH_SOCK = $(Get-ChildItem /tmp -Recurse -File -ErrorAction SilentlyContinue | Where-Object {$_.FullName -match "\.$($LatestSSHAgentProcess.Id-1)"}).FullName
             $env:SSH_AGENT_PID = $LatestSSHAgentProcess.Id
         }
         else {                
@@ -633,7 +653,7 @@ function Add-CAPubKeyToSSHAndSSHDConfig {
             $SBAsString = @(
                 'Write-Host "`nOutputStartsBelow`n"'
                 'try {'
-                $('    Add-Content -Path "{0}" -Value @"`n{1}`n"@' -f "$sshdir/authorized_keys",$ContentToAddToAuthKeysString)
+                $("    Add-Content -Path '{0}' -Value @'{1}'@" -f "$sshdir/authorized_keys",$("`n" + $($ContentToAddToAuthKeysString -join "`n") + "`n"))
                 '    "Done" | ConvertTo-Json -Depth 3'
                 '}'
                 'catch {'
@@ -674,7 +694,7 @@ function Add-CAPubKeyToSSHAndSSHDConfig {
             $SBAsString = @(
                 'Write-Host "`nOutputStartsBelow`n"'
                 'try {'
-                $('    Add-Content -Path "{0}" -Value @"`n{1}`n"@' -f "$sshdir/ssh_known_hosts",$ContentToAddToKnownHostsString)
+                $("    Add-Content -Path '{0}' -Value @'{1}'@" -f "$sshdir/ssh_known_hosts",$("`n" + $($ContentToAddToKnownHostsString -join "`n") + "`n"))
                 '    "Done" | ConvertTo-Json -Depth 3'
                 '}'
                 'catch {'
@@ -803,8 +823,8 @@ function Add-CAPubKeyToSSHAndSSHDConfig {
             $SBAsString = @(
                 'Write-Host "`nOutputStartsBelow`n"'
                 'try {'
-                $('    Set-Content -Path "{0}" -Value @"`n{1}`n"@' -f "$sshdir/$UserCAPubKeyFileName",$PublicKeyOfCAUsedToSignUserKeysAsString)
-                $('    Set-Content -Path "{0}" -Value @"`n{1}`n"@' -f "$sshdir/$HostCAPubKeyFileName",$PublicKeyOfCAUsedToSignHostKeysAsString)
+                $("    Set-Content -Path '{0}' -Value @'{1}'@" -f "$sshdir/$UserCAPubKeyFileName",$("`n" + $($PublicKeyOfCAUsedToSignUserKeysAsString -join "`n") + "`n"))
+                $("    Set-Content -Path '{0}' -Value @'{1}'@" -f "$sshdir/$HostCAPubKeyFileName",$("`n" + $($PublicKeyOfCAUsedToSignHostKeysAsString -join "`n") + "`n"))
                 '    [pscustomobject]@{'
                 "        UserCAPubKeyFile = Get-Item '$sshdir/$UserCAPubKeyFileName'"
                 "        HostCAPubKeyFile = Get-Item '$sshdir/$HostCAPubKeyFileName'"
@@ -862,6 +882,9 @@ function Add-CAPubKeyToSSHAndSSHDConfig {
             if ($AuthorizedUserPrincipals) {
                 $AuthPrincSplatParams.Add("UsersToAdd",$AuthorizedUserPrincipals)
             }
+        }
+        if ($LDAPCreds) {
+            $AuthPrincSplatParams.Add("LDAPCreds",$LDAPCreds)
         }
 
         try {
@@ -1011,7 +1034,7 @@ function Add-CAPubKeyToSSHAndSSHDConfig {
                     $SBAsString = @(
                         'Write-Host "`nOutputStartsBelow`n"'
                         'try {'
-                        $('    Set-Content -Path {0} -Value @"`n{1}`n"@' -f $sshdConfigPath,$UpdatedSSHDConfig)
+                        $("    Set-Content -Path '{0}' -Value @'{1}'@" -f $sshdConfigPath,$("`n" + $($UpdatedSSHDConfig -join "`n") + "`n"))
                         "    Get-Content '$sshdConfigPath' | ConvertTo-Json -Depth 3"
                         '}'
                         'catch {'
@@ -1093,7 +1116,7 @@ function Add-CAPubKeyToSSHAndSSHDConfig {
                     $SBAsString = @(
                         'Write-Host "`nOutputStartsBelow`n"'
                         'try {'
-                        $('    Set-Content -Path {0} -Value @"`n{1}`n"@' -f $sshdConfigPath,$UpdatedSSHDConfig)
+                        $("    Set-Content -Path '{0}' -Value @'{1}'@" -f $sshdConfigPath,$("`n" + $($UpdatedSSHDConfig -join "`n") + "`n"))
                         "    Get-Content '$sshdConfigPath' | ConvertTo-Json -Depth 3"
                         '}'
                         'catch {'
@@ -1175,7 +1198,7 @@ function Add-CAPubKeyToSSHAndSSHDConfig {
                     $SBAsString = @(
                         'Write-Host "`nOutputStartsBelow`n"'
                         'try {'
-                        $('    Set-Content -Path {0} -Value @"`n{1}`n"@' -f $sshdConfigPath,$UpdatedSSHDConfig)
+                        $("    Set-Content -Path '{0}' -Value @'{1}'@" -f $sshdConfigPath,$("`n" + $($UpdatedSSHDConfig -join "`n") + "`n"))
                         "    Get-Content '$sshdConfigPath' | ConvertTo-Json -Depth 3"
                         '}'
                         'catch {'
@@ -1306,6 +1329,9 @@ function Add-CAPubKeyToSSHAndSSHDConfig {
             if ($AuthorizedUserPrincipals) {
                 $AuthPrincSplatParams.Add("UsersToAdd",$AuthorizedUserPrincipals)
             }
+        }
+        if ($LDAPCreds) {
+            $AuthPrincSplatParams.Add("LDAPCreds",$LDAPCreds)
         }
 
         try {
@@ -3615,6 +3641,8 @@ function Generate-AuthorizedPrincipalsFile {
                 }
             }
         }
+
+        $AuthorizedPrincipalsFileLocation
     }
     catch {
         if ($StreamWriter) {
@@ -7582,7 +7610,7 @@ function New-SSHKey {
             $SSHAgentProcesses = Get-Process -Name ssh-agent -IncludeUserName -ErrorAction SilentlyContinue | Where-Object {$_.UserName -eq $env:USER}
             if ($SSHAgentProcesses.Count -gt 0) {
                 $LatestSSHAgentProcess = $(@($SSHAgentProcesses) | Sort-Object StartTime)[-1]
-                $env:SSH_AUTH_SOCK = $(Get-ChildItem /tmp -Recurse -File | Where-Object {$_.FullName -match "\.$($LatestSSHAgentProcess.Id-1)"}).FullName
+                $env:SSH_AUTH_SOCK = $(Get-ChildItem /tmp -Recurse -File -ErrorAction SilentlyContinue | Where-Object {$_.FullName -match "\.$($LatestSSHAgentProcess.Id-1)"}).FullName
                 $env:SSH_AGENT_PID = $LatestSSHAgentProcess.Id
             }
             else {                
@@ -8143,7 +8171,7 @@ function Sign-SSHHostPublicKey {
             $SBAsString = @(
                 'Write-Host "`nOutputStartsBelow`n"'
                 'try {'
-                '    Set-Content -Path {0} -Value @"`n{1}`n"@' -f "'$SignedPubKeyCertFilePath'",$SignedPubKeyContent
+                $("    Set-Content -Path '{0}' -Value @'{1}'@" -f $SignedPubKeyCertFilePath,$("`n" + $($SignedPubKeyContent -join "`n") + "`n"))
                 '    "Done" | ConvertTo-Json -Depth 3'
                 '}'
                 'catch {'
@@ -8280,7 +8308,7 @@ function Sign-SSHHostPublicKey {
                 $SBAsString = @(
                     'Write-Host "`nOutputStartsBelow`n"'
                     'try {'
-                    '    Set-Content -Path {0} -Value @"`n{1}`n"@' -f "'$sshdConfigPath'",$sshdContent
+                    $("    Set-Content -Path '{0}' -Value @'{1}'@" -f $sshdConfigPath,$("`n" + $($sshdContent -join "`n") + "`n"))
                     "    Get-Content '$sshdConfigPath' | ConvertTo-Json -Depth 3"
                     '}'
                     'catch {'
@@ -8326,7 +8354,7 @@ function Sign-SSHHostPublicKey {
                     $SBAsString = @(
                         'Write-Host "`nOutputStartsBelow`n"'
                         'try {'
-                        '    Set-Content -Path {0} -Value @"`n{1}`n"@' -f "'$sshdConfigPath'",$UpdatedSSHDConfig
+                        $("    Set-Content -Path '{0}' -Value @'{1}'@" -f $sshdConfigPath,$("`n" + $($UpdatedSSHDConfig -join "`n") + "`n"))
                         "    Get-Content '$sshdConfigPath' | ConvertTo-Json -Depth 3"
                         '}'
                         'catch {'
@@ -10042,8 +10070,8 @@ if(Win32.CertStrToName(X509_ASN_ENCODING, DN, CERT_X500_NAME_STR, IntPtr.Zero, n
 # SIG # Begin signature block
 # MIIMiAYJKoZIhvcNAQcCoIIMeTCCDHUCAQExCzAJBgUrDgMCGgUAMGkGCisGAQQB
 # gjcCAQSgWzBZMDQGCisGAQQBgjcCAR4wJgIDAQAABBAfzDtgWUsITrck0sYpfvNR
-# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUuAqDdgb6w6Du19abwQVerwsS
-# MKqgggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
+# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQU5vO8f1pwDsB2vFpGCoPRj3r3
+# xYGgggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
 # 9w0BAQsFADAwMQwwCgYDVQQGEwNMQUIxDTALBgNVBAoTBFpFUk8xETAPBgNVBAMT
 # CFplcm9EQzAxMB4XDTE3MDkyMDIxMDM1OFoXDTE5MDkyMDIxMTM1OFowPTETMBEG
 # CgmSJomT8ixkARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMT
@@ -10100,11 +10128,11 @@ if(Win32.CertStrToName(X509_ASN_ENCODING, DN, CERT_X500_NAME_STR, IntPtr.Zero, n
 # ARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMTB1plcm9TQ0EC
 # E1gAAAH5oOvjAv3166MAAQAAAfkwCQYFKw4DAhoFAKB4MBgGCisGAQQBgjcCAQwx
 # CjAIoAKAAKECgAAwGQYJKoZIhvcNAQkDMQwGCisGAQQBgjcCAQQwHAYKKwYBBAGC
-# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFPvYVo49rGMjYKSG
-# Rwyeye0YdSLeMA0GCSqGSIb3DQEBAQUABIIBAD4X7e1esVoVBBfzqKc0HZBePFSX
-# MvrTPL6OaExgwWurwChHxxT23YTNwvwyqYOIXkXVIdsTVPPxCHc/+WTsCuX9KD/t
-# JavvXKAdYTMB5YWUBUOslN0UAvRxsiEi9QMqwcOZs993MZ+AmAD+BaWt/9WIO65b
-# 1zzGs/mXqcKL/v1kxH1kZVebXW9FKuaWT0b+kgmHDURpCrNoYAhGQ7AYPd6HFlqE
-# VEY06xea0ZWD/q9STuC6qv2VD+SyPPO0MB+T5X4xu4oCDPUEN7fvVgTAGvUjr/En
-# YV5QqbL2g2n2lkBztVgDUpjQkVjKy8dKY4lYBZX0bHaRLNH13WbplIjxtv0=
+# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFNxhEgcLRxOwmWbm
+# iVe78KqQtfRhMA0GCSqGSIb3DQEBAQUABIIBAIw53cOUrsZ77UganbPcQMwWl7ND
+# nkX/pZ0f/imkR5lC1QI+rbVwZK6ZBpfjLp/FyliR1Jz5g99RG/1zyCuDOenSg6lb
+# hwv0FeBnsLo5D4AkHVqAULh2ct5zjM40Z0VCVLkHA3/Q4A2lBquEnb74teqSq7of
+# bbposC9hh3hokEJUBMQ5fe2cDpX/Hu/DBJwXSKeY/2i0+E0NbAhoFG7qCcB8QvhC
+# hY+m8Yz7oJJ2xEa0zQscZH7KFUgjmbgOGgNNNJsCQsZnK2EtYpXoZrgOqrrPMHoa
+# oZu4xAoeyLZrQ43URfHl55U178VSaJcCesGB08974RfhzuL/uSEENDYhFF8=
 # SIG # End signature block

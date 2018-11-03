@@ -230,7 +230,7 @@ function Sign-SSHHostPublicKey {
             $SBAsString = @(
                 'Write-Host "`nOutputStartsBelow`n"'
                 'try {'
-                '    Set-Content -Path {0} -Value @"`n{1}`n"@' -f "'$SignedPubKeyCertFilePath'",$SignedPubKeyContent
+                $("    Set-Content -Path '{0}' -Value @'{1}'@" -f $SignedPubKeyCertFilePath,$("`n" + $($SignedPubKeyContent -join "`n") + "`n"))
                 '    "Done" | ConvertTo-Json -Depth 3'
                 '}'
                 'catch {'
@@ -367,7 +367,7 @@ function Sign-SSHHostPublicKey {
                 $SBAsString = @(
                     'Write-Host "`nOutputStartsBelow`n"'
                     'try {'
-                    '    Set-Content -Path {0} -Value @"`n{1}`n"@' -f "'$sshdConfigPath'",$sshdContent
+                    $("    Set-Content -Path '{0}' -Value @'{1}'@" -f $sshdConfigPath,$("`n" + $($sshdContent -join "`n") + "`n"))
                     "    Get-Content '$sshdConfigPath' | ConvertTo-Json -Depth 3"
                     '}'
                     'catch {'
@@ -413,7 +413,7 @@ function Sign-SSHHostPublicKey {
                     $SBAsString = @(
                         'Write-Host "`nOutputStartsBelow`n"'
                         'try {'
-                        '    Set-Content -Path {0} -Value @"`n{1}`n"@' -f "'$sshdConfigPath'",$UpdatedSSHDConfig
+                        $("    Set-Content -Path '{0}' -Value @'{1}'@" -f $sshdConfigPath,$("`n" + $($UpdatedSSHDConfig -join "`n") + "`n"))
                         "    Get-Content '$sshdConfigPath' | ConvertTo-Json -Depth 3"
                         '}'
                         'catch {'
@@ -467,8 +467,8 @@ function Sign-SSHHostPublicKey {
 # SIG # Begin signature block
 # MIIMiAYJKoZIhvcNAQcCoIIMeTCCDHUCAQExCzAJBgUrDgMCGgUAMGkGCisGAQQB
 # gjcCAQSgWzBZMDQGCisGAQQBgjcCAR4wJgIDAQAABBAfzDtgWUsITrck0sYpfvNR
-# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUqXWoC5+fcLd1HPizdWDLTIsc
-# SAKgggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
+# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUUAfabax4RO/6Ihbyh/klf+AL
+# JASgggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
 # 9w0BAQsFADAwMQwwCgYDVQQGEwNMQUIxDTALBgNVBAoTBFpFUk8xETAPBgNVBAMT
 # CFplcm9EQzAxMB4XDTE3MDkyMDIxMDM1OFoXDTE5MDkyMDIxMTM1OFowPTETMBEG
 # CgmSJomT8ixkARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMT
@@ -525,11 +525,11 @@ function Sign-SSHHostPublicKey {
 # ARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMTB1plcm9TQ0EC
 # E1gAAAH5oOvjAv3166MAAQAAAfkwCQYFKw4DAhoFAKB4MBgGCisGAQQBgjcCAQwx
 # CjAIoAKAAKECgAAwGQYJKoZIhvcNAQkDMQwGCisGAQQBgjcCAQQwHAYKKwYBBAGC
-# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFIjn4PBnIDmR8O6j
-# xiNg+t6E/97VMA0GCSqGSIb3DQEBAQUABIIBAHM7jUBt2qW6ym/I+0ynsHS7UG7a
-# +GaotAqIgF99nRTwVfLjXJcp0G0CkIw2Cg4sFrs8Mkl7ki6Dm8XIxZAPgktSHpab
-# cg6kDr5B9Q05gnTGisXAndtk1oRgabc36/iHIgoPcI5LjSAfQRW276rbFRU0jwaK
-# yn0pmrUrFBI4X8B1JqMBMqDM8HeCoMjeR90MSt6Z5Qcdxf8GaW1jl5/WunRa92FW
-# RkXBSMsovLqG9PArXYpiKABJ7mFiO6vdXynKjbDjCWg8seEHxPWvAxJlnUoIPniq
-# 2i11k8ammvpY0066PAl0zanyi5LnKFNa0SXvCOPv3+L5rYpSQXzsEtTTSdQ=
+# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFPIuEdgxKuRUXoV3
+# tfgM1fJVKmmrMA0GCSqGSIb3DQEBAQUABIIBAEExtnWEZbfGGmtzrxl4fJlzRrRt
+# b3pdwSOd5UGfULxiaUbCMiNwR8oKcG5HTpqg4WpV6+RFLw8D0xyT9/tB6BVR0TnW
+# kWmImbQQOHWer1/TVf6dUwKIrBbXTAO4cT5VWnIEB8Tt5iD07uEKPMQ3Maxue2Eb
+# vrF+rC6IZ9p93CSLkBTW8ukNgga5x71v8L58FBMh2lDdLE08bmCyXtkFTc3LS1a9
+# mZ/iCVrXnJKR7HDa98gmwvE8lliA7SFE3+kycTZPmOqempmYs0ohl3A2NJrgY8n6
+# hKCLOaAByRIgKwA7PkCtmWRD61feDnVIfVMJeVl5xcUe+GcX3DQ1fx6lYUk=
 # SIG # End signature block

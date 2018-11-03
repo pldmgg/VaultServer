@@ -645,7 +645,7 @@ function New-SSHKey {
             $SSHAgentProcesses = Get-Process -Name ssh-agent -IncludeUserName -ErrorAction SilentlyContinue | Where-Object {$_.UserName -eq $env:USER}
             if ($SSHAgentProcesses.Count -gt 0) {
                 $LatestSSHAgentProcess = $(@($SSHAgentProcesses) | Sort-Object StartTime)[-1]
-                $env:SSH_AUTH_SOCK = $(Get-ChildItem /tmp -Recurse -File | Where-Object {$_.FullName -match "\.$($LatestSSHAgentProcess.Id-1)"}).FullName
+                $env:SSH_AUTH_SOCK = $(Get-ChildItem /tmp -Recurse -File -ErrorAction SilentlyContinue | Where-Object {$_.FullName -match "\.$($LatestSSHAgentProcess.Id-1)"}).FullName
                 $env:SSH_AGENT_PID = $LatestSSHAgentProcess.Id
             }
             else {                
@@ -836,8 +836,8 @@ function New-SSHKey {
 # SIG # Begin signature block
 # MIIMiAYJKoZIhvcNAQcCoIIMeTCCDHUCAQExCzAJBgUrDgMCGgUAMGkGCisGAQQB
 # gjcCAQSgWzBZMDQGCisGAQQBgjcCAR4wJgIDAQAABBAfzDtgWUsITrck0sYpfvNR
-# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUOoMRfEOk01xuTKImM35jKmn6
-# 1xmgggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
+# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUkOMiNMQ3RoPZqprZBw42+tKZ
+# Qkegggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
 # 9w0BAQsFADAwMQwwCgYDVQQGEwNMQUIxDTALBgNVBAoTBFpFUk8xETAPBgNVBAMT
 # CFplcm9EQzAxMB4XDTE3MDkyMDIxMDM1OFoXDTE5MDkyMDIxMTM1OFowPTETMBEG
 # CgmSJomT8ixkARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMT
@@ -894,11 +894,11 @@ function New-SSHKey {
 # ARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMTB1plcm9TQ0EC
 # E1gAAAH5oOvjAv3166MAAQAAAfkwCQYFKw4DAhoFAKB4MBgGCisGAQQBgjcCAQwx
 # CjAIoAKAAKECgAAwGQYJKoZIhvcNAQkDMQwGCisGAQQBgjcCAQQwHAYKKwYBBAGC
-# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFGc3CziD7sjBeJzV
-# 9MRvexjPGd8PMA0GCSqGSIb3DQEBAQUABIIBAEWnespUk8u73XJDld89nD6xeZTg
-# etWQgNKa8HislcUSKQx/5F0SwLj7jYFGPZn7QLPdKPuNBfMcgmGCvfkYLetA5vbL
-# 1KswA8ryA1rsRXVPEyJce+tme3y3ruoIWSS7ryq8wab71ijcpoXARwcogTjEOup4
-# zXS61VAz5fRDCcXa7VUFl3pkdd1q3CpOipKSmBqEBV4AHPkC+kRw3tGBxYgpx7fC
-# GOyw8H3uCfP3JPLZngJLJMljzzuyHPYusgOmdEQQygdHimVO1TYQ23r4ZNteNrUB
-# fM/h/Qy5YBM7RVSNnqble1f70jMUcybSbwhSD7iaKUmdxGqsKxjcYmDu9KE=
+# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFMIcgK8XCdaMEB5g
+# 4Z+NBvvtaaLLMA0GCSqGSIb3DQEBAQUABIIBAKtasR13dAvNXsgHv6AL3fdHU4bY
+# SJw+gg5ii+DnE4Pvo9Nlm5Mn3UUGzcY+HSQQ34ukIy37BbNMN0HgADFvt3jkLWfa
+# 0mQSX4st0J05lVRtumBsS68A7SWX4l+/YtaLMiOGSdBFX7Cz2tUxo3TEO4DQyGGg
+# dHzlMZghFTfHVkPg6XYjl1d1Wbdho+WRt6MANuDwhkccDOYDTmJkC1hTaGpSXftD
+# fE7vkGX9cUpLIbowarnSsMZ7ppF05ZldlAFEk+MDcByeSnf3GjSNAkR9tzCrVIgZ
+# ktvCXx1qlS2XYqj6/pcFmQPdSkInUbG9E+eLD9xIdiOfNtaYo54HcTlmK3M=
 # SIG # End signature block
