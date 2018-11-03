@@ -50,6 +50,9 @@ function Sign-SSHHostPublicKey {
         NewCronToAddSudoPwd
         $env:SudoPwdPrompt = $False
     }
+    if (!$PSVersionTable.Platform -or $PSVersionTable.Platform -eq "Win32NT") {
+        [Net.ServicePointManager]::SecurityProtocol = "tls12, tls11, tls"
+    }
 
     if (!$PSVersionTable.Platform -or $PSVersionTable.Platform -eq "Win32NT") {
         # Make sure sshd service is installed and running. If it is, we shouldn't need to use
@@ -162,7 +165,37 @@ function Sign-SSHHostPublicKey {
     # HTTP API Request
     # The below removes 'comment' text from the Host Public key because sometimes it can cause problems
     # with the below json
-    $PubKeyContent = $($(Get-Content $PathToSSHHostPublicKeyFile) -split "[\s]")[0..1] -join " "
+    if (!$PSVersionTable.Platform -or $PSVersionTable.Platform -eq "Win32NT") {
+        $PubKeyContent = $($(Get-Content $PathToSSHHostPublicKeyFile) -split "[\s]")[0..1] -join " "
+    }
+    if ($PSVersionTable.Platform -eq "Unix" -or $PSVersionTable.OS -match "Darwin") {
+        $SBAsString = @(
+            'Write-Host "`nOutputStartsBelow`n"'
+            'try {'
+            '    $PubKeyContent = $($(Get-Content "{0}") -split "[\s]")[0..1] -join " "' -f $PathToSSHHostPublicKeyFile
+            '    $PubKeyContent | ConvertTo-Json -Depth 3'
+            '}'
+            'catch {'
+            '    @("ErrorMsg",$_.Exception.Message) | ConvertTo-Json -Depth 3'
+            '}'
+        )
+        $SBAsString = $SBAsString -join "`n"
+        $SSHHostPubKeyPrep = SudoPwsh -CmdString $SBAsString
+
+        if ($SSHHostPubKeyPrep.Output -match "ErrorMsg") {
+            throw $SSHHostPubKeyPrep.Output[-1]
+        }
+        if ($SSHHostPubKeyPrep.OutputType -eq "Error") {
+            if ($SSHHostPubKeyPrep.Output -match "ErrorMsg") {
+                throw $SSHHostPubKeyPrep.Output[-1]
+            }
+            else {
+                throw $SSHHostPubKeyPrep.Output
+            }
+        }
+
+        $PubKeyContent = $SSHHostPubKeyPrep.Output
+    }
 
     $jsonRequest = @"
 {
@@ -187,7 +220,44 @@ function Sign-SSHHostPublicKey {
     }
 
     $SignedSSHClientPubKeyCertResponse = Invoke-WebRequest @IWRSplatParams
-    Set-Content -Value $($SignedSSHClientPubKeyCertResponse.Content | ConvertFrom-Json).data.signed_key.Trim() -Path $SignedPubKeyCertFilePath
+    $SignedPubKeyContent = $($SignedSSHClientPubKeyCertResponse.Content | ConvertFrom-Json).data.signed_key.Trim()
+
+    if (!$PSVersionTable.Platform -or $PSVersionTable.Platform -eq "Win32NT") {
+        Set-Content -Path $SignedPubKeyCertFilePath -Value $SignedPubKeyContent
+    }
+    if ($PSVersionTable.Platform -eq "Unix" -or $PSVersionTable.OS -match "Darwin") {
+        try {
+            $SBAsString = @(
+                'Write-Host "`nOutputStartsBelow`n"'
+                'try {'
+                '    Set-Content -Path {0} -Value @"`n{1}`n"@' -f "'$SignedPubKeyCertFilePath'",$SignedPubKeyContent
+                '    "Done" | ConvertTo-Json -Depth 3'
+                '}'
+                'catch {'
+                '    @("ErrorMsg",$_.Exception.Message) | ConvertTo-Json -Depth 3'
+                '}'
+            )
+            $SBAsString = $SBAsString -join "`n"
+            $SignedSSHHostPubKeyPrep = SudoPwsh -CmdString $SBAsString
+
+            if ($SignedSSHHostPubKeyPrep.Output -match "ErrorMsg") {
+                throw $SignedSSHHostPubKeyPrep.Output[-1]
+            }
+            if ($SignedSSHHostPubKeyPrep.OutputType -eq "Error") {
+                if ($SignedSSHHostPubKeyPrep.Output -match "ErrorMsg") {
+                    throw $SignedSSHHostPubKeyPrep.Output[-1]
+                }
+                else {
+                    throw $SignedSSHHostPubKeyPrep.Output
+                }
+            }
+        }
+        catch {
+            Write-Error $_
+            $global:FunctionResult = "1"
+            return
+        }
+    }
 
     # Make sure permissions on "$sshdir/ssh_host_rsa_key-cert.pub" are set properly
     if ($PSVersionTable.PSEdition -eq "Core" -and $PSVersionTable.Platform -eq "Win32NT") {
@@ -211,24 +281,31 @@ function Sign-SSHHostPublicKey {
         $null = $SecurityDescriptor | Set-NTFSSecurityDescriptor
     }
     elseif ($PSVersionTable.Platform -eq "Unix" -or $PSVersionTable.OS -match "Darwin") {
-        chmod 644 "$SignedPubKeyCertFilePath"
-    }
-
-    # Update sshd_config
-    [System.Collections.ArrayList]$sshdContent = Get-Content $sshdConfigPath
-
-    # Determine if sshd_config already has the 'HostCertificate' option active
-    $ExistingHostCertificateOption = $sshdContent -match "HostCertificate" | Where-Object {$_ -notmatch "#"}
-    $HostCertificatePath =  $PathToSSHHostPublicKeyFile -replace "\.pub","-cert.pub"
-    $HostCertificateOptionLine = "HostCertificate $HostCertificatePathWithForwardSlashes"
-    
-    if (!$ExistingHostCertificateOption) {
         try {
-            $LineNumberToInsertOn = $sshdContent.IndexOf($($sshdContent -match "HostKey .*ssh_host_rsa_key$")) + 1
-            [System.Collections.ArrayList]$sshdContent.Insert($LineNumberToInsertOn, $HostCertificateOptionLine)
-            Set-Content -Value $sshdContent -Path $sshdConfigPath
-            $SSHDConfigContentChanged = $True
-            [System.Collections.ArrayList]$sshdContent = Get-Content $sshdConfigPath
+            $SBAsString = @(
+                'Write-Host "`nOutputStartsBelow`n"'
+                'try {'
+                "    chmod 644 '$SignedPubKeyCertFilePath'"
+                '    "Done" | ConvertTo-Json -Depth 3'
+                '}'
+                'catch {'
+                '    @("ErrorMsg",$_.Exception.Message) | ConvertTo-Json -Depth 3'
+                '}'
+            )
+            $SBAsString = $SBAsString -join "`n"
+            $SignedSSHHostPermsPrep = SudoPwsh -CmdString $SBAsString
+
+            if ($SignedSSHHostPermsPrep.Output -match "ErrorMsg") {
+                throw $SignedSSHHostPermsPrep.Output[-1]
+            }
+            if ($SignedSSHHostPermsPrep.OutputType -eq "Error") {
+                if ($SignedSSHHostPermsPrep.Output -match "ErrorMsg") {
+                    throw $SignedSSHHostPermsPrep.Output[-1]
+                }
+                else {
+                    throw $SignedSSHHostPermsPrep.Output
+                }
+            }
         }
         catch {
             Write-Error $_
@@ -236,19 +313,141 @@ function Sign-SSHHostPublicKey {
             return
         }
     }
-    else {
-        if ($ExistingHostCertificateOption -ne $HostCertificateOptionLine) {
-            $UpdatedSSHDConfig = $sshdContent -replace [regex]::Escape($ExistingHostCertificateOption),"$HostCertificateOptionLine"
 
+    # Update sshd_config
+    if (!$PSVersionTable.Platform -or $PSVersionTable.Platform -eq "Win32NT") {
+        [System.Collections.ArrayList]$sshdContent = Get-Content $sshdConfigPath
+    }
+    if ($PSVersionTable.Platform -eq "Unix" -or $PSVersionTable.OS -match "Darwin") {
+        try {
+            $SBAsString = @(
+                'Write-Host "`nOutputStartsBelow`n"'
+                'try {'
+                "    Get-Content '$sshdConfigPath' | ConvertTo-Json -Depth 3"
+                '}'
+                'catch {'
+                '    @("ErrorMsg",$_.Exception.Message) | ConvertTo-Json -Depth 3'
+                '}'
+            )
+            $SBAsString = $SBAsString -join "`n"
+            $GetSSHDContentPrep = SudoPwsh -CmdString $SBAsString
+
+            if ($GetSSHDContentPrep.Output -match "ErrorMsg") {
+                throw $GetSSHDContentPrep.Output[-1]
+            }
+            if ($GetSSHDContentPrep.OutputType -eq "Error") {
+                if ($GetSSHDContentPrep.Output -match "ErrorMsg") {
+                    throw $GetSSHDContentPrep.Output[-1]
+                }
+                else {
+                    throw $GetSSHDContentPrep.Output
+                }
+            }
+
+            [System.Collections.ArrayList]$sshdContent = $GetSSHDContentPrep.Output.value
+        }
+        catch {
+            Write-Error $_
+            $global:FunctionResult = "1"
+            return
+        }
+    }
+
+    # Determine if sshd_config already has the 'HostCertificate' option active
+    $ExistingHostCertificateOption = $sshdContent -match "HostCertificate" | Where-Object {$_ -notmatch "#"}
+    $HostCertificatePath =  $PathToSSHHostPublicKeyFile -replace "\.pub","-cert.pub"
+    $HostCertificateOptionLine = "HostCertificate $HostCertificatePathWithForwardSlashes"
+    
+    if (!$ExistingHostCertificateOption) {
+        $LineNumberToInsertOn = $sshdContent.IndexOf($($sshdContent -match "HostKey .*ssh_host_rsa_key$")) + 1
+        [System.Collections.ArrayList]$sshdContent.Insert($LineNumberToInsertOn, $HostCertificateOptionLine)
+
+        if ($PSVersionTable.Platform -eq "Unix" -or $PSVersionTable.OS -match "Darwin") {
             try {
-                Set-Content -Value $UpdatedSSHDConfig -Path $sshdConfigPath
+                $SBAsString = @(
+                    'Write-Host "`nOutputStartsBelow`n"'
+                    'try {'
+                    '    Set-Content -Path {0} -Value @"`n{1}`n"@' -f "'$sshdConfigPath'",$sshdContent
+                    "    Get-Content '$sshdConfigPath' | ConvertTo-Json -Depth 3"
+                    '}'
+                    'catch {'
+                    '    @("ErrorMsg",$_.Exception.Message) | ConvertTo-Json -Depth 3'
+                    '}'
+                )
+                $SBAsString = $SBAsString -join "`n"
+                $GetSSHDContentPrep = SudoPwsh -CmdString $SBAsString
+
+                if ($GetSSHDContentPrep.Output -match "ErrorMsg") {
+                    throw $GetSSHDContentPrep.Output[-1]
+                }
+                if ($GetSSHDContentPrep.OutputType -eq "Error") {
+                    if ($GetSSHDContentPrep.Output -match "ErrorMsg") {
+                        throw $GetSSHDContentPrep.Output[-1]
+                    }
+                    else {
+                        throw $GetSSHDContentPrep.Output
+                    }
+                }
+
                 $SSHDConfigContentChanged = $True
-                [System.Collections.ArrayList]$sshdContent = Get-Content $sshdConfigPath
+                [System.Collections.ArrayList]$sshdContent = $GetSSHDContentPrep.Output.value
             }
             catch {
                 Write-Error $_
                 $global:FunctionResult = "1"
                 return
+            }
+        }
+        if (!$PSVersionTable.Platform -or $PSVersionTable.Platform -eq "Win32NT") {
+            Set-Content -Path $sshdConfigPath -Value $sshdContent
+            $SSHDConfigContentChanged = $True
+            [System.Collections.ArrayList]$sshdContent = Get-Content $sshdConfigPath
+        }
+    }
+    else {
+        if ($ExistingHostCertificateOption -ne $HostCertificateOptionLine) {
+            $UpdatedSSHDConfig = $sshdContent -replace [regex]::Escape($ExistingHostCertificateOption),"$HostCertificateOptionLine"
+
+            if ($PSVersionTable.Platform -eq "Unix" -or $PSVersionTable.OS -match "Darwin") {
+                try {
+                    $SBAsString = @(
+                        'Write-Host "`nOutputStartsBelow`n"'
+                        'try {'
+                        '    Set-Content -Path {0} -Value @"`n{1}`n"@' -f "'$sshdConfigPath'",$UpdatedSSHDConfig
+                        "    Get-Content '$sshdConfigPath' | ConvertTo-Json -Depth 3"
+                        '}'
+                        'catch {'
+                        '    @("ErrorMsg",$_.Exception.Message) | ConvertTo-Json -Depth 3'
+                        '}'
+                    )
+                    $SBAsString = $SBAsString -join "`n"
+                    $GetSSHDContentPrep = SudoPwsh -CmdString $SBAsString
+        
+                    if ($GetSSHDContentPrep.Output -match "ErrorMsg") {
+                        throw $GetSSHDContentPrep.Output[-1]
+                    }
+                    if ($GetSSHDContentPrep.OutputType -eq "Error") {
+                        if ($GetSSHDContentPrep.Output -match "ErrorMsg") {
+                            throw $GetSSHDContentPrep.Output[-1]
+                        }
+                        else {
+                            throw $GetSSHDContentPrep.Output
+                        }
+                    }
+        
+                    $SSHDConfigContentChanged = $True
+                    [System.Collections.ArrayList]$sshdContent = $GetSSHDContentPrep.Output.value
+                }
+                catch {
+                    Write-Error $_
+                    $global:FunctionResult = "1"
+                    return
+                }
+            }
+            if (!$PSVersionTable.Platform -or $PSVersionTable.Platform -eq "Win32NT") {
+                Set-Content -Path $sshdConfigPath -Value $UpdatedSSHDConfig
+                $SSHDConfigContentChanged = $True
+                [System.Collections.ArrayList]$sshdContent = Get-Content $sshdConfigPath
             }
         }
         else {
@@ -257,7 +456,7 @@ function Sign-SSHHostPublicKey {
     }
 
     [pscustomobject]@{
-        SignedPubKeyCertFile        = Get-Item $SignedPubKeyCertFilePath
+        SignedPubKeyCertFile        = $SignedPubKeyCertFilePath
         SSHDConfigContentChanged    = if ($SSHDConfigContentChanged) {$True} else {$False}
         SSHDContentThatWasAdded     = if ($SSHDConfigContentChanged) {$HostCertificateOptionLine}
     }
@@ -268,8 +467,8 @@ function Sign-SSHHostPublicKey {
 # SIG # Begin signature block
 # MIIMiAYJKoZIhvcNAQcCoIIMeTCCDHUCAQExCzAJBgUrDgMCGgUAMGkGCisGAQQB
 # gjcCAQSgWzBZMDQGCisGAQQBgjcCAR4wJgIDAQAABBAfzDtgWUsITrck0sYpfvNR
-# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQU1U5OowM9h13E1KAuV2Cy7OVI
-# Mq6gggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
+# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUqXWoC5+fcLd1HPizdWDLTIsc
+# SAKgggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
 # 9w0BAQsFADAwMQwwCgYDVQQGEwNMQUIxDTALBgNVBAoTBFpFUk8xETAPBgNVBAMT
 # CFplcm9EQzAxMB4XDTE3MDkyMDIxMDM1OFoXDTE5MDkyMDIxMTM1OFowPTETMBEG
 # CgmSJomT8ixkARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMT
@@ -326,11 +525,11 @@ function Sign-SSHHostPublicKey {
 # ARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMTB1plcm9TQ0EC
 # E1gAAAH5oOvjAv3166MAAQAAAfkwCQYFKw4DAhoFAKB4MBgGCisGAQQBgjcCAQwx
 # CjAIoAKAAKECgAAwGQYJKoZIhvcNAQkDMQwGCisGAQQBgjcCAQQwHAYKKwYBBAGC
-# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFCfs7INJvPMSQt+n
-# UQhnuRN64q5rMA0GCSqGSIb3DQEBAQUABIIBADbJKIwXnFzoiIj6R4JfTy6NDSXo
-# tDJrtqo8sh22lHSqA1je8LzdhnY+J1tBQfIdKtdr2XRJhWV3LG+tb2KFzMIuEHgQ
-# 4sUYsMTee52BZlRzwXJq5h3ikOGENYevUUh//9V94eKMUEsxHD4Rfq0HrfLgp7ju
-# PzVpop4lKI4BBowqCkzbwBnaHVa5gdSNB4URhjBU37EoaCJODV74/y+hxG9BvV6F
-# 3v5NH6dai0eysqqHnc6G0/voyycpYWjF/Rxakv2UHB4uBOZQ6iLgUgc+U5NIiWBa
-# M6ZM2dXBr2yOEaylEfOzmAkdwS/JBVCg6amzVb938g5qBsGi/WTEptLz0q8=
+# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFIjn4PBnIDmR8O6j
+# xiNg+t6E/97VMA0GCSqGSIb3DQEBAQUABIIBAHM7jUBt2qW6ym/I+0ynsHS7UG7a
+# +GaotAqIgF99nRTwVfLjXJcp0G0CkIw2Cg4sFrs8Mkl7ki6Dm8XIxZAPgktSHpab
+# cg6kDr5B9Q05gnTGisXAndtk1oRgabc36/iHIgoPcI5LjSAfQRW276rbFRU0jwaK
+# yn0pmrUrFBI4X8B1JqMBMqDM8HeCoMjeR90MSt6Z5Qcdxf8GaW1jl5/WunRa92FW
+# RkXBSMsovLqG9PArXYpiKABJ7mFiO6vdXynKjbDjCWg8seEHxPWvAxJlnUoIPniq
+# 2i11k8ammvpY0066PAl0zanyi5LnKFNa0SXvCOPv3+L5rYpSQXzsEtTTSdQ=
 # SIG # End signature block

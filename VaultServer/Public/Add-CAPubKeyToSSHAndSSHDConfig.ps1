@@ -441,178 +441,832 @@ function Add-CAPubKeyToSSHAndSSHDConfig {
     # Need to make sure these strings exist in dedicated files under $sshdir as well as in 
     # $sshdir/authorized_keys and $sshdir/ssh_known_hosts
 
-    # Before adding these CA Public Keys to $sshdir/authorized_keys, if there's already an existing
-    # $sshdir/authorized_keys, archive it in a folder called $sshdir/Archive so that we can revert if necessary
-    if (Test-Path "$sshdir/authorized_keys") {
-        if (!$(Test-Path "$sshdir/Archive")) {
-            $null = New-Item -ItemType Directory -Path "$sshdir/Archive" -Force
+    if ($PSVersionTable.Platform -eq "Unix" -or $PSVersionTable.OS -match "Darwin") {
+        # Before adding these CA Public Keys to $sshdir/authorized_keys, if there's already an existing
+        # $sshdir/authorized_keys, archive it in a folder called $sshdir/Archive so that we can revert if necessary
+        if (Test-Path "$sshdir/authorized_keys") {
+            try {
+                $SBAsString = @(
+                    'Write-Host "`nOutputStartsBelow`n"'
+                    'try {'
+                    "    if (!`$(Test-Path '$sshdir/Archive')) {"
+                    "        `$null = New-Item -ItemType Directory -Path '$sshdir/Archive' -Force"
+                    '    }'
+                    "    Move-Item -Path '$sshdir/authorized_keys' -Destination '$sshdir/Archive' -Force"
+                    "    Get-Item '$sshdir/Archive/authorized_keys' | ConvertTo-Json -Depth 3"
+                    '}'
+                    'catch {'
+                    '    @("ErrorMsg",$_.Exception.Message) | ConvertTo-Json -Depth 3'
+                    '}'
+                )
+                $SBAsString = $SBAsString -join "`n"
+                $ArchiveAuthorizedKeysItemPrep = SudoPwsh -CmdString $SBAsString
+
+                if ($ArchiveAuthorizedKeysItemPrep.Output -match "ErrorMsg") {
+                    throw $ArchiveAuthorizedKeysItemPrep.Output[-1]
+                }
+                if ($ArchiveAuthorizedKeysItemPrep.OutputType -eq "Error") {
+                    if ($ArchiveAuthorizedKeysItemPrep.Output -match "ErrorMsg") {
+                        throw $ArchiveAuthorizedKeysItemPrep.Output[-1]
+                    }
+                    else {
+                        throw $ArchiveAuthorizedKeysItemPrep.Output
+                    }
+                }
+                $ArchiveAuthorizedKeysItem = $ArchiveAuthorizedKeysItemPrep.Output
+            }
+            catch {
+                Write-Error $_
+                $global:FunctionResult = "1"
+                return
+            }
         }
-        Move-Item -Path "$sshdir/authorized_keys" -Destination "$sshdir/Archive" -Force
-    }
-    # Before adding these CA Public Keys to $sshdir/ssh_known_hosts, if there's already an existing
-    # $sshdir/ssh_known_hosts, archive it in a folder called $sshdir/Archive so that we can revert if necessary
-    if (Test-Path "$sshdir/ssh_known_hosts") {
-        if (!$(Test-Path "$sshdir/Archive")) {
-            $null = New-Item -ItemType Directory -Path "$sshdir/Archive" -Force
+        # Before adding these CA Public Keys to $sshdir/ssh_known_hosts, if there's already an existing
+        # $sshdir/ssh_known_hosts, archive it in a folder called $sshdir/Archive so that we can revert if necessary
+        if (Test-Path "$sshdir/ssh_known_hosts") {
+            try {
+                $SBAsString = @(
+                    'Write-Host "`nOutputStartsBelow`n"'
+                    'try {'
+                    "    if (!`$(Test-Path '$sshdir/Archive')) {"
+                    "        `$null = New-Item -ItemType Directory -Path '$sshdir/Archive' -Force"
+                    '    }'
+                    "    Move-Item -Path '$sshdir/ssh_known_hosts' -Destination '$sshdir/Archive' -Force"
+                    "    Get-Item '$sshdir/Archive/ssh_known_hosts' | ConvertTo-Json -Depth 3"
+                    '}'
+                    'catch {'
+                    '    @("ErrorMsg",$_.Exception.Message) | ConvertTo-Json -Depth 3'
+                    '}'
+                )
+                $SBAsString = $SBAsString -join "`n"
+                $ArchiveSSHKnownHostsItemPrep = SudoPwsh -CmdString $SBAsString
+
+                if ($ArchiveSSHKnownHostsItemPrep.Output -match "ErrorMsg") {
+                    throw $ArchiveSSHKnownHostsItemPrep.Output[-1]
+                }
+                if ($ArchiveSSHKnownHostsItemPrep.OutputType -eq "Error") {
+                    if ($ArchiveSSHKnownHostsItemPrep.Output -match "ErrorMsg") {
+                        throw $ArchiveSSHKnownHostsItemPrep.Output[-1]
+                    }
+                    else {
+                        throw $ArchiveSSHKnownHostsItemPrep.Output
+                    }
+                }
+                $ArchiveSSHKnownHostsItem = $ArchiveSSHKnownHostsItemPrep.Output
+            }
+            catch {
+                Write-Error $_
+                $global:FunctionResult = "1"
+                return
+            }
         }
-        Move-Item -Path "$sshdir/ssh_known_hosts" -Destination "$sshdir/Archive" -Force
-    }
 
-    # Add the CA Public Certs to $sshdir/authorized_keys in their appropriate formats
-    $ContentToAddToAuthKeys = @(
-        "ssh-rsa-cert-v01@openssh.com " + $PublicKeyOfCAUsedToSignUserKeysAsString
-        "ssh-rsa-cert-v01@openssh.com " + $PublicKeyOfCAUsedToSignHostKeysAsString
-    )
-    $ContentToAddToAuthKeysString = $ContentToAddToAuthKeys -join "`n"
-    Add-Content -Path "$sshdir/authorized_keys" -Value $ContentToAddToAuthKeysString
-    $null = $FilesUpdated.Add($(Get-Item "$sshdir/authorized_keys"))
+        # Add the CA Public Certs to $sshdir/authorized_keys in their appropriate formats
+        $ContentToAddToAuthKeys = @(
+            "ssh-rsa-cert-v01@openssh.com " + $PublicKeyOfCAUsedToSignUserKeysAsString
+            "ssh-rsa-cert-v01@openssh.com " + $PublicKeyOfCAUsedToSignHostKeysAsString
+        )
+        $ContentToAddToAuthKeysString = $ContentToAddToAuthKeys -join "`n"
+        try {
+            #Add-Content -Path "$sshdir/authorized_keys" -Value $ContentToAddToAuthKeysString
+            $SBAsString = @(
+                'Write-Host "`nOutputStartsBelow`n"'
+                'try {'
+                $('    Add-Content -Path "{0}" -Value @"`n{1}`n"@' -f "$sshdir/authorized_keys",$ContentToAddToAuthKeysString)
+                '    "Done" | ConvertTo-Json -Depth 3'
+                '}'
+                'catch {'
+                '    @("ErrorMsg",$_.Exception.Message) | ConvertTo-Json -Depth 3'
+                '}'
+            )
+            $SBAsString = $SBAsString -join "`n"
+            $AddContentOutputPrep = SudoPwsh -CmdString $SBAsString
 
-    # Add the CA Public Certs to $sshdir/ssh_known_hosts in their appropriate formats
-    $ContentToAddToKnownHosts = @(
-        "@cert-authority * " + $PublicKeyOfCAUsedToSignUserKeysAsString
-        "@cert-authority * " + $PublicKeyOfCAUsedToSignHostKeysAsString
-    )
-    $ContentToAddToKnownHostsString = $ContentToAddToKnownHosts -join "`n"
-    Add-Content -Path $sshdir/ssh_known_hosts -Value $ContentToAddToKnownHostsString
-    $null = $FilesUpdated.Add($(Get-Item "$sshdir/ssh_known_hosts"))
+            if ($AddContentOutputPrep.Output -match "ErrorMsg") {
+                throw $AddContentOutputPrep.Output[-1]
+            }
+            if ($AddContentOutputPrep.OutputType -eq "Error") {
+                if ($AddContentOutputPrep.Output -match "ErrorMsg") {
+                    throw $AddContentOutputPrep.Output[-1]
+                }
+                else {
+                    throw $AddContentOutputPrep.Output
+                }
+            }
+            $AddContentOutput = $AddContentOutputPrep.Output
+        }
+        catch {
+            Write-Error $_
+            $global:FunctionResult = "1"
+            return
+        }
+        $null = $FilesUpdated.Add("$sshdir/authorized_keys")
 
-    # Make sure $PublicKeyOfCAUsedToSignUserKeysAsString and $PublicKeyOfCAUsedToSignHostKeysAsString are written
-    # to their own dedicated files under $sshdir
+        # Add the CA Public Certs to $sshdir/ssh_known_hosts in their appropriate formats
+        $ContentToAddToKnownHosts = @(
+            "@cert-authority * " + $PublicKeyOfCAUsedToSignUserKeysAsString
+            "@cert-authority * " + $PublicKeyOfCAUsedToSignHostKeysAsString
+        )
+        $ContentToAddToKnownHostsString = $ContentToAddToKnownHosts -join "`n"
+        try {
+            #Add-Content -Path $sshdir/ssh_known_hosts -Value $ContentToAddToKnownHostsString
+            $SBAsString = @(
+                'Write-Host "`nOutputStartsBelow`n"'
+                'try {'
+                $('    Add-Content -Path "{0}" -Value @"`n{1}`n"@' -f "$sshdir/ssh_known_hosts",$ContentToAddToKnownHostsString)
+                '    "Done" | ConvertTo-Json -Depth 3'
+                '}'
+                'catch {'
+                '    @("ErrorMsg",$_.Exception.Message) | ConvertTo-Json -Depth 3'
+                '}'
+            )
+            $SBAsString = $SBAsString -join "`n"
+            $AddContentOutputPrep = SudoPwsh -CmdString $SBAsString
+
+            if ($AddContentOutputPrep.Output -match "ErrorMsg") {
+                throw $AddContentOutputPrep.Output[-1]
+            }
+            if ($AddContentOutputPrep.OutputType -eq "Error") {
+                if ($AddContentOutputPrep.Output -match "ErrorMsg") {
+                    throw $AddContentOutputPrep.Output[-1]
+                }
+                else {
+                    throw $AddContentOutputPrep.Output
+                }
+            }
+            $AddContentOutput = $AddContentOutputPrep.Output
+        }
+        catch {
+            Write-Error $_
+            $global:FunctionResult = "1"
+            return
+        }
+        $null = $FilesUpdated.Add("$sshdir/ssh_known_hosts")
+
+        # Make sure $PublicKeyOfCAUsedToSignUserKeysAsString and $PublicKeyOfCAUsedToSignHostKeysAsString are written
+        # to their own dedicated files under $sshdir
+        
+        # If $PublicKeyOfCAUsedToSignUserKeysFilePath or $PublicKeyOfCAUsedToSignHostKeysFilePath were actually provided
+        # maintain the same file name when writing to $sshdir
+        if ($PSBoundParameters.ContainsKey('PublicKeyOfCAUsedToSignUserKeysFilePath')) {
+            $UserCAPubKeyFileName = $PublicKeyOfCAUsedToSignUserKeysFilePath | Split-Path -Leaf
+        }
+        else {
+            $UserCAPubKeyFileName = "ca_pub_key_of_client_signer.pub"
+        }
+        if ($PSBoundParameters.ContainsKey('PublicKeyOfCAUsedToSignHostKeysFilePath')) {
+            $HostCAPubKeyFileName = $PublicKeyOfCAUsedToSignHostKeysFilePath | Split-Path -Leaf
+        }
+        else {
+            $HostCAPubKeyFileName = "ca_pub_key_of_host_signer.pub"
+        }
+
+        if (Test-Path "$sshdir/$UserCAPubKeyFileName") {
+            try {
+                $SBAsString = @(
+                    'Write-Host "`nOutputStartsBelow`n"'
+                    'try {'
+                    "    if (!`$(Test-Path '$sshdir/Archive')) {"
+                    "        `$null = New-Item -ItemType Directory -Path '$sshdir/Archive' -Force"
+                    '    }'
+                    "    Move-Item -Path '$sshdir/$UserCAPubKeyFileName' -Destination '$sshdir/Archive' -Force"
+                    "    Get-Item '$sshdir/Archive/$UserCAPubKeyFileName' | ConvertTo-Json -Depth 3"
+                    '}'
+                    'catch {'
+                    '    @("ErrorMsg",$_.Exception.Message) | ConvertTo-Json -Depth 3'
+                    '}'
+                )
+                $SBAsString = $SBAsString -join "`n"
+                $ArchiveUserCAPubKeyFilePrep = SudoPwsh -CmdString $SBAsString
+
+                if ($ArchiveUserCAPubKeyFilePrep.Output -match "ErrorMsg") {
+                    throw $ArchiveUserCAPubKeyFilePrep.Output[-1]
+                }
+                if ($ArchiveUserCAPubKeyFilePrep.OutputType -eq "Error") {
+                    if ($ArchiveUserCAPubKeyFilePrep.Output -match "ErrorMsg") {
+                        throw $ArchiveUserCAPubKeyFilePrep.Output[-1]
+                    }
+                    else {
+                        throw $ArchiveUserCAPubKeyFilePrep.Output
+                    }
+                }
+                $ArchiveUserCAPubKeyFile = $ArchiveUserCAPubKeyFilePrep.Output
+            }
+            catch {
+                Write-Error $_
+                $global:FunctionResult = "1"
+                return
+            }
+        }
+        if (Test-Path "$sshdir/$HostCAPubKeyFileName") {
+            try {
+                $SBAsString = @(
+                    'Write-Host "`nOutputStartsBelow`n"'
+                    'try {'
+                    "    if (!`$(Test-Path '$sshdir/Archive')) {"
+                    "        `$null = New-Item -ItemType Directory -Path '$sshdir/Archive' -Force"
+                    '    }'
+                    "    Move-Item -Path '$sshdir/$HostCAPubKeyFileName' -Destination '$sshdir/Archive' -Force"
+                    "    Get-Item '$sshdir/Archive/$HostCAPubKeyFileName' | ConvertTo-Json -Depth 3"
+                    '}'
+                    'catch {'
+                    '    @("ErrorMsg",$_.Exception.Message) | ConvertTo-Json -Depth 3'
+                    '}'
+                )
+                $SBAsString = $SBAsString -join "`n"
+                $ArchiveHostCAPubKeyFilePrep = SudoPwsh -CmdString $SBAsString
+
+                if ($ArchiveHostCAPubKeyFilePrep.Output -match "ErrorMsg") {
+                    throw $ArchiveHostCAPubKeyFilePrep.Output[-1]
+                }
+                if ($ArchiveHostCAPubKeyFilePrep.OutputType -eq "Error") {
+                    if ($ArchiveHostCAPubKeyFilePrep.Output -match "ErrorMsg") {
+                        throw $ArchiveHostCAPubKeyFilePrep.Output[-1]
+                    }
+                    else {
+                        throw $ArchiveHostCAPubKeyFilePrep.Output
+                    }
+                }
+                $ArchiveHostCAPubKeyFile = $ArchiveHostCAPubKeyFilePrep.Output
+            }
+            catch {
+                Write-Error $_
+                $global:FunctionResult = "1"
+                return
+            }
+        }
+
+        #Set-Content -Path "$sshdir/$UserCAPubKeyFileName" -Value $PublicKeyOfCAUsedToSignUserKeysAsString
+        #Set-Content -Path "$sshdir/$HostCAPubKeyFileName" -Value $PublicKeyOfCAUsedToSignHostKeysAsString
+        try {
+            $SBAsString = @(
+                'Write-Host "`nOutputStartsBelow`n"'
+                'try {'
+                $('    Set-Content -Path "{0}" -Value @"`n{1}`n"@' -f "$sshdir/$UserCAPubKeyFileName",$PublicKeyOfCAUsedToSignUserKeysAsString)
+                $('    Set-Content -Path "{0}" -Value @"`n{1}`n"@' -f "$sshdir/$HostCAPubKeyFileName",$PublicKeyOfCAUsedToSignHostKeysAsString)
+                '    [pscustomobject]@{'
+                "        UserCAPubKeyFile = Get-Item '$sshdir/$UserCAPubKeyFileName'"
+                "        HostCAPubKeyFile = Get-Item '$sshdir/$HostCAPubKeyFileName'"
+                '    } | ConvertTo-Json -Depth 3'
+                '}'
+                'catch {'
+                '    @("ErrorMsg",$_.Exception.Message) | ConvertTo-Json -Depth 3'
+                '}'
+            )
+            $SBAsString = $SBAsString -join "`n"
+            $CAPubKeyFilesPrep = SudoPwsh -CmdString $SBAsString
+
+            if ($CAPubKeyFilesPrep.Output -match "ErrorMsg") {
+                throw $CAPubKeyFilesPrep.Output[-1]
+            }
+            if ($CAPubKeyFilesPrep.OutputType -eq "Error") {
+                if ($CAPubKeyFilesPrep.Output -match "ErrorMsg") {
+                    throw $CAPubKeyFilesPrep.Output[-1]
+                }
+                else {
+                    throw $CAPubKeyFilesPrep.Output
+                }
+            }
+            $CAPubKeyFiles = $CAPubKeyFilesPrep.Output
+        }
+        catch {
+            Write-Error $_
+            $global:FunctionResult = "1"
+            return
+        }
+
+        $null = $FilesUpdated.Add("$sshdir/$UserCAPubKeyFileName")
+        $null = $FilesUpdated.Add("$sshdir/$HostCAPubKeyFileName")
+        
+
+        # Next, we need to generate some content for $sshdir/authorized_principals
+
+        # IMPORTANT NOTE: The Generate-AuthorizedPrincipalsFile will only ADD users to the $sshdir/authorized_principals
+        # file (if they're not already in there). It WILL NOT delete or otherwise overwrite existing users in
+        # $sshdir/authorized_principals
+        $AuthPrincSplatParams = @{
+            ErrorAction     = "Stop"
+        }
+        if ($(!$AuthorizedPrincipalsUserGroup -and !$AuthorizedUserPrincipals) -or
+        $AuthorizedPrincipalsUserGroup -contains "AllUsers" -or
+        $($AuthorizedPrincipalsUserGroup -contains "LocalAdmins" -and $AuthorizedPrincipalsUserGroup -contains "LocalUsers" -and
+        $AuthorizedPrincipalsUserGroup -contains "DomainAdmins" -and $AuthorizedPrincipalsUserGroup -contains "DomainAdmins")
+        ) {
+            $AuthPrincSplatParams.Add("UserGroupToAdd",@("AllUsers"))
+        }
+        else {
+            if ($AuthorizedPrincipalsUserGroup) {
+                $AuthPrincSplatParams.Add("UserGroupToAdd",$AuthorizedPrincipalsUserGroup)
+            }
+            if ($AuthorizedUserPrincipals) {
+                $AuthPrincSplatParams.Add("UsersToAdd",$AuthorizedUserPrincipals)
+            }
+        }
+
+        try {
+            $AuthorizedPrincipalsFile = Generate-AuthorizedPrincipalsFile @AuthPrincSplatParams
+            if (!$AuthorizedPrincipalsFile) {throw "There was a problem with the Generate-AuthorizedPrincipalsFile function! Halting!"}
+
+            $null = $FilesUpdated.Add("$sshdir/authorized_principals")
+        }
+        catch {
+            Write-Error $_
+            $global:FunctionResult = "1"
+            if ($Output.Count -gt 0) {[pscustomobject]$Output}
+            return
+        }
+
+        try {
+            # Now we need to fix permissions for $sshdir/authorized_principals...
+            $SBAsString = @(
+                'Write-Host "`nOutputStartsBelow`n"'
+                'try {'
+                "    chmod 644 '$sshdir/authorized_principals'"
+                '    "Done" | ConvertTo-Json -Depth 3'
+                '}'
+                'catch {'
+                '    @("ErrorMsg",$_.Exception.Message) | ConvertTo-Json -Depth 3'
+                '}'
+            )
+            $SBAsString = $SBAsString -join "`n"
+            $AuthPrincOutputPrep = SudoPwsh -CmdString $SBAsString
+
+            if ($AuthPrincOutputPrep.Output -match "ErrorMsg") {
+                throw $AuthPrincOutputPrep.Output[-1]
+            }
+            if ($AuthPrincOutputPrep.OutputType -eq "Error") {
+                if ($AuthPrincOutputPrep.Output -match "ErrorMsg") {
+                    throw $AuthPrincOutputPrep.Output[-1]
+                }
+                else {
+                    throw $AuthPrincOutputPrep.Output
+                }
+            }
+            $AuthPrincOutput = $AuthPrincOutputPrep.Output
+        }
+        catch {
+            Write-Error $_
+            $global:FunctionResult = "1"
+            return
+        }
+
+        # Now that we have set content for $PublicKeyOfCAUsedToSignUserKeysFilePath, $sshdir/authorized_principals, and
+        # $sshdir/authorized_keys, we need to update sshd_config to reference these files
+
+        $PubKeyOfCAUserKeysFilePathForwardSlashes = "$sshdir\$UserCAPubKeyFileName" -replace '\\','/'
+        $TrustedUserCAKeysOptionLine = "TrustedUserCAKeys $PubKeyOfCAUserKeysFilePathForwardSlashes"
+        # For more information about authorized_principals content (specifically about setting specific commands and roles
+        # for certain users), see: https://framkant.org/2017/07/scalable-access-control-using-openssh-certificates/
+        $AuthPrincFilePathForwardSlashes = "$sshdir\authorized_principals" -replace '\\','/'
+        $AuthorizedPrincipalsOptionLine = "AuthorizedPrincipalsFile $AuthPrincFilePathForwardSlashes"
+        $AuthKeysFilePathForwardSlashes = "$sshdir\authorized_keys" -replace '\\','/'
+        $AuthorizedKeysFileOptionLine = "AuthorizedKeysFile $AuthKeysFilePathForwardSlashes"
+
+        try {
+            #[System.Collections.ArrayList]$sshdContent = Get-Content $sshdConfigPath
+            $SBAsString = @(
+                'Write-Host "`nOutputStartsBelow`n"'
+                'try {'
+                "    Get-Content '$sshdConfigPath' | ConvertTo-Json -Depth 3"
+                '}'
+                'catch {'
+                '    @("ErrorMsg",$_.Exception.Message) | ConvertTo-Json -Depth 3'
+                '}'
+            )
+            $SBAsString = $SBAsString -join "`n"
+            $sshdContentPrep = SudoPwsh -CmdString $SBAsString
+
+            if ($sshdContentPrep.Output -match "ErrorMsg") {
+                throw $sshdContentPrep.Output[-1]
+            }
+            if ($sshdContentPrep.OutputType -eq "Error") {
+                if ($sshdContentPrep.Output -match "ErrorMsg") {
+                    throw $sshdContentPrep.Output[-1]
+                }
+                else {
+                    throw $sshdContentPrep.Output
+                }
+            }
+            [System.Collections.ArrayList]$sshdContent = $sshdContentPrep.Output.value
+        }
+        catch {
+            Write-Error $_
+            $global:FunctionResult = "1"
+            return
+        }
+
+        # Determine if sshd_config already has the 'TrustedUserCAKeys' option active
+        $ExistingTrustedUserCAKeysOption = $sshdContent -match "TrustedUserCAKeys" | Where-Object {$_ -notmatch "#"}
+
+        # Determine if sshd_config already has 'AuthorizedPrincipals' option active
+        $ExistingAuthorizedPrincipalsFileOption = $sshdContent -match "AuthorizedPrincipalsFile" | Where-Object {$_ -notmatch "#"}
+
+        # Determine if sshd_config already has 'AuthorizedKeysFile' option active
+        $ExistingAuthorizedKeysFileOption = $sshdContent -match "AuthorizedKeysFile" | Where-Object {$_ -notmatch "#"}
+        
+        if (!$ExistingTrustedUserCAKeysOption) {
+            try {
+                #Add-Content -Value $TrustedUserCAKeysOptionLine -Path $sshdConfigPath
+                $SBAsString = @(
+                    'Write-Host "`nOutputStartsBelow`n"'
+                    'try {'
+                    '    Add-Content -Path {0} -Value {1}' -f "'$sshdConfigPath'","'$TrustedUserCAKeysOptionLine'"
+                    "    Get-Content '$sshdConfigPath' | ConvertTo-Json -Depth 3"
+                    '}'
+                    'catch {'
+                    '    @("ErrorMsg",$_.Exception.Message) | ConvertTo-Json -Depth 3'
+                    '}'
+                )
+                $SBAsString = $SBAsString -join "`n"
+                $UpdatesshdConfigPrep = SudoPwsh -CmdString $SBAsString
     
-    # If $PublicKeyOfCAUsedToSignUserKeysFilePath or $PublicKeyOfCAUsedToSignHostKeysFilePath were actually provided
-    # maintain the same file name when writing to $sshdir
-    if ($PSBoundParameters.ContainsKey('PublicKeyOfCAUsedToSignUserKeysFilePath')) {
-        $UserCAPubKeyFileName = $PublicKeyOfCAUsedToSignUserKeysFilePath | Split-Path -Leaf
-    }
-    else {
-        $UserCAPubKeyFileName = "ca_pub_key_of_client_signer.pub"
-    }
-    if ($PSBoundParameters.ContainsKey('PublicKeyOfCAUsedToSignHostKeysFilePath')) {
-        $HostCAPubKeyFileName = $PublicKeyOfCAUsedToSignHostKeysFilePath | Split-Path -Leaf
-    }
-    else {
-        $HostCAPubKeyFileName = "ca_pub_key_of_host_signer.pub"
-    }
+                if ($UpdatesshdConfigPrep.Output -match "ErrorMsg") {
+                    throw $UpdatesshdConfigPrep.Output[-1]
+                }
+                if ($UpdatesshdConfigPrep.OutputType -eq "Error") {
+                    if ($UpdatesshdConfigPrep.Output -match "ErrorMsg") {
+                        throw $UpdatesshdConfigPrep.Output[-1]
+                    }
+                    else {
+                        throw $UpdatesshdConfigPrep.Output
+                    }
+                }
 
-    if (Test-Path "$sshdir/$UserCAPubKeyFileName") {
-        if (!$(Test-Path "$sshdir/Archive")) {
-            $null = New-Item -ItemType Directory -Path "$sshdir/Archive" -Force
+                $SSHDConfigContentChanged = $True
+                [System.Collections.ArrayList]$sshdContent = $UpdatesshdConfigPrep.Output.value
+            }
+            catch {
+                Write-Error $_
+                $global:FunctionResult = "1"
+                return
+            }
         }
-        Move-Item -Path "$sshdir/$UserCAPubKeyFileName" -Destination "$sshdir/Archive" -Force
-    }
-    if (Test-Path "$sshdir/$HostCAPubKeyFileName") {
-        if (!$(Test-Path "$sshdir/Archive")) {
-            $null = New-Item -ItemType Directory -Path "$sshdir/Archive" -Force
-        }
-        Move-Item -Path "$sshdir/$HostCAPubKeyFileName" -Destination "$sshdir/Archive" -Force
-    }
+        else {
+            if ($ExistingTrustedUserCAKeysOption -ne $TrustedUserCAKeysOptionLine) {
+                $UpdatedSSHDConfig = $sshdContent -replace [regex]::Escape($ExistingTrustedUserCAKeysOption),"$TrustedUserCAKeysOptionLine"
 
-    Set-Content -Path "$sshdir/$UserCAPubKeyFileName" -Value $PublicKeyOfCAUsedToSignUserKeysAsString
-    Set-Content -Path "$sshdir/$HostCAPubKeyFileName" -Value $PublicKeyOfCAUsedToSignHostKeysAsString
-    $null = $FilesUpdated.Add($(Get-Item "$sshdir/$UserCAPubKeyFileName"))
-    $null = $FilesUpdated.Add($(Get-Item "$sshdir/$HostCAPubKeyFileName"))
+                try {
+                    #Set-Content -Value $UpdatedSSHDConfig -Path $sshdConfigPath
+                    $SBAsString = @(
+                        'Write-Host "`nOutputStartsBelow`n"'
+                        'try {'
+                        $('    Set-Content -Path {0} -Value @"`n{1}`n"@' -f $sshdConfigPath,$UpdatedSSHDConfig)
+                        "    Get-Content '$sshdConfigPath' | ConvertTo-Json -Depth 3"
+                        '}'
+                        'catch {'
+                        '    @("ErrorMsg",$_.Exception.Message) | ConvertTo-Json -Depth 3'
+                        '}'
+                    )
+                    $SBAsString = $SBAsString -join "`n"
+                    $UpdatesshdConfigPrep = SudoPwsh -CmdString $SBAsString
+        
+                    if ($UpdatesshdConfigPrep.Output -match "ErrorMsg") {
+                        throw $UpdatesshdConfigPrep.Output[-1]
+                    }
+                    if ($UpdatesshdConfigPrep.OutputType -eq "Error") {
+                        if ($UpdatesshdConfigPrep.Output -match "ErrorMsg") {
+                            throw $UpdatesshdConfigPrep.Output[-1]
+                        }
+                        else {
+                            throw $UpdatesshdConfigPrep.Output
+                        }
+                    }
+
+                    $SSHDConfigContentChanged = $True
+                    [System.Collections.ArrayList]$sshdContent = $UpdatesshdConfigPrep.Output.value
+                }
+                catch {
+                    Write-Error $_
+                    $global:FunctionResult = "1"
+                    return
+                }
+            }
+            else {
+                Write-Warning "The specified 'TrustedUserCAKeys' option is already active in the the sshd_config file. No changes made."
+            }
+        }
+
+        if (!$ExistingAuthorizedPrincipalsFileOption) {
+            try {
+                #Add-Content -Path $sshdConfigPath -Value $AuthorizedPrincipalsOptionLine
+                $SBAsString = @(
+                    'Write-Host "`nOutputStartsBelow`n"'
+                    'try {'
+                    $('    Add-Content -Path {0} -Value {1}' -f "'$sshdConfigPath'","'$AuthorizedPrincipalsOptionLine'")
+                    "    Get-Content '$sshdConfigPath' | ConvertTo-Json -Depth 3"
+                    '}'
+                    'catch {'
+                    '    @("ErrorMsg",$_.Exception.Message) | ConvertTo-Json -Depth 3'
+                    '}'
+                )
+                $SBAsString = $SBAsString -join "`n"
+                $UpdatesshdConfigPrep = SudoPwsh -CmdString $SBAsString
     
+                if ($UpdatesshdConfigPrep.Output -match "ErrorMsg") {
+                    throw $UpdatesshdConfigPrep.Output[-1]
+                }
+                if ($UpdatesshdConfigPrep.OutputType -eq "Error") {
+                    if ($UpdatesshdConfigPrep.Output -match "ErrorMsg") {
+                        throw $UpdatesshdConfigPrep.Output[-1]
+                    }
+                    else {
+                        throw $UpdatesshdConfigPrep.Output
+                    }
+                }
 
-    # Next, we need to generate some content for $sshdir/authorized_principals
-
-    # IMPORTANT NOTE: The Generate-AuthorizedPrincipalsFile will only ADD users to the $sshdir/authorized_principals
-    # file (if they're not already in there). It WILL NOT delete or otherwise overwrite existing users in
-    # $sshdir/authorized_principals
-    $AuthPrincSplatParams = @{
-        ErrorAction     = "Stop"
-    }
-    if ($(!$AuthorizedPrincipalsUserGroup -and !$AuthorizedUserPrincipals) -or
-    $AuthorizedPrincipalsUserGroup -contains "AllUsers" -or
-    $($AuthorizedPrincipalsUserGroup -contains "LocalAdmins" -and $AuthorizedPrincipalsUserGroup -contains "LocalUsers" -and
-    $AuthorizedPrincipalsUserGroup -contains "DomainAdmins" -and $AuthorizedPrincipalsUserGroup -contains "DomainAdmins")
-    ) {
-        $AuthPrincSplatParams.Add("UserGroupToAdd",@("AllUsers"))
-    }
-    else {
-        if ($AuthorizedPrincipalsUserGroup) {
-            $AuthPrincSplatParams.Add("UserGroupToAdd",$AuthorizedPrincipalsUserGroup)
+                $SSHDConfigContentChanged = $True
+                [System.Collections.ArrayList]$sshdContent = $UpdatesshdConfigPrep.Output.value
+            }
+            catch {
+                Write-Error $_
+                $global:FunctionResult = "1"
+                return
+            }
         }
-        if ($AuthorizedUserPrincipals) {
-            $AuthPrincSplatParams.Add("UsersToAdd",$AuthorizedUserPrincipals)
+        else {
+            if ($ExistingAuthorizedPrincipalsFileOption -ne $AuthorizedPrincipalsOptionLine) {
+                $UpdatedSSHDConfig = $sshdContent -replace [regex]::Escape($ExistingAuthorizedPrincipalsFileOption),"$AuthorizedPrincipalsOptionLine"
+
+                try {
+                    #Set-Content -Path $sshdConfigPath -Value $UpdatedSSHDConfig
+                    $SBAsString = @(
+                        'Write-Host "`nOutputStartsBelow`n"'
+                        'try {'
+                        $('    Set-Content -Path {0} -Value @"`n{1}`n"@' -f $sshdConfigPath,$UpdatedSSHDConfig)
+                        "    Get-Content '$sshdConfigPath' | ConvertTo-Json -Depth 3"
+                        '}'
+                        'catch {'
+                        '    @("ErrorMsg",$_.Exception.Message) | ConvertTo-Json -Depth 3'
+                        '}'
+                    )
+                    $SBAsString = $SBAsString -join "`n"
+                    $UpdatesshdConfigPrep = SudoPwsh -CmdString $SBAsString
+        
+                    if ($UpdatesshdConfigPrep.Output -match "ErrorMsg") {
+                        throw $UpdatesshdConfigPrep.Output[-1]
+                    }
+                    if ($UpdatesshdConfigPrep.OutputType -eq "Error") {
+                        if ($UpdatesshdConfigPrep.Output -match "ErrorMsg") {
+                            throw $UpdatesshdConfigPrep.Output[-1]
+                        }
+                        else {
+                            throw $UpdatesshdConfigPrep.Output
+                        }
+                    }
+
+                    $SSHDConfigContentChanged = $True
+                    [System.Collections.ArrayList]$sshdContent = $UpdatesshdConfigPrep.Output.value
+                }
+                catch {
+                    Write-Error $_
+                    $global:FunctionResult = "1"
+                    return
+                }
+            }
+            else {
+                Write-Warning "The specified 'AuthorizedPrincipalsFile' option is already active in the the sshd_config file. No changes made."
+            }
+        }
+
+        if (!$ExistingAuthorizedKeysFileOption) {
+            try {
+                #Add-Content -Value $AuthorizedKeysFileOptionLine -Path $sshdConfigPath
+                $SBAsString = @(
+                    'Write-Host "`nOutputStartsBelow`n"'
+                    'try {'
+                    $('    Add-Content -Path {0} -Value {1}' -f "'$sshdConfigPath'","'$AuthorizedKeysFileOptionLine'")
+                    "    Get-Content '$sshdConfigPath' | ConvertTo-Json -Depth 3"
+                    '}'
+                    'catch {'
+                    '    @("ErrorMsg",$_.Exception.Message) | ConvertTo-Json -Depth 3'
+                    '}'
+                )
+                $SBAsString = $SBAsString -join "`n"
+                $UpdatesshdConfigPrep = SudoPwsh -CmdString $SBAsString
+    
+                if ($UpdatesshdConfigPrep.Output -match "ErrorMsg") {
+                    throw $UpdatesshdConfigPrep.Output[-1]
+                }
+                if ($UpdatesshdConfigPrep.OutputType -eq "Error") {
+                    if ($UpdatesshdConfigPrep.Output -match "ErrorMsg") {
+                        throw $UpdatesshdConfigPrep.Output[-1]
+                    }
+                    else {
+                        throw $UpdatesshdConfigPrep.Output
+                    }
+                }
+
+                $SSHDConfigContentChanged = $True
+                [System.Collections.ArrayList]$sshdContent = $UpdatesshdConfigPrep.Output.value
+            }
+            catch {
+                Write-Error $_
+                $global:FunctionResult = "1"
+                return
+            }
+        }
+        else {
+            if ($ExistingAuthorizedKeysFileOption -ne $AuthorizedKeysFileOptionLine) {
+                $UpdatedSSHDConfig = $sshdContent -replace [regex]::Escape($ExistingAuthorizedKeysFileOption),"$AuthorizedKeysFileOptionLine"
+
+                try {
+                    #Set-Content -Path $sshdConfigPath -Value $UpdatedSSHDConfig
+                    $SBAsString = @(
+                        'Write-Host "`nOutputStartsBelow`n"'
+                        'try {'
+                        $('    Set-Content -Path {0} -Value @"`n{1}`n"@' -f $sshdConfigPath,$UpdatedSSHDConfig)
+                        "    Get-Content '$sshdConfigPath' | ConvertTo-Json -Depth 3"
+                        '}'
+                        'catch {'
+                        '    @("ErrorMsg",$_.Exception.Message) | ConvertTo-Json -Depth 3'
+                        '}'
+                    )
+                    $SBAsString = $SBAsString -join "`n"
+                    $UpdatesshdConfigPrep = SudoPwsh -CmdString $SBAsString
+        
+                    if ($UpdatesshdConfigPrep.Output -match "ErrorMsg") {
+                        throw $UpdatesshdConfigPrep.Output[-1]
+                    }
+                    if ($UpdatesshdConfigPrep.OutputType -eq "Error") {
+                        if ($UpdatesshdConfigPrep.Output -match "ErrorMsg") {
+                            throw $UpdatesshdConfigPrep.Output[-1]
+                        }
+                        else {
+                            throw $UpdatesshdConfigPrep.Output
+                        }
+                    }
+
+                    $SSHDConfigContentChanged = $True
+                    [System.Collections.ArrayList]$sshdContent = $UpdatesshdConfigPrep.Output.value
+                }
+                catch {
+                    Write-Error $_
+                    $global:FunctionResult = "1"
+                    return
+                }
+            }
+            else {
+                Write-Warning "The specified 'AuthorizedKeysFile' option is already active in the the sshd_config file. No changes made."
+            }
         }
     }
 
-    try {
-        $AuthorizedPrincipalsFile = Generate-AuthorizedPrincipalsFile @AuthPrincSplatParams
-        if (!$AuthorizedPrincipalsFile) {throw "There was a problem with the Generate-AuthorizedPrincipalsFile function! Halting!"}
+    if (!$PSVersionTable.Platform -or $PSVersionTable.Platform -eq "Win32NT") {
+        # Before adding these CA Public Keys to $sshdir/authorized_keys, if there's already an existing
+        # $sshdir/authorized_keys, archive it in a folder called $sshdir/Archive so that we can revert if necessary
+        if (Test-Path "$sshdir/authorized_keys") {
+            if (!$(Test-Path "$sshdir/Archive")) {
+                $null = New-Item -ItemType Directory -Path "$sshdir/Archive" -Force
+            }
+            Move-Item -Path "$sshdir/authorized_keys" -Destination "$sshdir/Archive" -Force
+        }
+        # Before adding these CA Public Keys to $sshdir/ssh_known_hosts, if there's already an existing
+        # $sshdir/ssh_known_hosts, archive it in a folder called $sshdir/Archive so that we can revert if necessary
+        if (Test-Path "$sshdir/ssh_known_hosts") {
+            if (!$(Test-Path "$sshdir/Archive")) {
+                $null = New-Item -ItemType Directory -Path "$sshdir/Archive" -Force
+            }
+            Move-Item -Path "$sshdir/ssh_known_hosts" -Destination "$sshdir/Archive" -Force
+        }
 
-        $null = $FilesUpdated.Add($(Get-Item "$sshdir/authorized_principals"))        
-    }
-    catch {
-        Write-Error $_
-        $global:FunctionResult = "1"
-        if ($Output.Count -gt 0) {[pscustomobject]$Output}
-        return
-    }
+        # Add the CA Public Certs to $sshdir/authorized_keys in their appropriate formats
+        $ContentToAddToAuthKeys = @(
+            "ssh-rsa-cert-v01@openssh.com " + $PublicKeyOfCAUsedToSignUserKeysAsString
+            "ssh-rsa-cert-v01@openssh.com " + $PublicKeyOfCAUsedToSignHostKeysAsString
+        )
+        $ContentToAddToAuthKeysString = $ContentToAddToAuthKeys -join "`n"
+        Add-Content -Path "$sshdir/authorized_keys" -Value $ContentToAddToAuthKeysString
+        $null = $FilesUpdated.Add("$sshdir/authorized_keys")
 
-    # Now we need to fix permissions for $sshdir/authroized_principals...
-    if ($PSVersionTable.PSEdition -eq "Core") {
-        Invoke-WinCommand -ComputerName localhost -ScriptBlock {
-            $SecurityDescriptor = Get-NTFSSecurityDescriptor -Path "$($args[0])/authorized_principals"
+        # Add the CA Public Certs to $sshdir/ssh_known_hosts in their appropriate formats
+        $ContentToAddToKnownHosts = @(
+            "@cert-authority * " + $PublicKeyOfCAUsedToSignUserKeysAsString
+            "@cert-authority * " + $PublicKeyOfCAUsedToSignHostKeysAsString
+        )
+        $ContentToAddToKnownHostsString = $ContentToAddToKnownHosts -join "`n"
+        Add-Content -Path $sshdir/ssh_known_hosts -Value $ContentToAddToKnownHostsString
+        $null = $FilesUpdated.Add("$sshdir/ssh_known_hosts")
+
+        # Make sure $PublicKeyOfCAUsedToSignUserKeysAsString and $PublicKeyOfCAUsedToSignHostKeysAsString are written
+        # to their own dedicated files under $sshdir
+        
+        # If $PublicKeyOfCAUsedToSignUserKeysFilePath or $PublicKeyOfCAUsedToSignHostKeysFilePath were actually provided
+        # maintain the same file name when writing to $sshdir
+        if ($PSBoundParameters.ContainsKey('PublicKeyOfCAUsedToSignUserKeysFilePath')) {
+            $UserCAPubKeyFileName = $PublicKeyOfCAUsedToSignUserKeysFilePath | Split-Path -Leaf
+        }
+        else {
+            $UserCAPubKeyFileName = "ca_pub_key_of_client_signer.pub"
+        }
+        if ($PSBoundParameters.ContainsKey('PublicKeyOfCAUsedToSignHostKeysFilePath')) {
+            $HostCAPubKeyFileName = $PublicKeyOfCAUsedToSignHostKeysFilePath | Split-Path -Leaf
+        }
+        else {
+            $HostCAPubKeyFileName = "ca_pub_key_of_host_signer.pub"
+        }
+
+        if (Test-Path "$sshdir/$UserCAPubKeyFileName") {
+            if (!$(Test-Path "$sshdir/Archive")) {
+                $null = New-Item -ItemType Directory -Path "$sshdir/Archive" -Force
+            }
+            Move-Item -Path "$sshdir/$UserCAPubKeyFileName" -Destination "$sshdir/Archive" -Force
+        }
+        if (Test-Path "$sshdir/$HostCAPubKeyFileName") {
+            if (!$(Test-Path "$sshdir/Archive")) {
+                $null = New-Item -ItemType Directory -Path "$sshdir/Archive" -Force
+            }
+            Move-Item -Path "$sshdir/$HostCAPubKeyFileName" -Destination "$sshdir/Archive" -Force
+        }
+
+        Set-Content -Path "$sshdir/$UserCAPubKeyFileName" -Value $PublicKeyOfCAUsedToSignUserKeysAsString
+        Set-Content -Path "$sshdir/$HostCAPubKeyFileName" -Value $PublicKeyOfCAUsedToSignHostKeysAsString
+        $null = $FilesUpdated.Add("$sshdir/$UserCAPubKeyFileName")
+        $null = $FilesUpdated.Add("$sshdir/$HostCAPubKeyFileName")
+
+        # Next, we need to generate some content for $sshdir/authorized_principals
+
+        # IMPORTANT NOTE: The Generate-AuthorizedPrincipalsFile will only ADD users to the $sshdir/authorized_principals
+        # file (if they're not already in there). It WILL NOT delete or otherwise overwrite existing users in
+        # $sshdir/authorized_principals
+        $AuthPrincSplatParams = @{
+            ErrorAction     = "Stop"
+        }
+        if ($(!$AuthorizedPrincipalsUserGroup -and !$AuthorizedUserPrincipals) -or
+        $AuthorizedPrincipalsUserGroup -contains "AllUsers" -or
+        $($AuthorizedPrincipalsUserGroup -contains "LocalAdmins" -and $AuthorizedPrincipalsUserGroup -contains "LocalUsers" -and
+        $AuthorizedPrincipalsUserGroup -contains "DomainAdmins" -and $AuthorizedPrincipalsUserGroup -contains "DomainAdmins")
+        ) {
+            $AuthPrincSplatParams.Add("UserGroupToAdd",@("AllUsers"))
+        }
+        else {
+            if ($AuthorizedPrincipalsUserGroup) {
+                $AuthPrincSplatParams.Add("UserGroupToAdd",$AuthorizedPrincipalsUserGroup)
+            }
+            if ($AuthorizedUserPrincipals) {
+                $AuthPrincSplatParams.Add("UsersToAdd",$AuthorizedUserPrincipals)
+            }
+        }
+
+        try {
+            $AuthorizedPrincipalsFile = Generate-AuthorizedPrincipalsFile @AuthPrincSplatParams
+            if (!$AuthorizedPrincipalsFile) {throw "There was a problem with the Generate-AuthorizedPrincipalsFile function! Halting!"}
+
+            $null = $FilesUpdated.Add("$sshdir/authorized_principals")
+        }
+        catch {
+            Write-Error $_
+            $global:FunctionResult = "1"
+            if ($Output.Count -gt 0) {[pscustomobject]$Output}
+            return
+        }
+
+        # Now we need to fix permissions for $sshdir/authroized_principals...
+        if ($PSVersionTable.PSEdition -eq "Core") {
+            Invoke-WinCommand -ComputerName localhost -ScriptBlock {
+                $SecurityDescriptor = Get-NTFSSecurityDescriptor -Path "$($args[0])/authorized_principals"
+                $SecurityDescriptor | Disable-NTFSAccessInheritance -RemoveInheritedAccessRules
+                $SecurityDescriptor | Clear-NTFSAccess
+                $SecurityDescriptor | Add-NTFSAccess -Account "NT AUTHORITY\SYSTEM" -AccessRights "FullControl" -AppliesTo ThisFolderSubfoldersAndFiles
+                $SecurityDescriptor | Add-NTFSAccess -Account "Administrators" -AccessRights "FullControl" -AppliesTo ThisFolderSubfoldersAndFiles
+                $SecurityDescriptor | Set-NTFSSecurityDescriptor
+            } -ArgumentList $sshdir
+        }
+        else {
+            $SecurityDescriptor = Get-NTFSSecurityDescriptor -Path "$sshdir/authorized_principals"
             $SecurityDescriptor | Disable-NTFSAccessInheritance -RemoveInheritedAccessRules
             $SecurityDescriptor | Clear-NTFSAccess
             $SecurityDescriptor | Add-NTFSAccess -Account "NT AUTHORITY\SYSTEM" -AccessRights "FullControl" -AppliesTo ThisFolderSubfoldersAndFiles
             $SecurityDescriptor | Add-NTFSAccess -Account "Administrators" -AccessRights "FullControl" -AppliesTo ThisFolderSubfoldersAndFiles
             $SecurityDescriptor | Set-NTFSSecurityDescriptor
-        } -ArgumentList $sshdir
-    }
-    else {
-        $SecurityDescriptor = Get-NTFSSecurityDescriptor -Path "$sshdir/authorized_principals"
-        $SecurityDescriptor | Disable-NTFSAccessInheritance -RemoveInheritedAccessRules
-        $SecurityDescriptor | Clear-NTFSAccess
-        $SecurityDescriptor | Add-NTFSAccess -Account "NT AUTHORITY\SYSTEM" -AccessRights "FullControl" -AppliesTo ThisFolderSubfoldersAndFiles
-        $SecurityDescriptor | Add-NTFSAccess -Account "Administrators" -AccessRights "FullControl" -AppliesTo ThisFolderSubfoldersAndFiles
-        $SecurityDescriptor | Set-NTFSSecurityDescriptor
-    }
-
-    # Now that we have set content for $PublicKeyOfCAUsedToSignUserKeysFilePath, $sshdir/authorized_principals, and
-    # $sshdir/authorized_keys, we need to update sshd_config to reference these files
-
-    $PubKeyOfCAUserKeysFilePathForwardSlashes = "$sshdir\$UserCAPubKeyFileName" -replace '\\','/'
-    $TrustedUserCAKeysOptionLine = "TrustedUserCAKeys $PubKeyOfCAUserKeysFilePathForwardSlashes"
-    # For more information about authorized_principals content (specifically about setting specific commands and roles
-    # for certain users), see: https://framkant.org/2017/07/scalable-access-control-using-openssh-certificates/
-    $AuthPrincFilePathForwardSlashes = "$sshdir\authorized_principals" -replace '\\','/'
-    $AuthorizedPrincipalsOptionLine = "AuthorizedPrincipalsFile $AuthPrincFilePathForwardSlashes"
-    $AuthKeysFilePathForwardSlashes = "$sshdir\authorized_keys" -replace '\\','/'
-    $AuthorizedKeysFileOptionLine = "AuthorizedKeysFile $AuthKeysFilePathForwardSlashes"
-
-    [System.Collections.ArrayList]$sshdContent = Get-Content $sshdConfigPath
-
-    # Determine if sshd_config already has the 'TrustedUserCAKeys' option active
-    $ExistingTrustedUserCAKeysOption = $sshdContent -match "TrustedUserCAKeys" | Where-Object {$_ -notmatch "#"}
-
-    # Determine if sshd_config already has 'AuthorizedPrincipals' option active
-    $ExistingAuthorizedPrincipalsFileOption = $sshdContent -match "AuthorizedPrincipalsFile" | Where-Object {$_ -notmatch "#"}
-
-    # Determine if sshd_config already has 'AuthorizedKeysFile' option active
-    $ExistingAuthorizedKeysFileOption = $sshdContent -match "AuthorizedKeysFile" | Where-Object {$_ -notmatch "#"}
-    
-    if (!$ExistingTrustedUserCAKeysOption) {
-        # If sshd_config already has the 'Match User' option available, don't touch it, else add it with ForceCommand
-        try {
-            Add-Content -Value $TrustedUserCAKeysOptionLine -Path $sshdConfigPath
-            $SSHDConfigContentChanged = $True
-            [System.Collections.ArrayList]$sshdContent = Get-Content $sshdConfigPath
         }
-        catch {
-            Write-Error $_
-            $global:FunctionResult = "1"
-            if ($Output.Count -gt 0) {[pscustomobject]$Output}
-            return
-        }
-    }
-    else {
-        if ($ExistingTrustedUserCAKeysOption -ne $TrustedUserCAKeysOptionLine) {
-            $UpdatedSSHDConfig = $sshdContent -replace [regex]::Escape($ExistingTrustedUserCAKeysOption),"$TrustedUserCAKeysOptionLine"
 
+        # Now that we have set content for $PublicKeyOfCAUsedToSignUserKeysFilePath, $sshdir/authorized_principals, and
+        # $sshdir/authorized_keys, we need to update sshd_config to reference these files
+
+        $PubKeyOfCAUserKeysFilePathForwardSlashes = "$sshdir\$UserCAPubKeyFileName" -replace '\\','/'
+        $TrustedUserCAKeysOptionLine = "TrustedUserCAKeys $PubKeyOfCAUserKeysFilePathForwardSlashes"
+        # For more information about authorized_principals content (specifically about setting specific commands and roles
+        # for certain users), see: https://framkant.org/2017/07/scalable-access-control-using-openssh-certificates/
+        $AuthPrincFilePathForwardSlashes = "$sshdir\authorized_principals" -replace '\\','/'
+        $AuthorizedPrincipalsOptionLine = "AuthorizedPrincipalsFile $AuthPrincFilePathForwardSlashes"
+        $AuthKeysFilePathForwardSlashes = "$sshdir\authorized_keys" -replace '\\','/'
+        $AuthorizedKeysFileOptionLine = "AuthorizedKeysFile $AuthKeysFilePathForwardSlashes"
+
+        [System.Collections.ArrayList]$sshdContent = Get-Content $sshdConfigPath
+
+        # Determine if sshd_config already has the 'TrustedUserCAKeys' option active
+        $ExistingTrustedUserCAKeysOption = $sshdContent -match "TrustedUserCAKeys" | Where-Object {$_ -notmatch "#"}
+
+        # Determine if sshd_config already has 'AuthorizedPrincipals' option active
+        $ExistingAuthorizedPrincipalsFileOption = $sshdContent -match "AuthorizedPrincipalsFile" | Where-Object {$_ -notmatch "#"}
+
+        # Determine if sshd_config already has 'AuthorizedKeysFile' option active
+        $ExistingAuthorizedKeysFileOption = $sshdContent -match "AuthorizedKeysFile" | Where-Object {$_ -notmatch "#"}
+        
+        if (!$ExistingTrustedUserCAKeysOption) {
+            # If sshd_config already has the 'Match User' option available, don't touch it, else add it with ForceCommand
             try {
-                Set-Content -Value $UpdatedSSHDConfig -Path $sshdConfigPath
+                Add-Content -Value $TrustedUserCAKeysOptionLine -Path $sshdConfigPath
                 $SSHDConfigContentChanged = $True
                 [System.Collections.ArrayList]$sshdContent = Get-Content $sshdConfigPath
             }
@@ -624,29 +1278,29 @@ function Add-CAPubKeyToSSHAndSSHDConfig {
             }
         }
         else {
-            Write-Warning "The specified 'TrustedUserCAKeys' option is already active in the the sshd_config file. No changes made."
-        }
-    }
+            if ($ExistingTrustedUserCAKeysOption -ne $TrustedUserCAKeysOptionLine) {
+                $UpdatedSSHDConfig = $sshdContent -replace [regex]::Escape($ExistingTrustedUserCAKeysOption),"$TrustedUserCAKeysOptionLine"
 
-    if (!$ExistingAuthorizedPrincipalsFileOption) {
-        try {
-            Add-Content -Value $AuthorizedPrincipalsOptionLine -Path $sshdConfigPath
-            $SSHDConfigContentChanged = $True
-            [System.Collections.ArrayList]$sshdContent = Get-Content $sshdConfigPath
+                try {
+                    Set-Content -Value $UpdatedSSHDConfig -Path $sshdConfigPath
+                    $SSHDConfigContentChanged = $True
+                    [System.Collections.ArrayList]$sshdContent = Get-Content $sshdConfigPath
+                }
+                catch {
+                    Write-Error $_
+                    $global:FunctionResult = "1"
+                    if ($Output.Count -gt 0) {[pscustomobject]$Output}
+                    return
+                }
+            }
+            else {
+                Write-Warning "The specified 'TrustedUserCAKeys' option is already active in the the sshd_config file. No changes made."
+            }
         }
-        catch {
-            Write-Error $_
-            $global:FunctionResult = "1"
-            if ($Output.Count -gt 0) {[pscustomobject]$Output}
-            return
-        }
-    }
-    else {
-        if ($ExistingAuthorizedPrincipalsFileOption -ne $AuthorizedPrincipalsOptionLine) {
-            $UpdatedSSHDConfig = $sshdContent -replace [regex]::Escape($ExistingAuthorizedPrincipalsFileOption),"$AuthorizedPrincipalsOptionLine"
 
+        if (!$ExistingAuthorizedPrincipalsFileOption) {
             try {
-                Set-Content -Value $UpdatedSSHDConfig -Path $sshdConfigPath
+                Add-Content -Value $AuthorizedPrincipalsOptionLine -Path $sshdConfigPath
                 $SSHDConfigContentChanged = $True
                 [System.Collections.ArrayList]$sshdContent = Get-Content $sshdConfigPath
             }
@@ -658,29 +1312,29 @@ function Add-CAPubKeyToSSHAndSSHDConfig {
             }
         }
         else {
-            Write-Warning "The specified 'AuthorizedPrincipalsFile' option is already active in the the sshd_config file. No changes made."
-        }
-    }
+            if ($ExistingAuthorizedPrincipalsFileOption -ne $AuthorizedPrincipalsOptionLine) {
+                $UpdatedSSHDConfig = $sshdContent -replace [regex]::Escape($ExistingAuthorizedPrincipalsFileOption),"$AuthorizedPrincipalsOptionLine"
 
-    if (!$ExistingAuthorizedKeysFileOption) {
-        try {
-            Add-Content -Value $AuthorizedKeysFileOptionLine -Path $sshdConfigPath
-            $SSHDConfigContentChanged = $True
-            [System.Collections.ArrayList]$sshdContent = Get-Content $sshdConfigPath
+                try {
+                    Set-Content -Value $UpdatedSSHDConfig -Path $sshdConfigPath
+                    $SSHDConfigContentChanged = $True
+                    [System.Collections.ArrayList]$sshdContent = Get-Content $sshdConfigPath
+                }
+                catch {
+                    Write-Error $_
+                    $global:FunctionResult = "1"
+                    if ($Output.Count -gt 0) {[pscustomobject]$Output}
+                    return
+                }
+            }
+            else {
+                Write-Warning "The specified 'AuthorizedPrincipalsFile' option is already active in the the sshd_config file. No changes made."
+            }
         }
-        catch {
-            Write-Error $_
-            $global:FunctionResult = "1"
-            if ($Output.Count -gt 0) {[pscustomobject]$Output}
-            return
-        }
-    }
-    else {
-        if ($ExistingAuthorizedKeysFileOption -ne $AuthorizedKeysFileOptionLine) {
-            $UpdatedSSHDConfig = $sshdContent -replace [regex]::Escape($ExistingAuthorizedKeysFileOption),"$AuthorizedKeysFileOptionLine"
 
+        if (!$ExistingAuthorizedKeysFileOption) {
             try {
-                Set-Content -Value $UpdatedSSHDConfig -Path $sshdConfigPath
+                Add-Content -Value $AuthorizedKeysFileOptionLine -Path $sshdConfigPath
                 $SSHDConfigContentChanged = $True
                 [System.Collections.ArrayList]$sshdContent = Get-Content $sshdConfigPath
             }
@@ -692,21 +1346,43 @@ function Add-CAPubKeyToSSHAndSSHDConfig {
             }
         }
         else {
-            Write-Warning "The specified 'AuthorizedKeysFile' option is already active in the the sshd_config file. No changes made."
+            if ($ExistingAuthorizedKeysFileOption -ne $AuthorizedKeysFileOptionLine) {
+                $UpdatedSSHDConfig = $sshdContent -replace [regex]::Escape($ExistingAuthorizedKeysFileOption),"$AuthorizedKeysFileOptionLine"
+
+                try {
+                    Set-Content -Value $UpdatedSSHDConfig -Path $sshdConfigPath
+                    $SSHDConfigContentChanged = $True
+                    [System.Collections.ArrayList]$sshdContent = Get-Content $sshdConfigPath
+                }
+                catch {
+                    Write-Error $_
+                    $global:FunctionResult = "1"
+                    if ($Output.Count -gt 0) {[pscustomobject]$Output}
+                    return
+                }
+            }
+            else {
+                Write-Warning "The specified 'AuthorizedKeysFile' option is already active in the the sshd_config file. No changes made."
+            }
         }
     }
 
     if ($SSHDConfigContentChanged) {
-        $null = $FilesUpdated.Add($(Get-Item $sshdConfigPath))
+        $null = $FilesUpdated.Add($sshdConfigPath)
         
-        try {
-            Restart-Service sshd -ErrorAction Stop
+        if ($PSVersionTable.Platform -eq "Unix" -or $PSVersionTable.OS -match "Darwin") {
+            $null = sudo systemctl restart sshd
         }
-        catch {
-            Write-Error $_
-            $global:FunctionResult = "1"
-            if ($Output.Count -gt 0) {[pscustomobject]$Output}
-            return
+        if (!$PSVersionTable.Platform -or $PSVersionTable.Platform -eq "Win32NT") {
+            try {
+                Restart-Service sshd -ErrorAction Stop
+            }
+            catch {
+                Write-Error $_
+                $global:FunctionResult = "1"
+                if ($Output.Count -gt 0) {[pscustomobject]$Output}
+                return
+            }
         }
     }
 
@@ -716,8 +1392,8 @@ function Add-CAPubKeyToSSHAndSSHDConfig {
 # SIG # Begin signature block
 # MIIMiAYJKoZIhvcNAQcCoIIMeTCCDHUCAQExCzAJBgUrDgMCGgUAMGkGCisGAQQB
 # gjcCAQSgWzBZMDQGCisGAQQBgjcCAR4wJgIDAQAABBAfzDtgWUsITrck0sYpfvNR
-# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUzKCklybQAenPqBS1DSNQTXW2
-# wuSgggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
+# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUb8ZpTyC7uWPshfsAFZf/L3yC
+# YFKgggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
 # 9w0BAQsFADAwMQwwCgYDVQQGEwNMQUIxDTALBgNVBAoTBFpFUk8xETAPBgNVBAMT
 # CFplcm9EQzAxMB4XDTE3MDkyMDIxMDM1OFoXDTE5MDkyMDIxMTM1OFowPTETMBEG
 # CgmSJomT8ixkARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMT
@@ -774,11 +1450,11 @@ function Add-CAPubKeyToSSHAndSSHDConfig {
 # ARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMTB1plcm9TQ0EC
 # E1gAAAH5oOvjAv3166MAAQAAAfkwCQYFKw4DAhoFAKB4MBgGCisGAQQBgjcCAQwx
 # CjAIoAKAAKECgAAwGQYJKoZIhvcNAQkDMQwGCisGAQQBgjcCAQQwHAYKKwYBBAGC
-# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFC5C/p9bQKbXXPV3
-# rFNnTl4iGc/PMA0GCSqGSIb3DQEBAQUABIIBAFZkJGxhkEWLYa/CdCE8xc7JGLDe
-# IgM9loK9zLBnL8wYGzVLsCM42NyyPljdJFUT5Y694T20b4SetczW6hmTQsg9Debz
-# vhvmdZMbkPOr+s8T4FQx6KhXlFjihsc/VN61JZCIlgAyfl5a0cYrUISzAllmOsX/
-# Q0bpRo6NxtxbjKNIc1xsQHzifI/KCN4XA7QCqiZqNaochtED6W4m8xuSHP7lzt9/
-# wEgTFv7+Ddxt3E9GZ7ay2rTGLMnhT+kHrP4VokAqhYcQkd7Z7OEylI6gGiJAhTJS
-# mKEGKUJ+RAnTdNtD0eokeRezFTsVyMm4n8lFxivRCwUOOthjW+vdm8jrnwY=
+# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFNocj4usB+LoiBsw
+# YgN1KcEgtqYBMA0GCSqGSIb3DQEBAQUABIIBAG20o1JEqUMld8OOxl8CRZfqlvfd
+# EEqqDKv3mAjC4MYtOb2ov9sLstsXYFG+2wQCElhoy0yVPNSt/XtFSj2xCRlWfQD8
+# saRkIszKTXwW/m3TsH3DVjxvLOxzlkdROQJ6MRliFdC6UEJ6Kj/e5hiRAFbh/RxH
+# PLJYAZ+j6QDlSJRq8hZDI3uJd5qHbq9nLSG4iteRdnhL1bZzMXv3oNTeGViIXkC5
+# r2bGVvXDpUCcsdTYG8bMAxyASFed7xncNyhU31eqLgc+sCJMTisRj/WH5ZlaE/3o
+# xr2a8tTiAU64g5S9nPkfPHOSt/J7H56kzsIp6g1q/IRRpXkXdTIialWo9wM=
 # SIG # End signature block
