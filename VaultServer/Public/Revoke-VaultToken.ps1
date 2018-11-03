@@ -54,15 +54,8 @@ function Revoke-VaultToken {
         [string[]]$VaultUserToDelete # Should match .meta.username for the Accessor Lookup
     )
 
-    if ($PSVersionTable.Platform -eq "Unix" -or $PSVersionTable.OS -match "Darwin" -and $env:SudoPwdPrompt) {
-        if (GetElevation) {
-            Write-Error "You should not be running the VaultServer Module as root! Halting!"
-            $global:FunctionResult = "1"
-            return
-        }
-        RemoveMySudoPwd
-        NewCronToAddSudoPwd
-        $env:SudoPwdPrompt = $False
+    if (!$PSVersionTable.Platform -or $PSVersionTable.Platform -eq "Win32NT") {
+        [Net.ServicePointManager]::SecurityProtocol = "tls12, tls11, tls"
     }
 
     # Make sure $VaultServerBaseUri is a valid Url
@@ -147,8 +140,8 @@ function Revoke-VaultToken {
 # SIG # Begin signature block
 # MIIMiAYJKoZIhvcNAQcCoIIMeTCCDHUCAQExCzAJBgUrDgMCGgUAMGkGCisGAQQB
 # gjcCAQSgWzBZMDQGCisGAQQBgjcCAR4wJgIDAQAABBAfzDtgWUsITrck0sYpfvNR
-# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUENtNYebfzSRaF9CDLaLFNVTV
-# DJGgggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
+# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUU2uBw7RF9UsAXk3qLOwYxuIF
+# LF+gggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
 # 9w0BAQsFADAwMQwwCgYDVQQGEwNMQUIxDTALBgNVBAoTBFpFUk8xETAPBgNVBAMT
 # CFplcm9EQzAxMB4XDTE3MDkyMDIxMDM1OFoXDTE5MDkyMDIxMTM1OFowPTETMBEG
 # CgmSJomT8ixkARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMT
@@ -205,11 +198,11 @@ function Revoke-VaultToken {
 # ARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMTB1plcm9TQ0EC
 # E1gAAAH5oOvjAv3166MAAQAAAfkwCQYFKw4DAhoFAKB4MBgGCisGAQQBgjcCAQwx
 # CjAIoAKAAKECgAAwGQYJKoZIhvcNAQkDMQwGCisGAQQBgjcCAQQwHAYKKwYBBAGC
-# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFD5PerwIUU6LTciF
-# vEzJK1LbIiigMA0GCSqGSIb3DQEBAQUABIIBADnDqvb8gINrvwoxm5PfsR1+k+/6
-# 4GkTvqokL2aQq48z7Ae+2OUBGISXXbHGC7vDjt01vvDrbnZgtqkEBBa5myNDBQTf
-# 6/yj71ZwZ9CQNfQaDRq+VNDM+c+FIgtmKevFmeYxBe7j0tl88Qj0vwHPevtRYai2
-# DvwhagBYnCzq9d3yqNKBg/ncxqdK1AW77yJrz3B796f/A05wW6cQ/ru44IH6xWg3
-# 9jM2RVP5Agrz+Y4oIjNmd1KFiYlUrnWG9mG0n0BZ3tm+DxUYdjYB2dTrLjDxcxZh
-# gjq/JBG2LZYNGojLWWo0ry2hcv3jRpLossc7GdzL1iE+B0E3wXBHiS0PWKk=
+# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFFnb0urd07MaFGCb
+# LoEgeKv6H74QMA0GCSqGSIb3DQEBAQUABIIBADk3/oLp4xW7ctAbGWuHRWltkf7V
+# N/+YvuTT9E8J5eODcgbEBNjI1OIUNElOG5cZunZkzfSsM9hUw8f0wqTvXYAMJkg6
+# ZCfDELVGlbQN3+HuWISG2evK4cUnOzlEgLvNiyPGRKQIBK05D2w3offw/LAVrZY+
+# xqQBMrZLaox/FktNQ2o+xxZYGUbSMJujrA74Ds0rAOL5SBwu2hJDrGVmwZqO0PQ/
+# ThkA7GcWHXwKu3682YNl0YjCsF4FdHgtB2wg+xtPDluQvrkAaLGCVquV2vaXDp2L
+# 61nKYK6EXxWai4PhbI56PQ9+Yy1YT0hSnX8+GBm1IGMxLUOmAD0IUxkR2lM=
 # SIG # End signature block

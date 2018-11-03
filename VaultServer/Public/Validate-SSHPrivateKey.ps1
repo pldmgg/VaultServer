@@ -32,17 +32,6 @@ function Validate-SSHPrivateKey {
         [string]$PathToPrivateKeyFile
     )
 
-    if ($PSVersionTable.Platform -eq "Unix" -or $PSVersionTable.OS -match "Darwin" -and $env:SudoPwdPrompt) {
-        if (GetElevation) {
-            Write-Error "You should not be running the VaultServer Module as root! Halting!"
-            $global:FunctionResult = "1"
-            return
-        }
-        RemoveMySudoPwd
-        NewCronToAddSudoPwd
-        $env:SudoPwdPrompt = $False
-    }
-
     # Make sure we have access to ssh binaries
     if (![bool]$(Get-Command ssh-keygen -ErrorAction SilentlyContinue)) {
         Write-Error "Unable to find 'ssh-keygen' binary! Halting!"
@@ -104,8 +93,8 @@ function Validate-SSHPrivateKey {
 # SIG # Begin signature block
 # MIIMiAYJKoZIhvcNAQcCoIIMeTCCDHUCAQExCzAJBgUrDgMCGgUAMGkGCisGAQQB
 # gjcCAQSgWzBZMDQGCisGAQQBgjcCAR4wJgIDAQAABBAfzDtgWUsITrck0sYpfvNR
-# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUY84vTj+og50K+UwFD5cXkDfL
-# Gr6gggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
+# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUDAWmRkzEFyAb2+sOckRstBZJ
+# t7ygggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
 # 9w0BAQsFADAwMQwwCgYDVQQGEwNMQUIxDTALBgNVBAoTBFpFUk8xETAPBgNVBAMT
 # CFplcm9EQzAxMB4XDTE3MDkyMDIxMDM1OFoXDTE5MDkyMDIxMTM1OFowPTETMBEG
 # CgmSJomT8ixkARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMT
@@ -162,11 +151,11 @@ function Validate-SSHPrivateKey {
 # ARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMTB1plcm9TQ0EC
 # E1gAAAH5oOvjAv3166MAAQAAAfkwCQYFKw4DAhoFAKB4MBgGCisGAQQBgjcCAQwx
 # CjAIoAKAAKECgAAwGQYJKoZIhvcNAQkDMQwGCisGAQQBgjcCAQQwHAYKKwYBBAGC
-# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFKxk/vj+dDRvZao5
-# ddG27Wxa73rfMA0GCSqGSIb3DQEBAQUABIIBAJUvXDPA4zfrxZDyFx934B+MoM6R
-# 0Ci483ie/p3ApA2wz7DEURd6GSF8DtDlq1btRL/ZPCl9abODgpQKGMskXzTisZhb
-# Y5QQTwUVfKb/wY0BHzvDu98UY1kFXIv934auc2rmCkPDiRxvrc6votNyjf2wnzvQ
-# InozRIFhEluimKl6Ilcn7P9iAHIVse08kG3sibObjSHEboz0rf1sHGLiS1r0JvlY
-# X+eiI8dWEdciHZMBYcPhgEGNHfLhDtA8I/ccw38xO9qVdrq5Vf1oNm1NHn/TgyUN
-# jgBbi1qAcP2KG3wzqtPt4iRtQLTLHtmUl8Mq7kcUQPhEs8Vc40fhOG17P8s=
+# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFKxYMdO4yKDFw/lJ
+# U4PDpcpvqKOoMA0GCSqGSIb3DQEBAQUABIIBAF3jFAsq5rk+kCrPgdUjBQC+Eex9
+# dnUc0ex9eCsPjqxWa2jtn7iw5FgeNRr9jKnFy41ort8K0PytldmVqjh5Xt8o6+02
+# H4X3y67KKrkamRVgB4jeEpLdNgcidJePN2jlx7nOTg90Sm50NdFMZz/DXT2zlJA0
+# SsKpYKXLUwI+WdLr2ZjaI42ELZ+HYb5glH5yBXl+xeAC3LzkRKZ8yXAL7esmLGCL
+# sI1t5NXB51UVMisTtXO1eaceegoHB1NZUvkSWH1mQmxoFT4Xxe7082Xcoo7Jcoki
+# cgXZv5RlLcSL4Dl/ullXAlwBui/x1Q51XV791IjXlkFmlnONI4vhpiUSWiE=
 # SIG # End signature block

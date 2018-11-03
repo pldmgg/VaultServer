@@ -278,6 +278,20 @@ function Add-CAPubKeyToSSHAndSSHDConfig {
         [string]$VaultAuthToken
     )
 
+    if ($PSVersionTable.Platform -eq "Unix" -or $PSVersionTable.OS -match "Darwin" -and $env:SudoPwdPrompt) {
+        if (GetElevation) {
+            Write-Error "You should not be running the VaultServer Module as root! Halting!"
+            $global:FunctionResult = "1"
+            return
+        }
+        RemoveMySudoPwd
+        NewCronToAddSudoPwd
+        $env:SudoPwdPrompt = $False
+    }
+    if (!$PSVersionTable.Platform -or $PSVersionTable.Platform -eq "Win32NT") {
+        [Net.ServicePointManager]::SecurityProtocol = "tls12, tls11, tls"
+    }
+
     if ($($PSBoundParameters.Keys -match "UserKeys").Count -gt 1) {
         $ErrMsg = "The $($MyInvocation.MyCommand.Name) only takes one of the following parameters: " +
         "-PublicKeyOfCAUsedToSignUserKeysFilePath, -PublicKeyOfCAUsedToSignUserKeysAsString, -PublicKeyOfCAUsedToSignUserKeysVaultUrl"
@@ -322,68 +336,84 @@ function Add-CAPubKeyToSSHAndSSHDConfig {
         FilesUpdated = $FilesUpdated
     }
 
+    if ($PSVersionTable.Platform -eq "Unix" -or $PSVersionTable.OS -match "Darwin") {
+        # Check to see if the ssh-agent is running
+        #[scriptblock]::Create('ssh-add -L').InvokeReturnAsIs()
+        $SSHAgentProcesses = Get-Process -Name ssh-agent -IncludeUserName -ErrorAction SilentlyContinue | Where-Object {$_.UserName -eq $env:USER}
+        if ($SSHAgentProcesses.Count -gt 0) {
+            $LatestSSHAgentProcess = $(@($SSHAgentProcesses) | Sort-Object StartTime)[-1]
+            $env:SSH_AUTH_SOCK = $(Get-ChildItem /tmp -Recurse -File | Where-Object {$_.FullName -match "\.$($LatestSSHAgentProcess.Id-1)"}).FullName
+            $env:SSH_AGENT_PID = $LatestSSHAgentProcess.Id
+        }
+        else {                
+            $SSHAgentInfo = ssh-agent
+            $env:SSH_AUTH_SOCK = $($($($SSHAgentInfo -match "AUTH_SOCK") -replace 'SSH_AUTH_SOCK=','') -split ';')[0]
+            $env:SSH_AGENT_PID = $($($($SSHAgentInfo -match "SSH_AGENT_PID") -replace 'SSH_AGENT_PID=','') -split ';')[0]
+        }
 
-    # Make sure sshd service is installed and running. If it is, we shouldn't need to use
-    # the New-SSHD server function
-    if (![bool]$(Get-Service sshd -ErrorAction SilentlyContinue)) {
-        if (![bool]$(Get-Service ssh-agent -ErrorAction SilentlyContinue)) {
-            $InstallWinSSHSplatParams = @{
-                GiveWinSSHBinariesPathPriority  = $True
-                ConfigureSSHDOnLocalHost        = $True
-                DefaultShell                    = "powershell"
-                GitHubInstall                   = $True
-                ErrorAction                     = "SilentlyContinue"
-                ErrorVariable                   = "IWSErr"
+        $sshdir = "/etc/ssh"
+        $sshdConfigPath = "$sshdir/sshd_config"
+    }
+    if (!$PSVersionTable.Platform -or $PSVersionTable.Platform -eq "Win32NT") {
+        # Make sure sshd service is installed and running. If it is, we shouldn't need to use
+        # the New-SSHD server function
+        if (![bool]$(Get-Service sshd -ErrorAction SilentlyContinue)) {
+            if (![bool]$(Get-Service ssh-agent -ErrorAction SilentlyContinue)) {
+                $InstallWinSSHSplatParams = @{
+                    GiveWinSSHBinariesPathPriority  = $True
+                    ConfigureSSHDOnLocalHost        = $True
+                    DefaultShell                    = "pwsh"
+                    ErrorAction                     = "SilentlyContinue"
+                    ErrorVariable                   = "IWSErr"
+                }
+
+                try {
+                    $InstallWinSSHResults = Install-WinSSH @InstallWinSSHSplatParams -ErrorAction Stop
+                    if (!$InstallWinSSHResults) {throw "There was a problem with the Install-WinSSH function! Halting!"}
+                }
+                catch {
+                    Write-Error $_
+                    Write-Host "Errors for the Install-WinSSH function are as follows:"
+                    Write-Error $($IWSErr | Out-String)
+                    $global:FunctionResult = "1"
+                    return
+                }
             }
-
-            try {
-                $InstallWinSSHResults = Install-WinSSH @InstallWinSSHSplatParams -ErrorAction Stop
-                if (!$InstallWinSSHResults) {throw "There was a problem with the Install-WinSSH function! Halting!"}
-
-                $Output.Add("InstallWinSSHResults",$InstallWinSSHResults)
-            }
-            catch {
-                Write-Error $_
-                Write-Host "Errors for the Install-WinSSH function are as follows:"
-                Write-Error $($IWSErr | Out-String)
-                $global:FunctionResult = "1"
-                return
+            else {
+                $NewSSHDServerSplatParams = @{
+                    ErrorAction         = "SilentlyContinue"
+                    ErrorVariable       = "SSHDErr"
+                    DefaultShell        = "powershell"
+                }
+                
+                try {
+                    $NewSSHDServerResult = New-SSHDServer @NewSSHDServerSplatParams
+                    if (!$NewSSHDServerResult) {throw "There was a problem with the New-SSHDServer function! Halting!"}
+                }
+                catch {
+                    Write-Error $_
+                    Write-Host "Errors for the New-SSHDServer function are as follows:"
+                    Write-Error $($SSHDErr | Out-String)
+                    $global:FunctionResult = "1"
+                    return
+                }
             }
         }
-        else {
-            $NewSSHDServerSplatParams = @{
-                ErrorAction         = "SilentlyContinue"
-                ErrorVariable       = "SSHDErr"
-                DefaultShell        = "powershell"
-            }
-            
-            try {
-                $NewSSHDServerResult = New-SSHDServer @NewSSHDServerSplatParams
-                if (!$NewSSHDServerResult) {throw "There was a problem with the New-SSHDServer function! Halting!"}
-            }
-            catch {
-                Write-Error $_
-                Write-Host "Errors for the New-SSHDServer function are as follows:"
-                Write-Error $($SSHDErr | Out-String)
-                $global:FunctionResult = "1"
-                return
-            }
-        }
-    }
 
-    if (Test-Path "$env:ProgramData\ssh\sshd_config") {
-        $sshdir = "$env:ProgramData\ssh"
-        $sshdConfigPath = "$sshdir\sshd_config"
-    }
-    elseif (Test-Path "$env:ProgramFiles\OpenSSH-Win64\sshd_config") {
-        $sshdir = "$env:ProgramFiles\OpenSSH-Win64"
-        $sshdConfigPath = "$env:ProgramFiles\OpenSSH-Win64\sshd_config"
-    }
-    if (!$sshdConfigPath) {
-        Write-Error "Unable to find file 'sshd_config'! Halting!"
-        $global:FunctionResult = "1"
-        if ($Output.Count -gt 0) {[pscustomobject]$Output}
-        return
+        if (Test-Path "$env:ProgramData\ssh\sshd_config") {
+            $sshdir = "$env:ProgramData\ssh"
+            $sshdConfigPath = "$sshdir\sshd_config"
+        }
+        elseif (Test-Path "$env:ProgramFiles\OpenSSH-Win64\sshd_config") {
+            $sshdir = "$env:ProgramFiles\OpenSSH-Win64"
+            $sshdConfigPath = "$env:ProgramFiles\OpenSSH-Win64\sshd_config"
+        }
+        if (!$sshdConfigPath) {
+            Write-Error "Unable to find file 'sshd_config'! Halting!"
+            $global:FunctionResult = "1"
+            if ($Output.Count -gt 0) {[pscustomobject]$Output}
+            return
+        }
     }
 
     if ($VaultSSHHostSigningUrl) {
@@ -839,17 +869,6 @@ function Add-PublicKeyToRemoteHost {
 
     #region >> Prep
 
-    if ($PSVersionTable.Platform -eq "Unix" -or $PSVersionTable.OS -match "Darwin" -and $env:SudoPwdPrompt) {
-        if (GetElevation) {
-            Write-Error "You should not be running the VaultServer Module as root! Halting!"
-            $global:FunctionResult = "1"
-            return
-        }
-        RemoveMySudoPwd
-        NewCronToAddSudoPwd
-        $env:SudoPwdPrompt = $False
-    }
-
     if (!$(Test-Path $PublicKeyPath)) {
         Write-Error "The path $PublicKeyPath was not found! Halting!"
         $global:FunctionResult = "1"
@@ -1197,11 +1216,8 @@ function Configure-VaultServerForLDAPAuth {
         RemoveMySudoPwd
         NewCronToAddSudoPwd
         $env:SudoPwdPrompt = $False
-
-        $ActualHostName = if ($env:HOSTNAME -match '\.') {$($env:HOSTNAME -split '\.')[0]} else {$env:HOSTNAME}
     }
     if (!$PSVersionTable.Platform -or $PSVersionTable.Platform -eq "Win32NT") {
-        $ActualHostName = $env:ComputerName
         [Net.ServicePointManager]::SecurityProtocol = "tls12, tls11, tls"
     }
 
@@ -1911,7 +1927,7 @@ function Configure-VaultServerForLDAPAuth {
         $Output.Add("AppliedVaultUsersPolicy",$ConfirmPolicyOnVaultUsers)
     }
 
-[pscustomobject]$Output
+    [pscustomobject]$Output
 
     #endregion >> Main Body
 
@@ -1977,6 +1993,10 @@ function Configure-VaultServerForSSHManagement {
         [Parameter(Mandatory=$False)]
         [string]$VaultAuthToken
     )
+
+    if (!$PSVersionTable.Platform -or $PSVersionTable.Platform -eq "Win32NT") {
+        [Net.ServicePointManager]::SecurityProtocol = "tls12, tls11, tls"
+    }
 
     if ($(!$VaultAuthToken -and !$DomainCredentialsWithAdminAccessToVault) -or $($VaultAuthToken -and $DomainCredentialsWithAdminAccessToVault)) {
         Write-Error "The $($MyInvocation.MyCommand.Name) function requires one (no more, no less) of the following parameters: [-DomainCredentialsWithAdminAccessToVault, -VaultAuthToken] Halting!"
@@ -2189,7 +2209,31 @@ function Configure-VaultServerForSSHManagement {
 
 
     ##### Configure the SSH Client Signer Role #####
-    $DefaultUser = $($(whoami) -split "\\")[-1]
+    if ($env:SUDO_USER) {
+        if ($env:SUDO_USER -match "\\") {
+            $DefaultUser = $($env:SUDO_USER -split "\\")[-1]
+        }
+        else {
+            $DefaultUser = $env:SUDO_USER
+        }
+    }
+    elseif ($env:USER) {
+        if ($env:USER -match "\\") {
+            $DefaultUser = $($env:USER -split "\\")[-1]
+        }
+        else {
+            $DefaultUser = $env:USER
+        }
+    }
+    else {
+        $UserPrep = whoami
+        if ($UserPrep -match "\\") {
+            $DefaultUser = $($UserPrep -split "\\")[-1]
+        }
+        else {
+            $DefaultUser = $UserPrep
+        }
+    }
     
     $jsonRequest = @"
 {
@@ -2382,6 +2426,7 @@ function Generate-AuthorizedPrincipalsFile {
         $ActualHostName = if ($env:HOSTNAME -match '\.') {$($env:HOSTNAME -split '\.')[0]} else {$env:HOSTNAME}
     }
     if (!$PSVersionTable.Platform -or $PSVersionTable.Platform -eq "Win32NT") {
+        [Net.ServicePointManager]::SecurityProtocol = "tls12, tls11, tls"
         $ActualHostName = $env:ComputerName
     }
 
@@ -3097,7 +3142,21 @@ function Get-LDAPCert {
         [switch]$UseOpenSSL
     )
 
-    #region >> Pre-Run Check
+    #region >> Prep
+
+    if ($PSVersionTable.Platform -eq "Unix" -or $PSVersionTable.OS -match "Darwin" -and $env:SudoPwdPrompt) {
+        if (GetElevation) {
+            Write-Error "You should not be running the VaultServer Module as root! Halting!"
+            $global:FunctionResult = "1"
+            return
+        }
+        RemoveMySudoPwd
+        NewCronToAddSudoPwd
+        $env:SudoPwdPrompt = $False
+    }
+    if (!$PSVersionTable.Platform -or $PSVersionTable.Platform -eq "Win32NT") {
+        [Net.ServicePointManager]::SecurityProtocol = "tls12, tls11, tls"
+    }
 
     try {
         $LDAPServerNetworkInfo = ResolveHost -HostNameOrIP $LDAPServerHostNameOrIP
@@ -3109,10 +3168,9 @@ function Get-LDAPCert {
         return
     }
 
-    #endregion >> Pre-Run Check
-    
+    #endregion >> Prep
 
-    #region >> Main Body
+    #region >> Main
     
     if ($Port -eq 389 -or $Port -eq 3268 -or $UseOpenSSL) {    
         # Check is openssl is already available
@@ -3496,7 +3554,7 @@ function Get-LDAPCert {
         CertChainInfo                = $CertChainInfo
     }
     
-    #endregion >> Main Body
+    #endregion >> Main
 }
 
 
@@ -4630,15 +4688,8 @@ function Get-VaultAccessorLookup {
         [string]$VaultAuthToken # Should be something like 'myroot' or '434f37ca-89ae-9073-8783-087c268fd46f'
     )
 
-    if ($PSVersionTable.Platform -eq "Unix" -or $PSVersionTable.OS -match "Darwin" -and $env:SudoPwdPrompt) {
-        if (GetElevation) {
-            Write-Error "You should not be running the VaultServer Module as root! Halting!"
-            $global:FunctionResult = "1"
-            return
-        }
-        RemoveMySudoPwd
-        NewCronToAddSudoPwd
-        $env:SudoPwdPrompt = $False
+    if (!$PSVersionTable.Platform -or $PSVersionTable.Platform -eq "Win32NT") {
+        [Net.ServicePointManager]::SecurityProtocol = "tls12, tls11, tls"
     }
 
     # Make sure $VaultServerBaseUri is a valid Url
@@ -4732,7 +4783,9 @@ function Get-VaultLogin {
         [pscredential]$DomainCredentialsWithAccessToVault
     )
 
-    [Net.ServicePointManager]::SecurityProtocol = "tls12, tls11, tls"
+    if (!$PSVersionTable.Platform -or $PSVersionTable.Platform -eq "Win32NT") {
+        [Net.ServicePointManager]::SecurityProtocol = "tls12, tls11, tls"
+    }
 
     # Make sure we can reach the Vault Server and that is in a state where we can actually use it.
     try {
@@ -4837,6 +4890,9 @@ function Get-VaultTokenAccessors {
         NewCronToAddSudoPwd
         $env:SudoPwdPrompt = $False
     }
+    if (!$PSVersionTable.Platform -or $PSVersionTable.Platform -eq "Win32NT") {
+        [Net.ServicePointManager]::SecurityProtocol = "tls12, tls11, tls"
+    }
 
     # Make sure $VaultServerBaseUri is a valid Url
     try {
@@ -4904,6 +4960,10 @@ function Get-VaultTokens {
         [Parameter(Mandatory=$True)]
         [string]$VaultAuthToken # Should be something like 'myroot' or '434f37ca-89ae-9073-8783-087c268fd46f'
     )
+
+    if (!$PSVersionTable.Platform -or $PSVersionTable.Platform -eq "Win32NT") {
+        [Net.ServicePointManager]::SecurityProtocol = "tls12, tls11, tls"
+    }
 
     # Make sure $VaultServerBaseUri is a valid Url
     try {
@@ -5138,6 +5198,12 @@ function Manage-StoredCredentials {
         [ValidateSet("SESSION","LOCAL_MACHINE","ENTERPRISE")]
         [String]$CredPersist = "ENTERPRISE"
     )
+
+    if ($PSVersionTable.Platform -eq "Unix" -or $PSVersionTable.OS -match "Darwin") {
+        Write-Error "This function is only meant to be used on Windows Operating Systems! Halting!"
+        $global:FunctionResult = "1"
+        return
+    }
 
     #region Pinvoke
     #region Inline C#
@@ -6048,6 +6114,9 @@ function New-SSHCredentials {
         RemoveMySudoPwd
         NewCronToAddSudoPwd
         $env:SudoPwdPrompt = $False
+    }
+    if (!$PSVersionTable.Platform -or $PSVersionTable.Platform -eq "Win32NT") {
+        [Net.ServicePointManager]::SecurityProtocol = "tls12, tls11, tls"
     }
 
     if ($(!$VaultAuthToken -and !$DomainCredentialsWithAccessToVault) -or $($VaultAuthToken -and $DomainCredentialsWithAccessToVault)) {
@@ -7082,15 +7151,8 @@ function Revoke-VaultToken {
         [string[]]$VaultUserToDelete # Should match .meta.username for the Accessor Lookup
     )
 
-    if ($PSVersionTable.Platform -eq "Unix" -or $PSVersionTable.OS -match "Darwin" -and $env:SudoPwdPrompt) {
-        if (GetElevation) {
-            Write-Error "You should not be running the VaultServer Module as root! Halting!"
-            $global:FunctionResult = "1"
-            return
-        }
-        RemoveMySudoPwd
-        NewCronToAddSudoPwd
-        $env:SudoPwdPrompt = $False
+    if (!$PSVersionTable.Platform -or $PSVersionTable.Platform -eq "Win32NT") {
+        [Net.ServicePointManager]::SecurityProtocol = "tls12, tls11, tls"
     }
 
     # Make sure $VaultServerBaseUri is a valid Url
@@ -7746,17 +7808,6 @@ function Validate-SSHPrivateKey {
         [Parameter(Mandatory=$True)]
         [string]$PathToPrivateKeyFile
     )
-
-    if ($PSVersionTable.Platform -eq "Unix" -or $PSVersionTable.OS -match "Darwin" -and $env:SudoPwdPrompt) {
-        if (GetElevation) {
-            Write-Error "You should not be running the VaultServer Module as root! Halting!"
-            $global:FunctionResult = "1"
-            return
-        }
-        RemoveMySudoPwd
-        NewCronToAddSudoPwd
-        $env:SudoPwdPrompt = $False
-    }
 
     # Make sure we have access to ssh binaries
     if (![bool]$(Get-Command ssh-keygen -ErrorAction SilentlyContinue)) {
@@ -9113,8 +9164,8 @@ if(Win32.CertStrToName(X509_ASN_ENCODING, DN, CERT_X500_NAME_STR, IntPtr.Zero, n
 # SIG # Begin signature block
 # MIIMiAYJKoZIhvcNAQcCoIIMeTCCDHUCAQExCzAJBgUrDgMCGgUAMGkGCisGAQQB
 # gjcCAQSgWzBZMDQGCisGAQQBgjcCAR4wJgIDAQAABBAfzDtgWUsITrck0sYpfvNR
-# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUqupqg++YiIKu1hjPBtfZY2cy
-# +AGgggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
+# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUdwb6KfOxkbEmqU3MxJ6mofgS
+# GN6gggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
 # 9w0BAQsFADAwMQwwCgYDVQQGEwNMQUIxDTALBgNVBAoTBFpFUk8xETAPBgNVBAMT
 # CFplcm9EQzAxMB4XDTE3MDkyMDIxMDM1OFoXDTE5MDkyMDIxMTM1OFowPTETMBEG
 # CgmSJomT8ixkARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMT
@@ -9171,11 +9222,11 @@ if(Win32.CertStrToName(X509_ASN_ENCODING, DN, CERT_X500_NAME_STR, IntPtr.Zero, n
 # ARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMTB1plcm9TQ0EC
 # E1gAAAH5oOvjAv3166MAAQAAAfkwCQYFKw4DAhoFAKB4MBgGCisGAQQBgjcCAQwx
 # CjAIoAKAAKECgAAwGQYJKoZIhvcNAQkDMQwGCisGAQQBgjcCAQQwHAYKKwYBBAGC
-# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFAC3WHuVw8VjDlWF
-# vC3YzDSlRu3zMA0GCSqGSIb3DQEBAQUABIIBAAkjBiVqNQ49iaXcZzENp5OOjord
-# MNykc6r4YA67/20QYTu7ByMkVLstAzI+M4Tdehlf2kjt9060RIanqsjqS5lySaHA
-# pjcQaclEw0b6hGBtBKLXekRHxh9nTKgssELVBNY1Co/p+/TXG+qngFzNOjR+PLPA
-# xv/tXwFMLIvLHme1yw0N07Njj/lbMsxE2U+ZRefPbOUCPbCsnPIk3buPbqG4s+OH
-# gXuEeVMD86ZogPNyR4BQxPi3GZlbOVBumo15yt7Vl0FsyRebZO/4AsvvEBDDqmzC
-# nbY90PxbeRWd8J/3C5Y+C5t+mPhlQOvGnYCUgIRsCc0SQOnW0DQiugFH3M4=
+# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFG262pnDLYbFFqbu
+# CV9MEhH/53j1MA0GCSqGSIb3DQEBAQUABIIBAL5B7ELFpisYSp+rZ+tIsSdiRw4v
+# 4dSqtoqdTKioWoiKb8jwH+wL7lzvQ/XxmzkGafu45rDyEj1kp3u7Ol0uEqcjx/GT
+# 95akZvQy87r9ABAyE+3WbknXCApKnemPPLCrzkfh5gNfGu2YXpdul/JvVJpgo+Qe
+# bPhktE8O9t9Rm/xL4fPV0iX74ejZdn3ymhjDAybkfq8+dhAqHmhvwgO4+GT69qZI
+# p9WSwxZrpUuM/kwiFh9jkH1UhYE0WOqv79itkfthNAWz74StzWFJFRTcyxy8OxLY
+# fB1A3kIGi1tACCpSzqYFqePgfgrqz+LZQMZrl1+QZQgH0sjwa2Ko8fqzcPw=
 # SIG # End signature block

@@ -37,15 +37,8 @@ function Get-VaultAccessorLookup {
         [string]$VaultAuthToken # Should be something like 'myroot' or '434f37ca-89ae-9073-8783-087c268fd46f'
     )
 
-    if ($PSVersionTable.Platform -eq "Unix" -or $PSVersionTable.OS -match "Darwin" -and $env:SudoPwdPrompt) {
-        if (GetElevation) {
-            Write-Error "You should not be running the VaultServer Module as root! Halting!"
-            $global:FunctionResult = "1"
-            return
-        }
-        RemoveMySudoPwd
-        NewCronToAddSudoPwd
-        $env:SudoPwdPrompt = $False
+    if (!$PSVersionTable.Platform -or $PSVersionTable.Platform -eq "Win32NT") {
+        [Net.ServicePointManager]::SecurityProtocol = "tls12, tls11, tls"
     }
 
     # Make sure $VaultServerBaseUri is a valid Url
@@ -102,8 +95,8 @@ function Get-VaultAccessorLookup {
 # SIG # Begin signature block
 # MIIMiAYJKoZIhvcNAQcCoIIMeTCCDHUCAQExCzAJBgUrDgMCGgUAMGkGCisGAQQB
 # gjcCAQSgWzBZMDQGCisGAQQBgjcCAR4wJgIDAQAABBAfzDtgWUsITrck0sYpfvNR
-# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQU52eLBlldH/bsdmZBwKkp8n1V
-# ybWgggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
+# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUU0Zd0KsWQTaOUtVIit+oXsh7
+# HdSgggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
 # 9w0BAQsFADAwMQwwCgYDVQQGEwNMQUIxDTALBgNVBAoTBFpFUk8xETAPBgNVBAMT
 # CFplcm9EQzAxMB4XDTE3MDkyMDIxMDM1OFoXDTE5MDkyMDIxMTM1OFowPTETMBEG
 # CgmSJomT8ixkARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMT
@@ -160,11 +153,11 @@ function Get-VaultAccessorLookup {
 # ARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMTB1plcm9TQ0EC
 # E1gAAAH5oOvjAv3166MAAQAAAfkwCQYFKw4DAhoFAKB4MBgGCisGAQQBgjcCAQwx
 # CjAIoAKAAKECgAAwGQYJKoZIhvcNAQkDMQwGCisGAQQBgjcCAQQwHAYKKwYBBAGC
-# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFJBU0RnUEoh9rvJC
-# AgSkv0p+ouilMA0GCSqGSIb3DQEBAQUABIIBAAK/22+sAeueLE1OEiYa+IC50AWz
-# v+G3TRh4dZIRaUL89NBW9vyouvYww/B//H9fAQnJQXuxrx/n7HpjMbxk0/Qf4Y4l
-# 1vfpznuauAmnRaUgp5htZG8rsS2B9Kb4m91IpzDtluocPg7fi86CeXjl9ZFjy/+E
-# UJ2wQFmzk1RiYtJ6ZqPeakgMbDbRabAhKMhoSPl2yTnLT52A04B7S4Abyu2G2ozp
-# P7Xt/na3TCl0zYAy4K0FGKJoVyBcuKl4xHeeCyYNjP+W7gBiTHienFEne5YD2mEc
-# Voxo68rc81D8k9shaXK7o/AX74JAeJfW2i2gS0HC8qHjkuyge0H9CAZViz0=
+# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFEbO9oom8Fkqg+Ba
+# XjZC5ZAumeNqMA0GCSqGSIb3DQEBAQUABIIBAMBP39imDs3IQnf067wVYDHStPNx
+# VZV9Uo8ZY7tYkpG2MqbsWS01zRU22KAUMyHMjm5msULfNOEAqDq6S59jKxUt8I6X
+# Ndb+GDDNvaKz5s1Voz4W0TfIwTrkmxoKsiWQ2Vg0aCFcYJUFiCZLXT1g78RDAm3L
+# SDawv5uXH19Dv9x0Lv+4RpYozDKcCwP6fDwneohEtPkTY9i4ZEwHd006ad/rmLKI
+# iMaEXuMGAjx0zu4e6sYhzF3YwhXDG+Pua17S+PG4RL54SPG69ki4194RgHXxvrG4
+# m5lVvHQ84G89Z/0zlqUL6B/4ac1mD9ylpmRmBX0oBrLdzz7ZQhYuBAudxmw=
 # SIG # End signature block

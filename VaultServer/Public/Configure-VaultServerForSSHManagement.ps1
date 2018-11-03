@@ -58,6 +58,10 @@ function Configure-VaultServerForSSHManagement {
         [string]$VaultAuthToken
     )
 
+    if (!$PSVersionTable.Platform -or $PSVersionTable.Platform -eq "Win32NT") {
+        [Net.ServicePointManager]::SecurityProtocol = "tls12, tls11, tls"
+    }
+
     if ($(!$VaultAuthToken -and !$DomainCredentialsWithAdminAccessToVault) -or $($VaultAuthToken -and $DomainCredentialsWithAdminAccessToVault)) {
         Write-Error "The $($MyInvocation.MyCommand.Name) function requires one (no more, no less) of the following parameters: [-DomainCredentialsWithAdminAccessToVault, -VaultAuthToken] Halting!"
         $global:FunctionResult = "1"
@@ -269,7 +273,31 @@ function Configure-VaultServerForSSHManagement {
 
 
     ##### Configure the SSH Client Signer Role #####
-    $DefaultUser = $($(whoami) -split "\\")[-1]
+    if ($env:SUDO_USER) {
+        if ($env:SUDO_USER -match "\\") {
+            $DefaultUser = $($env:SUDO_USER -split "\\")[-1]
+        }
+        else {
+            $DefaultUser = $env:SUDO_USER
+        }
+    }
+    elseif ($env:USER) {
+        if ($env:USER -match "\\") {
+            $DefaultUser = $($env:USER -split "\\")[-1]
+        }
+        else {
+            $DefaultUser = $env:USER
+        }
+    }
+    else {
+        $UserPrep = whoami
+        if ($UserPrep -match "\\") {
+            $DefaultUser = $($UserPrep -split "\\")[-1]
+        }
+        else {
+            $DefaultUser = $UserPrep
+        }
+    }
     
     $jsonRequest = @"
 {
@@ -357,8 +385,8 @@ function Configure-VaultServerForSSHManagement {
 # SIG # Begin signature block
 # MIIMiAYJKoZIhvcNAQcCoIIMeTCCDHUCAQExCzAJBgUrDgMCGgUAMGkGCisGAQQB
 # gjcCAQSgWzBZMDQGCisGAQQBgjcCAR4wJgIDAQAABBAfzDtgWUsITrck0sYpfvNR
-# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUYaNtPDOWyC+aGJXlSQUj2xDv
-# 48Ggggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
+# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUDmRFlzYtXpVzqOalQ5Dj67Zf
+# eGCgggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
 # 9w0BAQsFADAwMQwwCgYDVQQGEwNMQUIxDTALBgNVBAoTBFpFUk8xETAPBgNVBAMT
 # CFplcm9EQzAxMB4XDTE3MDkyMDIxMDM1OFoXDTE5MDkyMDIxMTM1OFowPTETMBEG
 # CgmSJomT8ixkARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMT
@@ -415,11 +443,11 @@ function Configure-VaultServerForSSHManagement {
 # ARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMTB1plcm9TQ0EC
 # E1gAAAH5oOvjAv3166MAAQAAAfkwCQYFKw4DAhoFAKB4MBgGCisGAQQBgjcCAQwx
 # CjAIoAKAAKECgAAwGQYJKoZIhvcNAQkDMQwGCisGAQQBgjcCAQQwHAYKKwYBBAGC
-# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFK+9p35X0th2WXeo
-# MyH9vwLJcQInMA0GCSqGSIb3DQEBAQUABIIBAHswQlVGflHWq0RqhebWpK0gtlS/
-# jgtDea3h9Gyd38+WrwmSKyuEVDWcURv17b/sgboFxdrufigjZErhPIrQDvDeiEDX
-# 7IgiY18vMazX4P9GD35k/z33hde/gICV1tAW+V9yDL/BsdmN9GxKXbcrQ2tnU36T
-# dTVGsPnY2w066JvQMxX8vpfSmWepSuuiIfS9QgFqfgmmgXxqbmR35+5infELdtRF
-# GNftplmB7ZQXDW9yePbOmVI/bIRT5WP0rRccDgY3nqn9JLFV/daxWHVotnhCLYKo
-# ix+SfwPGXSwZPC6ldvJHpwo6xhlQ3ycmSF4DwFBgGLynV0xES9pbodcnB40=
+# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFLcstF/LsnEP4Sqt
+# TQPeigPOLAniMA0GCSqGSIb3DQEBAQUABIIBAEmomuKH79jsvVQdRFdwnlslmFE+
+# pDKvg0MX1jRVZdUvUT853we8pk+cnER3V54NDjWxggsAHa+mhgJNr1JfDen4FFqg
+# 8Xo88Dhk9aepVNLPM+FPH6qzutnnx+EtSxOZqOpjCfI0eEIA/6BMYII3v2ffUzoH
+# p07CPPfVsC1Y484z6fxXVfvOiJcmNl57D3mHPCPdPDDE3+9Bd/RvPInUSN1QBGCI
+# SZcp7ArSxN/VQbYRyRV+pmfHDQvCkyq1yB+3cp56CutGEYSQtIX9OzvKCmOAFl2Q
+# mqMLNhDj75XHaECr6M2NyiwMQUXknI/+/A/JSKL+0Ut6riWizKE7Zn3Y9dg=
 # SIG # End signature block

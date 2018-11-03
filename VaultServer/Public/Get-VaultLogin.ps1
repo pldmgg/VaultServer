@@ -37,7 +37,9 @@ function Get-VaultLogin {
         [pscredential]$DomainCredentialsWithAccessToVault
     )
 
-    [Net.ServicePointManager]::SecurityProtocol = "tls12, tls11, tls"
+    if (!$PSVersionTable.Platform -or $PSVersionTable.Platform -eq "Win32NT") {
+        [Net.ServicePointManager]::SecurityProtocol = "tls12, tls11, tls"
+    }
 
     # Make sure we can reach the Vault Server and that is in a state where we can actually use it.
     try {
@@ -97,8 +99,8 @@ function Get-VaultLogin {
 # SIG # Begin signature block
 # MIIMiAYJKoZIhvcNAQcCoIIMeTCCDHUCAQExCzAJBgUrDgMCGgUAMGkGCisGAQQB
 # gjcCAQSgWzBZMDQGCisGAQQBgjcCAR4wJgIDAQAABBAfzDtgWUsITrck0sYpfvNR
-# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUi1jFjaycQXAu69jYOexQe/tY
-# 1hegggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
+# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUc6blCjg/S7NQ7NZwC7yrdrNv
+# WOmgggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
 # 9w0BAQsFADAwMQwwCgYDVQQGEwNMQUIxDTALBgNVBAoTBFpFUk8xETAPBgNVBAMT
 # CFplcm9EQzAxMB4XDTE3MDkyMDIxMDM1OFoXDTE5MDkyMDIxMTM1OFowPTETMBEG
 # CgmSJomT8ixkARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMT
@@ -155,11 +157,11 @@ function Get-VaultLogin {
 # ARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMTB1plcm9TQ0EC
 # E1gAAAH5oOvjAv3166MAAQAAAfkwCQYFKw4DAhoFAKB4MBgGCisGAQQBgjcCAQwx
 # CjAIoAKAAKECgAAwGQYJKoZIhvcNAQkDMQwGCisGAQQBgjcCAQQwHAYKKwYBBAGC
-# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFDw7vPzHmHjIwUtZ
-# pOAXtqLyeyA8MA0GCSqGSIb3DQEBAQUABIIBAHYj5v6B16UaJp2+6/b4YByS7HJT
-# yT2XiWkha5qScVWvCRdU1F4mvXZHPJIDX4PlrAAD2gZxbUn0CWEhm7DrLPXUf8v0
-# TZJucUc9Rzx4IW86ngmitER+EJQrPT72xYMOI2BTUPP2CGB5qgqlO2akPdFd2vYP
-# M2+u1dM+wHPURhbcUM2f8vcQHHjo0DFIG70Otc6IZh+i6HnHiuT1fEY1Qt0t5Gow
-# 08Ylw1wjWCgXw7OdJWoh5GTZw5sh9GYAwQH6mqrNB7N/okpD9xS+PDF7h/eWozwc
-# 2jH43lUuvj2KnPV2vYCS1MZsHNlpOWHRTvc7yrca0qMqdzz5mAIBv06Uqbc=
+# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFKinu40/06Zx+wbr
+# bhpMiKnOcfAqMA0GCSqGSIb3DQEBAQUABIIBAE3ESRt48JxmWjN1G1WQX7Lu96CE
+# /XkupvJZgCaRU5+/VK+FGuaKmCWXYRG3kjjBJkHYDaL60gDIimvM8YApgjVU3wII
+# Qtl1txPAr0xw4ZLQPcPVoP6eYjH/oFsnLlwF6G6XnDa2uNFHcBobDf/fdMdraB2E
+# pO5aS6N8z/UtOpD/AMnSh+78zavo8/XNoR9bHFI5ZqmSgRMHXwZ31ja2q9rYTUay
+# WVmMxUiVSQ6pTOD947fv1QcPi/IWbZn8H+UIe38uMEnEi1NyvIouTEZfAB8yGmb3
+# IgyHm4rML4/7jPHIuTwKJ+w2Y8hWnkPLprRCs11vUIT1otCaeNFg15c2t54=
 # SIG # End signature block

@@ -128,6 +128,9 @@ function New-SSHCredentials {
         NewCronToAddSudoPwd
         $env:SudoPwdPrompt = $False
     }
+    if (!$PSVersionTable.Platform -or $PSVersionTable.Platform -eq "Win32NT") {
+        [Net.ServicePointManager]::SecurityProtocol = "tls12, tls11, tls"
+    }
 
     if ($(!$VaultAuthToken -and !$DomainCredentialsWithAccessToVault) -or $($VaultAuthToken -and $DomainCredentialsWithAccessToVault)) {
         Write-Error "The $($MyInvocation.MyCommand.Name) function requires one (no more, no less) of the following parameters: [-DomainCredentialsWithAccessToVault, -VaultAuthToken] Halting!"
@@ -271,8 +274,8 @@ function New-SSHCredentials {
 # SIG # Begin signature block
 # MIIMiAYJKoZIhvcNAQcCoIIMeTCCDHUCAQExCzAJBgUrDgMCGgUAMGkGCisGAQQB
 # gjcCAQSgWzBZMDQGCisGAQQBgjcCAR4wJgIDAQAABBAfzDtgWUsITrck0sYpfvNR
-# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUfRvtlK1LOFJ4AXYo6OX5y17Q
-# jtSgggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
+# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUVuyK6D2ZMth0JbEqmi8JJeD5
+# SMCgggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
 # 9w0BAQsFADAwMQwwCgYDVQQGEwNMQUIxDTALBgNVBAoTBFpFUk8xETAPBgNVBAMT
 # CFplcm9EQzAxMB4XDTE3MDkyMDIxMDM1OFoXDTE5MDkyMDIxMTM1OFowPTETMBEG
 # CgmSJomT8ixkARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMT
@@ -329,11 +332,11 @@ function New-SSHCredentials {
 # ARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMTB1plcm9TQ0EC
 # E1gAAAH5oOvjAv3166MAAQAAAfkwCQYFKw4DAhoFAKB4MBgGCisGAQQBgjcCAQwx
 # CjAIoAKAAKECgAAwGQYJKoZIhvcNAQkDMQwGCisGAQQBgjcCAQQwHAYKKwYBBAGC
-# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFOnLivUvLCwSE++7
-# 2w3uGKg82pqyMA0GCSqGSIb3DQEBAQUABIIBADqO+BLWZynpM4I/5xX4Nj6kYtqJ
-# EzryM4Mwa4ZiDKC9ZAoUVpfrroCt+Eq9ThQ9XS4cedxMotB8r1cVoBESxhf1LT85
-# kcNe7PB7po3zWUiYVm4hw/0e5rzyNIA93Bhw9fk6kp6DMfVcG8iIP5j7an/v+oEc
-# FwTbcbMzlvagDN+rsfS9GasKVj9rml5SqHjqOPd/CcsoNftSM6PAWeQErIJu+Sue
-# CHU2LXkl4Mw8shuuQ+92maHxQ8rmgtoNean1Kuw1vid3vDaIHpRCJYrfwYD7O7Ft
-# zFQAs5vdUwhRoJ6CYpehnGdxPiEglV1pFXky7TKF5bSRY1LYB4pY7XB9Zn0=
+# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFLhanwWT7c7shj9L
+# Ywaqpi3wMwX/MA0GCSqGSIb3DQEBAQUABIIBAAntG8NhPliCAOi8PCEohXzTsxIl
+# 3uGJso5JNtHwVfFC12EGRVwuyPnQfWIs7dVRiFg05EGTR/b1I80BjRos79gBnsox
+# F6eaoHwF4fWmKSeiE2xn7RAEXm1E1FdbWmJ/Hi+UKJZPlXs2V4UUTg+bQkS0wWPG
+# grMTv7FmuqQmtGf8UfjOgpPPFJo1W45UHmjUt/S255tLB+COmKlXWiZQxBXqoPw0
+# ziK0U5w4gp0pW4w/845LS8EDg19wSv6XTLi+YtRKvQyGqZICUKMPOxyWGA+JcL/L
+# 5B0yms71G3q3uBBuf6TjCcvSchFU1leKWp8KeY3jEnE44uuWs0cAK+isE40=
 # SIG # End signature block

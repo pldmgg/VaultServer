@@ -176,6 +176,12 @@ function Manage-StoredCredentials {
         [String]$CredPersist = "ENTERPRISE"
     )
 
+    if ($PSVersionTable.Platform -eq "Unix" -or $PSVersionTable.OS -match "Darwin") {
+        Write-Error "This function is only meant to be used on Windows Operating Systems! Halting!"
+        $global:FunctionResult = "1"
+        return
+    }
+
     #region Pinvoke
     #region Inline C#
     [String] $PsCredmanUtils = @"
@@ -958,8 +964,8 @@ function Manage-StoredCredentials {
 # SIG # Begin signature block
 # MIIMiAYJKoZIhvcNAQcCoIIMeTCCDHUCAQExCzAJBgUrDgMCGgUAMGkGCisGAQQB
 # gjcCAQSgWzBZMDQGCisGAQQBgjcCAR4wJgIDAQAABBAfzDtgWUsITrck0sYpfvNR
-# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUbDYKScCADsF78mzuwbBfgZ52
-# 4ICgggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
+# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUCcMlLsrMyRbZYlrm0a3MN6wo
+# H2igggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
 # 9w0BAQsFADAwMQwwCgYDVQQGEwNMQUIxDTALBgNVBAoTBFpFUk8xETAPBgNVBAMT
 # CFplcm9EQzAxMB4XDTE3MDkyMDIxMDM1OFoXDTE5MDkyMDIxMTM1OFowPTETMBEG
 # CgmSJomT8ixkARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMT
@@ -1016,11 +1022,11 @@ function Manage-StoredCredentials {
 # ARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMTB1plcm9TQ0EC
 # E1gAAAH5oOvjAv3166MAAQAAAfkwCQYFKw4DAhoFAKB4MBgGCisGAQQBgjcCAQwx
 # CjAIoAKAAKECgAAwGQYJKoZIhvcNAQkDMQwGCisGAQQBgjcCAQQwHAYKKwYBBAGC
-# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFJ7qGQ/xKYZnUiav
-# A7tnQzNI4EomMA0GCSqGSIb3DQEBAQUABIIBAJRiD8vk7utoUlN7ESYwfvr7dOvB
-# k5R2iGIvJJkdOnd5vXQ6YqLxMKIXxpg5Vn6xwL+PmTwD0QY53ABBEoVkIu3zGZ1s
-# D4rHuBj2GHMq+IZ7c0ekjK9QKHvMAbdGzrcLNGRWhlnmOVxSIgqmx1WHPIX595+x
-# RUUM2WgjnGDVfJd9s3OIDoEoTv1Kik92Mli5WsJjLT+KurQY7Vqp241/WFD/Jq6C
-# 8t30hg/mBEOEuzVvow8U+msDeNU0GGCfuEsSGxFC324Z919/sAGXoCrwC4sY1Tni
-# qHUDGhZDvUvmFafFFOZ10ZT3ITG4NAyvyOd99LQqHqvf4sn4XIPnYXcMzNA=
+# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFI1LRapF7zAb8u4e
+# 81YGsXpke4ymMA0GCSqGSIb3DQEBAQUABIIBAC3DQD8iIezi3/jqtWWw4BTXp5UP
+# D72lj1ciC/pV71r1svPnML3XAAF/DNAuVOLUWFgsSNfmXBQa/SH/jt4dRxBPTqE0
+# 6ikfIQjVP5RAPEuGHbKHzavFW4Url8ZVErWXN36U3mmCu8BkSqzXVPGbL5pBR5K/
+# UyGp9HZde78mKWsYai6sBRxIgabrV/UEwzSs0quXz5BDoFDF+gxxeiPoL7ANVzue
+# ZRSOOW6oT3MXPhbh2TzIi3pP598HI3s/P2mSHumxhbVLziuMFu15GBIrtvUZ6yBz
+# wJ9lT4xoVs1BIdLpsTAg1YabQNWNb5eb7uvq1+cAz6X9+SQjChfr5x6Rhbs=
 # SIG # End signature block

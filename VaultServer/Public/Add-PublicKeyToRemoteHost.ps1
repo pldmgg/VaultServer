@@ -52,17 +52,6 @@ function Add-PublicKeyToRemoteHost {
 
     #region >> Prep
 
-    if ($PSVersionTable.Platform -eq "Unix" -or $PSVersionTable.OS -match "Darwin" -and $env:SudoPwdPrompt) {
-        if (GetElevation) {
-            Write-Error "You should not be running the VaultServer Module as root! Halting!"
-            $global:FunctionResult = "1"
-            return
-        }
-        RemoveMySudoPwd
-        NewCronToAddSudoPwd
-        $env:SudoPwdPrompt = $False
-    }
-
     if (!$(Test-Path $PublicKeyPath)) {
         Write-Error "The path $PublicKeyPath was not found! Halting!"
         $global:FunctionResult = "1"
@@ -124,8 +113,8 @@ function Add-PublicKeyToRemoteHost {
 # SIG # Begin signature block
 # MIIMiAYJKoZIhvcNAQcCoIIMeTCCDHUCAQExCzAJBgUrDgMCGgUAMGkGCisGAQQB
 # gjcCAQSgWzBZMDQGCisGAQQBgjcCAR4wJgIDAQAABBAfzDtgWUsITrck0sYpfvNR
-# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUNZhB4WA4fpPjNeQVeshhyTJs
-# 8qagggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
+# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUHMt1XJxBKakCRrD6sJ7Gw7zH
+# MXCgggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
 # 9w0BAQsFADAwMQwwCgYDVQQGEwNMQUIxDTALBgNVBAoTBFpFUk8xETAPBgNVBAMT
 # CFplcm9EQzAxMB4XDTE3MDkyMDIxMDM1OFoXDTE5MDkyMDIxMTM1OFowPTETMBEG
 # CgmSJomT8ixkARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMT
@@ -182,11 +171,11 @@ function Add-PublicKeyToRemoteHost {
 # ARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMTB1plcm9TQ0EC
 # E1gAAAH5oOvjAv3166MAAQAAAfkwCQYFKw4DAhoFAKB4MBgGCisGAQQBgjcCAQwx
 # CjAIoAKAAKECgAAwGQYJKoZIhvcNAQkDMQwGCisGAQQBgjcCAQQwHAYKKwYBBAGC
-# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFKNvv/afkFXRu7hG
-# lBXhy1/1So4jMA0GCSqGSIb3DQEBAQUABIIBAJtfce1nETeP5NLU5yxDpGMGRje3
-# 04M3K3Rk0MCoO+bw/xnnvnw7MdMqmWFvYoOLys/cW76GdQSl6dxD5EFkpcuY4rZj
-# P4tdCsigOf/LF70WVl48TWfZqg9FvLf1NkVH75obnJlASS6bFmyU1xNA49/zZzIL
-# 8HHdB2ep4k9T2CQNAVlkdMX89HfFXEgbZdR8Y71czAyBp67P7AkoC2ITJI2x6DwD
-# UyQV7pNXf91JOelDIMqqM7fyLaJI3+Mg/UtY3fEu4HRdYY3U9S3cXHFmU/Rdwaq3
-# AjPExbEHE+ZxrOPv7dHOTiO+94QCNf3wcJ9wWQfdfI5D6nw3Lsq9IYfogJw=
+# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFEZsjWH1rsmUMQjY
+# QlTQOnpZfW4RMA0GCSqGSIb3DQEBAQUABIIBAF6QozJLouTzWarJcoweum2PAOkD
+# TmtF3Q3prNTwEUs/eEoU7X3a1ScVnNKFo4JbYElbGZ+vke0aCz8+lBZsbPTpJEyo
+# 7mxq+8vXG398SF8IZVbwXpotJleGlM7FuqQs0kNiEiuIZI+5yiYAvHcE8vUctY9R
+# QWh6m1IJlZSq12qqAZ2R/yRZy1XsO8lTpqVKw7paxufyq2jHW+cbsRNQfkrYwiHv
+# Zq0R4JlRWNfNaqWqdm9gcbbeFyHsMjXhVUalsdMvwXgKfnE9/5iAC6cCj5CUhihX
+# UqGGTa9tWgOPE+qbLbwQ4jRvZSxQqrNWOZfWFGagLC4yLFFB8ef49tp6H0M=
 # SIG # End signature block

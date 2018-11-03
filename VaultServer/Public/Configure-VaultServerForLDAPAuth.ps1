@@ -224,11 +224,8 @@ function Configure-VaultServerForLDAPAuth {
         RemoveMySudoPwd
         NewCronToAddSudoPwd
         $env:SudoPwdPrompt = $False
-
-        $ActualHostName = if ($env:HOSTNAME -match '\.') {$($env:HOSTNAME -split '\.')[0]} else {$env:HOSTNAME}
     }
     if (!$PSVersionTable.Platform -or $PSVersionTable.Platform -eq "Win32NT") {
-        $ActualHostName = $env:ComputerName
         [Net.ServicePointManager]::SecurityProtocol = "tls12, tls11, tls"
     }
 
@@ -938,7 +935,7 @@ function Configure-VaultServerForLDAPAuth {
         $Output.Add("AppliedVaultUsersPolicy",$ConfirmPolicyOnVaultUsers)
     }
 
-[pscustomobject]$Output
+    [pscustomobject]$Output
 
     #endregion >> Main Body
 
@@ -947,8 +944,8 @@ function Configure-VaultServerForLDAPAuth {
 # SIG # Begin signature block
 # MIIMiAYJKoZIhvcNAQcCoIIMeTCCDHUCAQExCzAJBgUrDgMCGgUAMGkGCisGAQQB
 # gjcCAQSgWzBZMDQGCisGAQQBgjcCAR4wJgIDAQAABBAfzDtgWUsITrck0sYpfvNR
-# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUoLNc+3s4JEpM7Zkm1Tl9sJUh
-# eIWgggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
+# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUuJHJ4dARjRvXbn8rOmzSx0z5
+# mpmgggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
 # 9w0BAQsFADAwMQwwCgYDVQQGEwNMQUIxDTALBgNVBAoTBFpFUk8xETAPBgNVBAMT
 # CFplcm9EQzAxMB4XDTE3MDkyMDIxMDM1OFoXDTE5MDkyMDIxMTM1OFowPTETMBEG
 # CgmSJomT8ixkARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMT
@@ -1005,11 +1002,11 @@ function Configure-VaultServerForLDAPAuth {
 # ARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMTB1plcm9TQ0EC
 # E1gAAAH5oOvjAv3166MAAQAAAfkwCQYFKw4DAhoFAKB4MBgGCisGAQQBgjcCAQwx
 # CjAIoAKAAKECgAAwGQYJKoZIhvcNAQkDMQwGCisGAQQBgjcCAQQwHAYKKwYBBAGC
-# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFAkyHtfgXQKqcPPn
-# Z59+wHikPB+ZMA0GCSqGSIb3DQEBAQUABIIBAJ78vWFOwAvChF5IfdurnFvudeft
-# ko+MQ2Qm8SiK41PnLyt9kHuC4ENogZDhk4/kJXJyFOFOWCtJjAcVELtSuJpsGGHp
-# /fMvYbMiWVPQeMMu2phIm5HRmS4fUHIwj3GQR9iuiFnTuDpmd457KROvVCArOKaS
-# 1GXLFJntY1orxwxoAAsCiRkmdZYc0K/w6+X5DeOoAvAxqip8YZh87uImoWrjoMms
-# T4jCVcRR4kQDn71zhu+mwzXEcdmBMPnZKhlFvwMt/x9UGy9N1b82xVzXjj8a0twP
-# lj47116r7L+vUd1RDAkPVSC+YQKJtUfoUuocYqvmd/07tl6s+mzoB+EIkRM=
+# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFAXZ0h2gOwzMncem
+# mu9fGZPM7oR6MA0GCSqGSIb3DQEBAQUABIIBAHQqzWZSMj+u08d7187nC34i83xP
+# 37ssfWcy0bVPSAYY9N6GFsQoSP0alOaVw8lApYs0K0cFb8WCF/T1a5bEHInhlP9c
+# fgm/wEjahtP3mpwVN1N5nJEJlv6nIMIr7sIDA6IhZH2jYyz1jV843POYR/e8Oqbw
+# yeNz46ediFplnvL3eKcFC/dtJNW68+ou5txZ3gANdp4AJKJJWx15DmCJyw7qExLI
+# jD31kyLKswXbtkAPgZWzRobjPWpEL2X1lVmLJok43vwB1J2F3gsCU5MGZKnwE68U
+# Lv+F66biwHtXt8n6+7/oVG3CoFGUy0yvVu1Pafhb3dyZcgw2yOqduBwag/I=
 # SIG # End signature block

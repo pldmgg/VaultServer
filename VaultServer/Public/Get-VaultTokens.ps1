@@ -39,6 +39,10 @@ function Get-VaultTokens {
         [string]$VaultAuthToken # Should be something like 'myroot' or '434f37ca-89ae-9073-8783-087c268fd46f'
     )
 
+    if (!$PSVersionTable.Platform -or $PSVersionTable.Platform -eq "Win32NT") {
+        [Net.ServicePointManager]::SecurityProtocol = "tls12, tls11, tls"
+    }
+
     # Make sure $VaultServerBaseUri is a valid Url
     try {
         $UriObject = [uri]$VaultServerBaseUri
@@ -97,8 +101,8 @@ function Get-VaultTokens {
 # SIG # Begin signature block
 # MIIMiAYJKoZIhvcNAQcCoIIMeTCCDHUCAQExCzAJBgUrDgMCGgUAMGkGCisGAQQB
 # gjcCAQSgWzBZMDQGCisGAQQBgjcCAR4wJgIDAQAABBAfzDtgWUsITrck0sYpfvNR
-# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUzKm0BP4L5rYJ/OwmV3d+UCCJ
-# DFCgggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
+# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUDEi6Ri/EJMsXc/XJyQi49cp2
+# u+agggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
 # 9w0BAQsFADAwMQwwCgYDVQQGEwNMQUIxDTALBgNVBAoTBFpFUk8xETAPBgNVBAMT
 # CFplcm9EQzAxMB4XDTE3MDkyMDIxMDM1OFoXDTE5MDkyMDIxMTM1OFowPTETMBEG
 # CgmSJomT8ixkARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMT
@@ -155,11 +159,11 @@ function Get-VaultTokens {
 # ARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMTB1plcm9TQ0EC
 # E1gAAAH5oOvjAv3166MAAQAAAfkwCQYFKw4DAhoFAKB4MBgGCisGAQQBgjcCAQwx
 # CjAIoAKAAKECgAAwGQYJKoZIhvcNAQkDMQwGCisGAQQBgjcCAQQwHAYKKwYBBAGC
-# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFD8vltudXBcamJ4c
-# Lz8YyStYtXKaMA0GCSqGSIb3DQEBAQUABIIBAFf/p0+Ahr7euk4EGE+1VPZX6fL9
-# WjdoB5vGenJt6E79IReVPxGBLVrz7K8MajMj+9sVxMM0x/cvwZUOodLy7uCS0Z+B
-# 9DiRIms51f1xwTNX5ruMkQ0pLPBQezJi154IlBoc7qzbSB1ys+usdzYMoc371rct
-# Iln9WWjeCesMAp1MDgcYypffy5aLs7tdOjR/vFBx0OBNBYTx5/7rJP34xxcS9IE0
-# EBKSY1zQe90qiUbNvxe6HAJ8AImVwteyuJbmf9zOuITpga6ZH0blfXkgd4QG0CTg
-# 0N3GRS3ecGqn8aAHIqsEVFxse0OtoCDrhlppe3caLaDb0Hb5pfkL6PiTPOU=
+# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFISr3K0RgiZI7rYb
+# UWZtOJAngmm3MA0GCSqGSIb3DQEBAQUABIIBALohAkOqdMyY0Lab5FqFB3MExHKT
+# U9z90tAuj9bovNzTS85T30ALednB3DzD38jPIePOa3CZg40SZY1cBUm2JyMIoyto
+# 6xrFFimDEkewTVgUP/E4rqMDDGHGZuPe8jdG+kHNJwYYfrbyoolxqo8PLb3N3KU2
+# 42PXdTAu3ADIevzgHfJvybtcIY3gywsuYh/hKUpMz7BCKp16+ftr2cHDcGVGkpZJ
+# fiUDGpLNb4JnauVSdwM+muRr6bRxK+x5X1HPr58I5WwmPpY4zDlL2T1UCEnvGdsA
+# abds0oKYU1wgFuwrEYxY2gOnjaYdUnY6sjds/rsopy50yp3OVUGUIZL6Tiw=
 # SIG # End signature block

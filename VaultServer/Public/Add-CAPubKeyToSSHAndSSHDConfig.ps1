@@ -177,6 +177,20 @@ function Add-CAPubKeyToSSHAndSSHDConfig {
         [string]$VaultAuthToken
     )
 
+    if ($PSVersionTable.Platform -eq "Unix" -or $PSVersionTable.OS -match "Darwin" -and $env:SudoPwdPrompt) {
+        if (GetElevation) {
+            Write-Error "You should not be running the VaultServer Module as root! Halting!"
+            $global:FunctionResult = "1"
+            return
+        }
+        RemoveMySudoPwd
+        NewCronToAddSudoPwd
+        $env:SudoPwdPrompt = $False
+    }
+    if (!$PSVersionTable.Platform -or $PSVersionTable.Platform -eq "Win32NT") {
+        [Net.ServicePointManager]::SecurityProtocol = "tls12, tls11, tls"
+    }
+
     if ($($PSBoundParameters.Keys -match "UserKeys").Count -gt 1) {
         $ErrMsg = "The $($MyInvocation.MyCommand.Name) only takes one of the following parameters: " +
         "-PublicKeyOfCAUsedToSignUserKeysFilePath, -PublicKeyOfCAUsedToSignUserKeysAsString, -PublicKeyOfCAUsedToSignUserKeysVaultUrl"
@@ -221,68 +235,84 @@ function Add-CAPubKeyToSSHAndSSHDConfig {
         FilesUpdated = $FilesUpdated
     }
 
+    if ($PSVersionTable.Platform -eq "Unix" -or $PSVersionTable.OS -match "Darwin") {
+        # Check to see if the ssh-agent is running
+        #[scriptblock]::Create('ssh-add -L').InvokeReturnAsIs()
+        $SSHAgentProcesses = Get-Process -Name ssh-agent -IncludeUserName -ErrorAction SilentlyContinue | Where-Object {$_.UserName -eq $env:USER}
+        if ($SSHAgentProcesses.Count -gt 0) {
+            $LatestSSHAgentProcess = $(@($SSHAgentProcesses) | Sort-Object StartTime)[-1]
+            $env:SSH_AUTH_SOCK = $(Get-ChildItem /tmp -Recurse -File | Where-Object {$_.FullName -match "\.$($LatestSSHAgentProcess.Id-1)"}).FullName
+            $env:SSH_AGENT_PID = $LatestSSHAgentProcess.Id
+        }
+        else {                
+            $SSHAgentInfo = ssh-agent
+            $env:SSH_AUTH_SOCK = $($($($SSHAgentInfo -match "AUTH_SOCK") -replace 'SSH_AUTH_SOCK=','') -split ';')[0]
+            $env:SSH_AGENT_PID = $($($($SSHAgentInfo -match "SSH_AGENT_PID") -replace 'SSH_AGENT_PID=','') -split ';')[0]
+        }
 
-    # Make sure sshd service is installed and running. If it is, we shouldn't need to use
-    # the New-SSHD server function
-    if (![bool]$(Get-Service sshd -ErrorAction SilentlyContinue)) {
-        if (![bool]$(Get-Service ssh-agent -ErrorAction SilentlyContinue)) {
-            $InstallWinSSHSplatParams = @{
-                GiveWinSSHBinariesPathPriority  = $True
-                ConfigureSSHDOnLocalHost        = $True
-                DefaultShell                    = "powershell"
-                GitHubInstall                   = $True
-                ErrorAction                     = "SilentlyContinue"
-                ErrorVariable                   = "IWSErr"
+        $sshdir = "/etc/ssh"
+        $sshdConfigPath = "$sshdir/sshd_config"
+    }
+    if (!$PSVersionTable.Platform -or $PSVersionTable.Platform -eq "Win32NT") {
+        # Make sure sshd service is installed and running. If it is, we shouldn't need to use
+        # the New-SSHD server function
+        if (![bool]$(Get-Service sshd -ErrorAction SilentlyContinue)) {
+            if (![bool]$(Get-Service ssh-agent -ErrorAction SilentlyContinue)) {
+                $InstallWinSSHSplatParams = @{
+                    GiveWinSSHBinariesPathPriority  = $True
+                    ConfigureSSHDOnLocalHost        = $True
+                    DefaultShell                    = "pwsh"
+                    ErrorAction                     = "SilentlyContinue"
+                    ErrorVariable                   = "IWSErr"
+                }
+
+                try {
+                    $InstallWinSSHResults = Install-WinSSH @InstallWinSSHSplatParams -ErrorAction Stop
+                    if (!$InstallWinSSHResults) {throw "There was a problem with the Install-WinSSH function! Halting!"}
+                }
+                catch {
+                    Write-Error $_
+                    Write-Host "Errors for the Install-WinSSH function are as follows:"
+                    Write-Error $($IWSErr | Out-String)
+                    $global:FunctionResult = "1"
+                    return
+                }
             }
-
-            try {
-                $InstallWinSSHResults = Install-WinSSH @InstallWinSSHSplatParams -ErrorAction Stop
-                if (!$InstallWinSSHResults) {throw "There was a problem with the Install-WinSSH function! Halting!"}
-
-                $Output.Add("InstallWinSSHResults",$InstallWinSSHResults)
-            }
-            catch {
-                Write-Error $_
-                Write-Host "Errors for the Install-WinSSH function are as follows:"
-                Write-Error $($IWSErr | Out-String)
-                $global:FunctionResult = "1"
-                return
+            else {
+                $NewSSHDServerSplatParams = @{
+                    ErrorAction         = "SilentlyContinue"
+                    ErrorVariable       = "SSHDErr"
+                    DefaultShell        = "powershell"
+                }
+                
+                try {
+                    $NewSSHDServerResult = New-SSHDServer @NewSSHDServerSplatParams
+                    if (!$NewSSHDServerResult) {throw "There was a problem with the New-SSHDServer function! Halting!"}
+                }
+                catch {
+                    Write-Error $_
+                    Write-Host "Errors for the New-SSHDServer function are as follows:"
+                    Write-Error $($SSHDErr | Out-String)
+                    $global:FunctionResult = "1"
+                    return
+                }
             }
         }
-        else {
-            $NewSSHDServerSplatParams = @{
-                ErrorAction         = "SilentlyContinue"
-                ErrorVariable       = "SSHDErr"
-                DefaultShell        = "powershell"
-            }
-            
-            try {
-                $NewSSHDServerResult = New-SSHDServer @NewSSHDServerSplatParams
-                if (!$NewSSHDServerResult) {throw "There was a problem with the New-SSHDServer function! Halting!"}
-            }
-            catch {
-                Write-Error $_
-                Write-Host "Errors for the New-SSHDServer function are as follows:"
-                Write-Error $($SSHDErr | Out-String)
-                $global:FunctionResult = "1"
-                return
-            }
-        }
-    }
 
-    if (Test-Path "$env:ProgramData\ssh\sshd_config") {
-        $sshdir = "$env:ProgramData\ssh"
-        $sshdConfigPath = "$sshdir\sshd_config"
-    }
-    elseif (Test-Path "$env:ProgramFiles\OpenSSH-Win64\sshd_config") {
-        $sshdir = "$env:ProgramFiles\OpenSSH-Win64"
-        $sshdConfigPath = "$env:ProgramFiles\OpenSSH-Win64\sshd_config"
-    }
-    if (!$sshdConfigPath) {
-        Write-Error "Unable to find file 'sshd_config'! Halting!"
-        $global:FunctionResult = "1"
-        if ($Output.Count -gt 0) {[pscustomobject]$Output}
-        return
+        if (Test-Path "$env:ProgramData\ssh\sshd_config") {
+            $sshdir = "$env:ProgramData\ssh"
+            $sshdConfigPath = "$sshdir\sshd_config"
+        }
+        elseif (Test-Path "$env:ProgramFiles\OpenSSH-Win64\sshd_config") {
+            $sshdir = "$env:ProgramFiles\OpenSSH-Win64"
+            $sshdConfigPath = "$env:ProgramFiles\OpenSSH-Win64\sshd_config"
+        }
+        if (!$sshdConfigPath) {
+            Write-Error "Unable to find file 'sshd_config'! Halting!"
+            $global:FunctionResult = "1"
+            if ($Output.Count -gt 0) {[pscustomobject]$Output}
+            return
+        }
     }
 
     if ($VaultSSHHostSigningUrl) {
@@ -686,8 +716,8 @@ function Add-CAPubKeyToSSHAndSSHDConfig {
 # SIG # Begin signature block
 # MIIMiAYJKoZIhvcNAQcCoIIMeTCCDHUCAQExCzAJBgUrDgMCGgUAMGkGCisGAQQB
 # gjcCAQSgWzBZMDQGCisGAQQBgjcCAR4wJgIDAQAABBAfzDtgWUsITrck0sYpfvNR
-# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUXA246fl9+HssSbf2cbxFjJd8
-# jKCgggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
+# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUzKCklybQAenPqBS1DSNQTXW2
+# wuSgggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
 # 9w0BAQsFADAwMQwwCgYDVQQGEwNMQUIxDTALBgNVBAoTBFpFUk8xETAPBgNVBAMT
 # CFplcm9EQzAxMB4XDTE3MDkyMDIxMDM1OFoXDTE5MDkyMDIxMTM1OFowPTETMBEG
 # CgmSJomT8ixkARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMT
@@ -744,11 +774,11 @@ function Add-CAPubKeyToSSHAndSSHDConfig {
 # ARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMTB1plcm9TQ0EC
 # E1gAAAH5oOvjAv3166MAAQAAAfkwCQYFKw4DAhoFAKB4MBgGCisGAQQBgjcCAQwx
 # CjAIoAKAAKECgAAwGQYJKoZIhvcNAQkDMQwGCisGAQQBgjcCAQQwHAYKKwYBBAGC
-# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFA3H/E0lIoRsiD5l
-# 9Psc98u8b7zzMA0GCSqGSIb3DQEBAQUABIIBAEPyexm6f2rnI0adJBC7a62s78cC
-# 0jtBRRuOk0g4O+jwACArHMgsB6MRd6w/1DByHeB/MIHpR/aoRGrxdl5uZYjL4Q56
-# VyMecZSoi1IudefmpS6xDin5xpG5Y9gbPW2Q40QLEQiq774wwZeu02WdMdrktEBS
-# dWWyWT9bopFbbSijzJ9Nmv5U3nD9K1Ia8iEjx5lRPlFlTtRkwubl0BUCS1lrf1/v
-# aN9vtCaSGSIeTp1GoGqAmE7EoL/G5hql6zte2/TvcCC0RH1BnPnuyQ49OtzlnHfB
-# UAQ0Rs0yoTt30kVYROjfVHc0v+0XQj6rzg8ANREvuTVQB6Pq0MF+NhDll5M=
+# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFC5C/p9bQKbXXPV3
+# rFNnTl4iGc/PMA0GCSqGSIb3DQEBAQUABIIBAFZkJGxhkEWLYa/CdCE8xc7JGLDe
+# IgM9loK9zLBnL8wYGzVLsCM42NyyPljdJFUT5Y694T20b4SetczW6hmTQsg9Debz
+# vhvmdZMbkPOr+s8T4FQx6KhXlFjihsc/VN61JZCIlgAyfl5a0cYrUISzAllmOsX/
+# Q0bpRo6NxtxbjKNIc1xsQHzifI/KCN4XA7QCqiZqNaochtED6W4m8xuSHP7lzt9/
+# wEgTFv7+Ddxt3E9GZ7ay2rTGLMnhT+kHrP4VokAqhYcQkd7Z7OEylI6gGiJAhTJS
+# mKEGKUJ+RAnTdNtD0eokeRezFTsVyMm4n8lFxivRCwUOOthjW+vdm8jrnwY=
 # SIG # End signature block
