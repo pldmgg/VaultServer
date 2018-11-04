@@ -1,5 +1,9 @@
 # Change log
 
+## 1.0.0 (November 4, 2018)
+
+- Now works crossplatform
+
 ## 0.8.8 (September 16, 2018)
 
 - Suppressed ssh-add output and fixed related issues
