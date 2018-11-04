@@ -68,7 +68,11 @@ function Generate-SSHUserDirFileInfo {
     }
 
     # Get a list of all files under $HOME\.ssh
-    [array]$SSHHomeFiles = Get-ChildItem -Path $PathToHomeDotSSHDirectory -File | Where-Object {$_.Name -ne "SSHDirectoryFileInfo.xml"}
+    [array]$SSHHomeFiles = Get-ChildItem -Path $PathToHomeDotSSHDirectory -File | Where-Object {
+        $_.Name -ne "SSHDirectoryFileInfo.xml" -and
+        $_.Name -ne "authorized_keys" -and
+        $_.Name -ne "known_hosts"
+    }
 
     if ($SSHHomeFiles.Count -eq 0) {
         Write-Error "Unable to find any files under '$PathToHomeDotSSHDirectory'! Halting!"
@@ -117,8 +121,8 @@ function Generate-SSHUserDirFileInfo {
 # SIG # Begin signature block
 # MIIMiAYJKoZIhvcNAQcCoIIMeTCCDHUCAQExCzAJBgUrDgMCGgUAMGkGCisGAQQB
 # gjcCAQSgWzBZMDQGCisGAQQBgjcCAR4wJgIDAQAABBAfzDtgWUsITrck0sYpfvNR
-# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUDydqH/RVWMshppYa67i/3XOC
-# YYugggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
+# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUfvWYoFT1DHOtsJUMhpetfm5p
+# 1eegggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
 # 9w0BAQsFADAwMQwwCgYDVQQGEwNMQUIxDTALBgNVBAoTBFpFUk8xETAPBgNVBAMT
 # CFplcm9EQzAxMB4XDTE3MDkyMDIxMDM1OFoXDTE5MDkyMDIxMTM1OFowPTETMBEG
 # CgmSJomT8ixkARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMT
@@ -175,11 +179,11 @@ function Generate-SSHUserDirFileInfo {
 # ARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMTB1plcm9TQ0EC
 # E1gAAAH5oOvjAv3166MAAQAAAfkwCQYFKw4DAhoFAKB4MBgGCisGAQQBgjcCAQwx
 # CjAIoAKAAKECgAAwGQYJKoZIhvcNAQkDMQwGCisGAQQBgjcCAQQwHAYKKwYBBAGC
-# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFB0r4M2tVo+1Iu3w
-# 2YPy6oxT+OQGMA0GCSqGSIb3DQEBAQUABIIBAKNYF2fQeo1EgQ3cjn96qPw5xdD1
-# qkKNJw4Kz1R7s8NiNxzsA8KJxn9c1BDsOhK/zVR5h/ksz5f07Fcem/GH3hh31M56
-# 2l8vZg6I6gImqOy8lyLR9Xo5jQJm+i4f9UVpyBKlsmb3Ucq4a/Dp2hJ1Qf8NHmLX
-# Zna8v0fgbYyGSNZ3MvcxIwhSbPmQVk/FLjVByn74MGp9pjINbtgD7Pck9d9AX4pU
-# WFv+g3cPqiTD8bScn4LozyzO60Mcgp/KP0ZGGDlP4yc8CB2CAesTSluDO5gy5ui2
-# AddHfi5Usn1foN3xRjBjUSY/YDdWKADD1rHm/IagaNt1WbW4MlqqIAUcrnc=
+# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFFimW0CmPlry1SW2
+# ek1f+OF01n1ZMA0GCSqGSIb3DQEBAQUABIIBAFScPDXPikt7tS8x5l6ESaL/VG8L
+# Xxls16BqeHYtKyB/pkWEwdDKRbGTNqnm28Bt1ee1dS3LQ3rYTqdfdlD2ydJF8bVK
+# 2ZtnFMoNGXVbN7JTnvz5xF7XNs5HiIqh4g1QuDQwRvnv3Yt0F7Tr66XrwwoYdgxe
+# EXy2tI53L4xWZ/tfQ/7AuFyrIIdzcYc1MSmNW51TU21ROrzOGCDY4Z6QFCQMRjwV
+# 28HbMc9+1NcAR5/hichfealdmlHFYhjAVeZSRsnU5AnZHRIVt7jyKYiZd448S1pH
+# EXU1IHzTe+JRFKPtYBALBQpozPNcgUEQrAHj0xKbmaLoC7MZtejAQFexiX8=
 # SIG # End signature block

@@ -219,6 +219,20 @@ function New-SSHKey {
                 return
             }
         }
+
+        if ($PSVersionTable.Platform -eq "Unix" -or $PSVersionTable.OS -match "Darwin") {
+            $SSHAgentProcesses = Get-Process -Name ssh-agent -IncludeUserName -ErrorAction SilentlyContinue | Where-Object {$_.UserName -eq $env:USER}
+            if ($SSHAgentProcesses.Count -gt 0) {
+                $LatestSSHAgentProcess = $(@($SSHAgentProcesses) | Sort-Object StartTime)[-1]
+                $env:SSH_AUTH_SOCK = $(Get-ChildItem /tmp -Recurse -File -ErrorAction SilentlyContinue | Where-Object {$_.FullName -match "\.$($LatestSSHAgentProcess.Id-1)"}).FullName
+                $env:SSH_AGENT_PID = $LatestSSHAgentProcess.Id
+            }
+            else {                
+                $SSHAgentInfo = ssh-agent
+                $env:SSH_AUTH_SOCK = $($($($SSHAgentInfo -match "AUTH_SOCK") -replace 'SSH_AUTH_SOCK=','') -split ';')[0]
+                $env:SSH_AGENT_PID = $($($($SSHAgentInfo -match "SSH_AGENT_PID") -replace 'SSH_AGENT_PID=','') -split ';')[0]
+            }
+        }
     }
 
     if ($AddToRemoteHostAuthKeys -and !$RemoteHost) {
@@ -714,7 +728,11 @@ function New-SSHKey {
         $SSHKeyGenOutput = $ExpectOutput
     }
 
-    $PubPrivKeyPairFiles = Get-ChildItem -Path $UserSSHDir -File | Where-Object {$_.Name -match "$NewSSHKeyName"}
+    $CurrentDateTime = Get-Date
+    $PubPrivKeyPairFiles = Get-ChildItem -Path $UserSSHDir -File | Where-Object {
+        $_.Name -match "$NewSSHKeyName" -and
+        $($CurrentDateTime - $_.CreationTime) -le $(New-TimeSpan -Seconds 20)
+    }
     $PubKey = $PubPrivKeyPairFiles | Where-Object {$_.Extension -eq ".pub"}
     $PrivKey = $PubPrivKeyPairFiles | Where-Object {$_.Extension -ne ".pub"}
 
@@ -754,9 +772,15 @@ function New-SSHKey {
 
     if ($AddToSSHAgent) {
         # Add the New Private Key to the ssh-agent
-        $null = [scriptblock]::Create("ssh-add $($PrivKey.FullName)").InvokeReturnAsIs()
+        try {
+            #$null = [scriptblock]::Create("ssh-add $($PrivKey.FullName)").InvokeReturnAsIs()
+            $null = ssh-add $($PrivKey.FullName)
+        }
+        catch {
+            Write-Verbose "Successfully adding the ssh key to the ssh-agent outputs to success message to the error stream for some reason. `$LASTEXITCODE is better for error handling."
+        }
         if ($LASTEXITCODE -ne 0) {
-            Write-Warning $Error[0].Exception.Message
+            #Write-Warning $Error[0].Exception.Message
             Write-Warning "There was a problem adding $($PrivKey.FullName) to the ssh-agent PID $env:SSH_AGENT_PID!"
         }
 
@@ -836,8 +860,8 @@ function New-SSHKey {
 # SIG # Begin signature block
 # MIIMiAYJKoZIhvcNAQcCoIIMeTCCDHUCAQExCzAJBgUrDgMCGgUAMGkGCisGAQQB
 # gjcCAQSgWzBZMDQGCisGAQQBgjcCAR4wJgIDAQAABBAfzDtgWUsITrck0sYpfvNR
-# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUkOMiNMQ3RoPZqprZBw42+tKZ
-# Qkegggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
+# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUsEbUEz+aXcUb/bViO//ndar1
+# JBWgggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
 # 9w0BAQsFADAwMQwwCgYDVQQGEwNMQUIxDTALBgNVBAoTBFpFUk8xETAPBgNVBAMT
 # CFplcm9EQzAxMB4XDTE3MDkyMDIxMDM1OFoXDTE5MDkyMDIxMTM1OFowPTETMBEG
 # CgmSJomT8ixkARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMT
@@ -894,11 +918,11 @@ function New-SSHKey {
 # ARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMTB1plcm9TQ0EC
 # E1gAAAH5oOvjAv3166MAAQAAAfkwCQYFKw4DAhoFAKB4MBgGCisGAQQBgjcCAQwx
 # CjAIoAKAAKECgAAwGQYJKoZIhvcNAQkDMQwGCisGAQQBgjcCAQQwHAYKKwYBBAGC
-# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFMIcgK8XCdaMEB5g
-# 4Z+NBvvtaaLLMA0GCSqGSIb3DQEBAQUABIIBAKtasR13dAvNXsgHv6AL3fdHU4bY
-# SJw+gg5ii+DnE4Pvo9Nlm5Mn3UUGzcY+HSQQ34ukIy37BbNMN0HgADFvt3jkLWfa
-# 0mQSX4st0J05lVRtumBsS68A7SWX4l+/YtaLMiOGSdBFX7Cz2tUxo3TEO4DQyGGg
-# dHzlMZghFTfHVkPg6XYjl1d1Wbdho+WRt6MANuDwhkccDOYDTmJkC1hTaGpSXftD
-# fE7vkGX9cUpLIbowarnSsMZ7ppF05ZldlAFEk+MDcByeSnf3GjSNAkR9tzCrVIgZ
-# ktvCXx1qlS2XYqj6/pcFmQPdSkInUbG9E+eLD9xIdiOfNtaYo54HcTlmK3M=
+# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFC+QVmUeJjauM/iH
+# GMnyeJ/AhMLEMA0GCSqGSIb3DQEBAQUABIIBAJV0RpbWaNlchK/ZCtuy5aucwGX8
+# ZBEgbfK83IxF4gGuEAvpAgTN6O5MpYoVD8kt1Ch22x/UuNPIVIoHHh2sQR2bBRz1
+# /sxdJ8Nyi+CbnZtv9zkGM5z3w8dRbWkgNxolCI+qgTKb6aPBR6ZzEYDTO5gkoXDB
+# 3BPPgFBr2fCPFORIWHllTURyut9HZbfycbue9K30aajnj4UYyHKEWsWm7wcPmI7r
+# IgQyIaySzI9vm/OtyJLLJv1bCkusrANWm3Ncdg/gUHu1UGpGw8vzXy3yTpf1IQIt
+# a/FpGSSUWDO8XHwedBJbiLHkNJ72VjuTm2i7LsmHX9fp7qvIrSFkSfpOMI0=
 # SIG # End signature block

@@ -86,9 +86,9 @@ function Get-SSHFileInfo {
     $ProcessInfo.Arguments = $SSHKeyGenArguments
     $Process = New-Object System.Diagnostics.Process
     $Process.StartInfo = $ProcessInfo
-    $Process.Start() | Out-Null
+    $Process.Start() *> $null
     # Below $FinishedInAlottedTime returns boolean true/false
-    $FinishedInAlottedTime = $Process.WaitForExit(5000)
+    $FinishedInAlottedTime = $Process.WaitForExit(2000)
     if (!$FinishedInAlottedTime) {
         $Process.Kill()
         $ProcessKilled = $True
@@ -179,8 +179,8 @@ function Get-SSHFileInfo {
 # SIG # Begin signature block
 # MIIMiAYJKoZIhvcNAQcCoIIMeTCCDHUCAQExCzAJBgUrDgMCGgUAMGkGCisGAQQB
 # gjcCAQSgWzBZMDQGCisGAQQBgjcCAR4wJgIDAQAABBAfzDtgWUsITrck0sYpfvNR
-# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUJJbUWPgDePMmuOyWHj9VtcjK
-# VJGgggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
+# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUsDvcwPtZjGbwm9P23up5eXUB
+# m6ugggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
 # 9w0BAQsFADAwMQwwCgYDVQQGEwNMQUIxDTALBgNVBAoTBFpFUk8xETAPBgNVBAMT
 # CFplcm9EQzAxMB4XDTE3MDkyMDIxMDM1OFoXDTE5MDkyMDIxMTM1OFowPTETMBEG
 # CgmSJomT8ixkARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMT
@@ -237,11 +237,11 @@ function Get-SSHFileInfo {
 # ARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMTB1plcm9TQ0EC
 # E1gAAAH5oOvjAv3166MAAQAAAfkwCQYFKw4DAhoFAKB4MBgGCisGAQQBgjcCAQwx
 # CjAIoAKAAKECgAAwGQYJKoZIhvcNAQkDMQwGCisGAQQBgjcCAQQwHAYKKwYBBAGC
-# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFCFRGbY1Z8oIwSrM
-# TS/sI5gOpruUMA0GCSqGSIb3DQEBAQUABIIBABkwpgeQ7aoX6vGxFCe+GqtGfz5b
-# lrxGftBjTDM4Zt5iJSmdsMPsIiOOdCfgwG2sw5+94klo5v/oTC1HKJqueBGn+4Tv
-# mAG2mEUwjq1n6Ar1xtxjkItuX0dY+EiwtW6YwaVqsV0P9dNIDwD6M8L2LllaUadB
-# tgJNrMJaNx7s4LDyWStOoKzBNu9RmX3fl4fEJa0p8bsUZGvcvZuUfnee+/VDmsY+
-# gORK+6hiSX9beFZP/nyQSH/mqXwq4icFuYsem4xsJodvO88MTTb3nRw9DCAUmVU8
-# TPjvqTK37q9pSkVqG9ANKsK6jVQQ+q5gSuEhyjcDUMhWbkLjy45yA4qimrI=
+# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFFyWZtShWDLdE4Sw
+# RjtVv4mLMFTKMA0GCSqGSIb3DQEBAQUABIIBABSeZ7fojP+7IF7D7klQXuJhp7Jx
+# B9uzxek0hEoBfkwOX/HD2TMmPN+GA+fiZ5fKC5YSDaCSrteILL1rZIIy8SkurPUs
+# 5zVYQ+hXg0Z8P84kO3GZMxUcIjziAkUuh2Vtun6qazuu12W4pU/dwP+Yjv10232D
+# +C0+4yQRFtsUcqtLj01sCQZ3cKE+r3eEFylmF6tWKW+Ta6uiXEcAv9vold1j3RmL
+# lawh792s5c3fYIhR/FsKvLTgwLd0nbE0CIDO+jLY/Yce9hTNVjzEcCnO84QcypOF
+# frPbCLyiz+lJM/6Hatq3AFr7aCypKYT+sLo0XxHEBcWsWKU2Xg0Qp/EFcW0=
 # SIG # End signature block

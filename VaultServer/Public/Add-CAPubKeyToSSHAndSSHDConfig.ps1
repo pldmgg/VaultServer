@@ -543,8 +543,10 @@ function Add-CAPubKeyToSSHAndSSHDConfig {
 
         # Add the CA Public Certs to $sshdir/authorized_keys in their appropriate formats
         $ContentToAddToAuthKeys = @(
-            "ssh-rsa-cert-v01@openssh.com " + $PublicKeyOfCAUsedToSignUserKeysAsString
-            "ssh-rsa-cert-v01@openssh.com " + $PublicKeyOfCAUsedToSignHostKeysAsString
+            #"ssh-rsa-cert-v01@openssh.com " + $PublicKeyOfCAUsedToSignUserKeysAsString
+            #"ssh-rsa-cert-v01@openssh.com " + $PublicKeyOfCAUsedToSignHostKeysAsString
+            "cert-authority " + $PublicKeyOfCAUsedToSignUserKeysAsString
+            "cert-authority " + $PublicKeyOfCAUsedToSignHostKeysAsString
         )
         $ContentToAddToAuthKeysString = $ContentToAddToAuthKeys -join "`n"
         try {
@@ -584,8 +586,8 @@ function Add-CAPubKeyToSSHAndSSHDConfig {
 
         # Add the CA Public Certs to $sshdir/ssh_known_hosts in their appropriate formats
         $ContentToAddToKnownHosts = @(
-            "@cert-authority * " + $PublicKeyOfCAUsedToSignUserKeysAsString
-            "@cert-authority * " + $PublicKeyOfCAUsedToSignHostKeysAsString
+            '@cert-authority * ' + $PublicKeyOfCAUsedToSignUserKeysAsString
+            '@cert-authority * ' + $PublicKeyOfCAUsedToSignHostKeysAsString
         )
         $ContentToAddToKnownHostsString = $ContentToAddToKnownHosts -join "`n"
         try {
@@ -965,7 +967,7 @@ function Add-CAPubKeyToSSHAndSSHDConfig {
                 }
             }
             else {
-                Write-Warning "The specified 'TrustedUserCAKeys' option is already active in the the sshd_config file. No changes made."
+                Write-Verbose "The specified 'TrustedUserCAKeys' option is already active in the sshd_config file. No changes made."
             }
         }
 
@@ -1047,7 +1049,7 @@ function Add-CAPubKeyToSSHAndSSHDConfig {
                 }
             }
             else {
-                Write-Warning "The specified 'AuthorizedPrincipalsFile' option is already active in the the sshd_config file. No changes made."
+                Write-Verbose "The specified 'AuthorizedPrincipalsFile' option is already active in the sshd_config file. No changes made."
             }
         }
 
@@ -1129,7 +1131,7 @@ function Add-CAPubKeyToSSHAndSSHDConfig {
                 }
             }
             else {
-                Write-Warning "The specified 'AuthorizedKeysFile' option is already active in the the sshd_config file. No changes made."
+                Write-Verbose "The specified 'AuthorizedKeysFile' option is already active in the sshd_config file. No changes made."
             }
         }
     }
@@ -1154,17 +1156,39 @@ function Add-CAPubKeyToSSHAndSSHDConfig {
 
         # Add the CA Public Certs to $sshdir/authorized_keys in their appropriate formats
         $ContentToAddToAuthKeys = @(
-            "ssh-rsa-cert-v01@openssh.com " + $PublicKeyOfCAUsedToSignUserKeysAsString
-            "ssh-rsa-cert-v01@openssh.com " + $PublicKeyOfCAUsedToSignHostKeysAsString
+            #"ssh-rsa-cert-v01@openssh.com " + $PublicKeyOfCAUsedToSignUserKeysAsString
+            #"ssh-rsa-cert-v01@openssh.com " + $PublicKeyOfCAUsedToSignHostKeysAsString
+            "cert-authority " + $PublicKeyOfCAUsedToSignUserKeysAsString
+            "cert-authority " + $PublicKeyOfCAUsedToSignHostKeysAsString
         )
         $ContentToAddToAuthKeysString = $ContentToAddToAuthKeys -join "`n"
         Add-Content -Path "$sshdir/authorized_keys" -Value $ContentToAddToAuthKeysString
         $null = $FilesUpdated.Add("$sshdir/authorized_keys")
 
+        # Now we need to fix permissions for $sshdir/authorized_keys...
+        if ($PSVersionTable.PSEdition -eq "Core") {
+            Invoke-WinCommand -ComputerName localhost -ScriptBlock {
+                $SecurityDescriptor = Get-NTFSSecurityDescriptor -Path "$($args[0])/authorized_keys"
+                $SecurityDescriptor | Disable-NTFSAccessInheritance -RemoveInheritedAccessRules
+                $SecurityDescriptor | Clear-NTFSAccess
+                $SecurityDescriptor | Add-NTFSAccess -Account "NT AUTHORITY\SYSTEM" -AccessRights "FullControl" -AppliesTo ThisFolderSubfoldersAndFiles
+                $SecurityDescriptor | Add-NTFSAccess -Account "Administrators" -AccessRights "FullControl" -AppliesTo ThisFolderSubfoldersAndFiles
+                $SecurityDescriptor | Set-NTFSSecurityDescriptor
+            } -ArgumentList $sshdir
+        }
+        else {
+            $SecurityDescriptor = Get-NTFSSecurityDescriptor -Path "$sshdir/authorized_keys"
+            $SecurityDescriptor | Disable-NTFSAccessInheritance -RemoveInheritedAccessRules
+            $SecurityDescriptor | Clear-NTFSAccess
+            $SecurityDescriptor | Add-NTFSAccess -Account "NT AUTHORITY\SYSTEM" -AccessRights "FullControl" -AppliesTo ThisFolderSubfoldersAndFiles
+            $SecurityDescriptor | Add-NTFSAccess -Account "Administrators" -AccessRights "FullControl" -AppliesTo ThisFolderSubfoldersAndFiles
+            $SecurityDescriptor | Set-NTFSSecurityDescriptor
+        }
+
         # Add the CA Public Certs to $sshdir/ssh_known_hosts in their appropriate formats
         $ContentToAddToKnownHosts = @(
-            "@cert-authority * " + $PublicKeyOfCAUsedToSignUserKeysAsString
-            "@cert-authority * " + $PublicKeyOfCAUsedToSignHostKeysAsString
+            '@cert-authority * ' + $PublicKeyOfCAUsedToSignUserKeysAsString
+            '@cert-authority * ' + $PublicKeyOfCAUsedToSignHostKeysAsString
         )
         $ContentToAddToKnownHostsString = $ContentToAddToKnownHosts -join "`n"
         Add-Content -Path $sshdir/ssh_known_hosts -Value $ContentToAddToKnownHostsString
@@ -1320,7 +1344,7 @@ function Add-CAPubKeyToSSHAndSSHDConfig {
                 }
             }
             else {
-                Write-Warning "The specified 'TrustedUserCAKeys' option is already active in the the sshd_config file. No changes made."
+                Write-Verbose "The specified 'TrustedUserCAKeys' option is already active in the sshd_config file. No changes made."
             }
         }
 
@@ -1354,7 +1378,7 @@ function Add-CAPubKeyToSSHAndSSHDConfig {
                 }
             }
             else {
-                Write-Warning "The specified 'AuthorizedPrincipalsFile' option is already active in the the sshd_config file. No changes made."
+                Write-Verbose "The specified 'AuthorizedPrincipalsFile' option is already active in the sshd_config file. No changes made."
             }
         }
 
@@ -1388,7 +1412,7 @@ function Add-CAPubKeyToSSHAndSSHDConfig {
                 }
             }
             else {
-                Write-Warning "The specified 'AuthorizedKeysFile' option is already active in the the sshd_config file. No changes made."
+                Write-Verbose "The specified 'AuthorizedKeysFile' option is already active in the sshd_config file. No changes made."
             }
         }
     }
@@ -1418,8 +1442,8 @@ function Add-CAPubKeyToSSHAndSSHDConfig {
 # SIG # Begin signature block
 # MIIMiAYJKoZIhvcNAQcCoIIMeTCCDHUCAQExCzAJBgUrDgMCGgUAMGkGCisGAQQB
 # gjcCAQSgWzBZMDQGCisGAQQBgjcCAR4wJgIDAQAABBAfzDtgWUsITrck0sYpfvNR
-# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUJZkqs3ruHcnRBC6oIbNdqU0O
-# PqGgggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
+# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUzsGagwzrQ8NMBl9cfV67AFDj
+# W9egggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
 # 9w0BAQsFADAwMQwwCgYDVQQGEwNMQUIxDTALBgNVBAoTBFpFUk8xETAPBgNVBAMT
 # CFplcm9EQzAxMB4XDTE3MDkyMDIxMDM1OFoXDTE5MDkyMDIxMTM1OFowPTETMBEG
 # CgmSJomT8ixkARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMT
@@ -1476,11 +1500,11 @@ function Add-CAPubKeyToSSHAndSSHDConfig {
 # ARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMTB1plcm9TQ0EC
 # E1gAAAH5oOvjAv3166MAAQAAAfkwCQYFKw4DAhoFAKB4MBgGCisGAQQBgjcCAQwx
 # CjAIoAKAAKECgAAwGQYJKoZIhvcNAQkDMQwGCisGAQQBgjcCAQQwHAYKKwYBBAGC
-# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFBeNNowRj1wAWuVx
-# brErsyzW56QiMA0GCSqGSIb3DQEBAQUABIIBAGNBAZCe8PShhrSexQaVNjmUkVIq
-# SfIEmIyWqFB2A4castCp0m4HpTHwN/eNcWzY7kwkp+UVaUWWCk2ec0Kz97Mr+WCL
-# bmOinl6O1hgxqhomxZGeH4DNQiNkw7a0jgFKFibk+euAyc+bsYWhVUflExGF6qiF
-# +8I72USQ7129VWMN8Zf2hRm8QnjWwcLiH36X1CqIEUCLNAlFJv2a6nw5dF2ki1Uj
-# 0YA/HZZ/MJ1Hp5k/6kVK9mN8aoTHpbHm+eXU7d7m58cHqSiw4s6wFIv1Ao2WaCTW
-# iVl1zKEdBn1glQTY2m/fHE5jE2LvrGUFr1Fl5D7z1LBBr7NsiCpyYKjImX4=
+# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFIq9gKKdOjofEB0k
+# nJw81uJUM4P7MA0GCSqGSIb3DQEBAQUABIIBAHoIARnpYQIwlcuI9B7bl847s0pM
+# pf+jx1yXogL3vcyNCdAVdPd682L3Apvx9UfIuI+bfikhAWwEIOnAVz4iPrZMCfcq
+# rnMjHzK2PIc6caK/0t0UrGXpLCwUBIu4exIqq+KKaNvTOQ//MHiwKjqbzWpYIk+O
+# wToV5s0GfDO4viSUd6mSwBaXhLS4zCvqND3G2U5Wzz8lzSOxiGbQ4OiRcfuTDvW3
+# GkGMgEDmk9GaqL9ufklSDxhL/k+JN+FOdBQaQ+5A+ZpXbwSujI6dJkedRrcAooXn
+# ThkXolYR6prLlZHofw8unDBtnu3ijEezhxixh2menvhnyEzaOuKeWZ+QuXg=
 # SIG # End signature block

@@ -60,9 +60,9 @@ function Validate-SSHPrivateKey {
     $ProcessInfo.Arguments = $SSHKeyGenArguments
     $Process = New-Object System.Diagnostics.Process
     $Process.StartInfo = $ProcessInfo
-    $Process.Start() | Out-Null
+    $Process.Start() *> $null
     # Below $FinishedInAlottedTime returns boolean true/false
-    $FinishedInAlottedTime = $Process.WaitForExit(5000)
+    $FinishedInAlottedTime = $Process.WaitForExit(2000)
     if (!$FinishedInAlottedTime) {
         $Process.Kill()
         $ProcessKilled = $True
@@ -93,8 +93,8 @@ function Validate-SSHPrivateKey {
 # SIG # Begin signature block
 # MIIMiAYJKoZIhvcNAQcCoIIMeTCCDHUCAQExCzAJBgUrDgMCGgUAMGkGCisGAQQB
 # gjcCAQSgWzBZMDQGCisGAQQBgjcCAR4wJgIDAQAABBAfzDtgWUsITrck0sYpfvNR
-# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUDAWmRkzEFyAb2+sOckRstBZJ
-# t7ygggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
+# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQULb1M60jqDGilOSjjf1sC81d8
+# Ix2gggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
 # 9w0BAQsFADAwMQwwCgYDVQQGEwNMQUIxDTALBgNVBAoTBFpFUk8xETAPBgNVBAMT
 # CFplcm9EQzAxMB4XDTE3MDkyMDIxMDM1OFoXDTE5MDkyMDIxMTM1OFowPTETMBEG
 # CgmSJomT8ixkARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMT
@@ -151,11 +151,11 @@ function Validate-SSHPrivateKey {
 # ARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMTB1plcm9TQ0EC
 # E1gAAAH5oOvjAv3166MAAQAAAfkwCQYFKw4DAhoFAKB4MBgGCisGAQQBgjcCAQwx
 # CjAIoAKAAKECgAAwGQYJKoZIhvcNAQkDMQwGCisGAQQBgjcCAQQwHAYKKwYBBAGC
-# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFKxYMdO4yKDFw/lJ
-# U4PDpcpvqKOoMA0GCSqGSIb3DQEBAQUABIIBAF3jFAsq5rk+kCrPgdUjBQC+Eex9
-# dnUc0ex9eCsPjqxWa2jtn7iw5FgeNRr9jKnFy41ort8K0PytldmVqjh5Xt8o6+02
-# H4X3y67KKrkamRVgB4jeEpLdNgcidJePN2jlx7nOTg90Sm50NdFMZz/DXT2zlJA0
-# SsKpYKXLUwI+WdLr2ZjaI42ELZ+HYb5glH5yBXl+xeAC3LzkRKZ8yXAL7esmLGCL
-# sI1t5NXB51UVMisTtXO1eaceegoHB1NZUvkSWH1mQmxoFT4Xxe7082Xcoo7Jcoki
-# cgXZv5RlLcSL4Dl/ullXAlwBui/x1Q51XV791IjXlkFmlnONI4vhpiUSWiE=
+# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFEV2h87t5SMLgQ5x
+# UsFupA173rYQMA0GCSqGSIb3DQEBAQUABIIBAK2ugte9tFaoiRb3p/wEi7HJ4LXB
+# gS4wRgee3mkdbONIs76b3Hib7eY3/K95HcAP68m+qF+Fd+MYf5/i8FpiBtj1gIG2
+# XUhsaijER2UIThDOnd35zUGnQFCSLjlfjR050u8U789bPmjL30qv37op5rAS9Nxm
+# uur1HTkck+L2BxGYeg1VjRkY7IO2H0eWKF+wIhzB/AJP4kZBXXfYOxnWYRzSZRfT
+# GR69ZpGtACzOxni0ruuj0I83AHI6No41I60JwiJ/ibLiPGrMEW20HbfMFEtAEOWg
+# NyRSJBughNy8jpmvVvY1u5RlqfbvA4+Dk/WhsbsS/RIX6TvxzpgZhpq2xxI=
 # SIG # End signature block

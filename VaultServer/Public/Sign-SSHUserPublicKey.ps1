@@ -113,11 +113,35 @@ function Sign-SSHUserPublicKey {
         [Net.ServicePointManager]::SecurityProtocol = "tls12, tls11, tls"
     }
 
-    if ($AddedToSSHAgent) {
+    if ($AddToSSHAgent) {
         if (!$(Get-Command ssh-add -ErrorAction SilentlyContinue)) {
             Write-Error "Unable to find ssh-add! Halting!"
             $global:FunctionResult = "1"
             return
+        }
+
+        if (!$PSVersionTable.Platform -or $PSVersionTable.Platform -eq "Win32NT") {
+            if ($(Get-Service ssh-agent).Status -ne "Running") {
+                $SSHDErrMsg = "The ssh-agent service is NOT curently running! No ssh key pair has been created. Please ensure that the " +
+                "ssh-agent and sshd services are running and try again. Halting!'"
+                Write-Error $SSHDErrMsg
+                $global:FunctionResult = "1"
+                return
+            }
+        }
+
+        if ($PSVersionTable.Platform -eq "Unix" -or $PSVersionTable.OS -match "Darwin") {
+            $SSHAgentProcesses = Get-Process -Name ssh-agent -IncludeUserName -ErrorAction SilentlyContinue | Where-Object {$_.UserName -eq $env:USER}
+            if ($SSHAgentProcesses.Count -gt 0) {
+                $LatestSSHAgentProcess = $(@($SSHAgentProcesses) | Sort-Object StartTime)[-1]
+                $env:SSH_AUTH_SOCK = $(Get-ChildItem /tmp -Recurse -File -ErrorAction SilentlyContinue | Where-Object {$_.FullName -match "\.$($LatestSSHAgentProcess.Id-1)"}).FullName
+                $env:SSH_AGENT_PID = $LatestSSHAgentProcess.Id
+            }
+            else {                
+                $SSHAgentInfo = ssh-agent
+                $env:SSH_AUTH_SOCK = $($($($SSHAgentInfo -match "AUTH_SOCK") -replace 'SSH_AUTH_SOCK=','') -split ';')[0]
+                $env:SSH_AGENT_PID = $($($($SSHAgentInfo -match "SSH_AGENT_PID") -replace 'SSH_AGENT_PID=','') -split ';')[0]
+            }
         }
     }
     
@@ -245,7 +269,8 @@ function Sign-SSHUserPublicKey {
     Set-Content -Value $($SignedSSHClientPubKeyCertResponse.Content | ConvertFrom-Json).data.signed_key.Trim() -Path $SignedPubKeyCertFilePath
 
     if ($AddToSSHAgent) {
-        $null = [scriptblock]::Create("ssh-add `"$CorrespondingPrivateKeyPath`"").InvokeReturnAsIs()
+        #$null = [scriptblock]::Create("ssh-add `"$CorrespondingPrivateKeyPath`"").InvokeReturnAsIs()
+        $null = ssh-add "$CorrespondingPrivateKeyPath"
         if ($LASTEXITCODE -ne 0) {
             Write-Warning $Error[0].Exception.Message
         }
@@ -275,8 +300,8 @@ function Sign-SSHUserPublicKey {
 # SIG # Begin signature block
 # MIIMiAYJKoZIhvcNAQcCoIIMeTCCDHUCAQExCzAJBgUrDgMCGgUAMGkGCisGAQQB
 # gjcCAQSgWzBZMDQGCisGAQQBgjcCAR4wJgIDAQAABBAfzDtgWUsITrck0sYpfvNR
-# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUUzJfzwI5sAliPmZL/SW+M716
-# EbGgggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
+# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUib1dEXKW+cTQD1V3sRqEh0ee
+# V+qgggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
 # 9w0BAQsFADAwMQwwCgYDVQQGEwNMQUIxDTALBgNVBAoTBFpFUk8xETAPBgNVBAMT
 # CFplcm9EQzAxMB4XDTE3MDkyMDIxMDM1OFoXDTE5MDkyMDIxMTM1OFowPTETMBEG
 # CgmSJomT8ixkARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMT
@@ -333,11 +358,11 @@ function Sign-SSHUserPublicKey {
 # ARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMTB1plcm9TQ0EC
 # E1gAAAH5oOvjAv3166MAAQAAAfkwCQYFKw4DAhoFAKB4MBgGCisGAQQBgjcCAQwx
 # CjAIoAKAAKECgAAwGQYJKoZIhvcNAQkDMQwGCisGAQQBgjcCAQQwHAYKKwYBBAGC
-# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFMnW1+xtK9Uzi3l8
-# wWHWLRfQ8j/+MA0GCSqGSIb3DQEBAQUABIIBAGNYm2aSC1lGBidnG71PIS1w2io+
-# 5cxVFjiyi1oRpRT6ErBm6qYdxB+kfT2Nli1DL7H2WqpfOe9BSWzuEXXRShYhYNVf
-# jLfH9oxvGerOJgNHe+7Mg9/C+mvoeJjGNT7Vjuzzjjktwyqn59zayDeI9/+NTKjD
-# GSVUAAJIT9PO1pqB/YRjpCenCla5KykIN/sEZKd+CrifyyPsSFTtsAOrRNnd/Nj5
-# Xepp5zmVeqR5ErcRuMtU2QoD/8qxLBx4TKvR2qd/OUp55O0Hg83+YXRaSuzd3JPd
-# bQcqHAQfK7iuYjUsJxaYYt0x2JpJExQ6OqezAHSp0T8vl3gQJcR0jJcBbNo=
+# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFNFHXVUQZy148ZNW
+# Xkj4NITdvUM6MA0GCSqGSIb3DQEBAQUABIIBACuICstKxW7Lt/KOUaAWZmwPjN0n
+# tTJmg2ddhvWsDPzjrSL7bOIDRoO4A7uatFcFOnlmM1UPbFQokPBxWEiC4hPd1A+8
+# gQbQaXLi7ATKxbZmiDzaUjhlyd+oF6vjI6vrG3+e6IyJK3PimtYHqt0uYNm9jT4y
+# QyucWxwacuMn66WyEGU5lqvXbPUBj/f3t0lsHavPoFoElpP8mmYqFWCnSfOBVcNp
+# fRz7pN5EMT4dPZRH81OqitANxxDwZ+divQwxeWepfOPn8rdu67m0h23K2gigZnzk
+# hgSooC/A8hQiRhk2Lif3wRS6IMWxtLwnzgZjMCSQ/4ahnWqL4xkww/MTcH4=
 # SIG # End signature block

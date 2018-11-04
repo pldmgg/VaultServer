@@ -20,6 +20,18 @@
         This parameter takes a PSCredential. Example:
         $Creds = [pscredential]::new("zero\zeroadmin",$(Read-Host "Please enter the password for 'zero\zeroadmin'" -AsSecureString))
 
+    .PARAMETER AuthorizedPrincipalString
+        This parameter is OPTIONAL.
+
+        This parameter takes a a string that represents the "Authorized Principal" that will be addedd to the user
+        ssh certificate. This user account should be listed in the 'authorized_principals' file on the Remote Host(s) you
+        would like to ssh to.
+
+        The value for thhis parameter should be in format '<DomainUser>@<FullDomain>' or '<LocalUser>@<RemoteHostName>'
+
+        If you do NOT use this parameter, then the user account provided with the -DomainCredentialsWithAccessToVault parameter
+        will be used.
+
     .PARAMETER VaultAuthToken
         This parameter is OPTIONAL, however, either -DomainCredentialsWithAccessToVault or -VaultAuthToken are REQUIRED.
 
@@ -93,6 +105,10 @@ function New-SSHCredentials {
         [pscredential]$DomainCredentialsWithAccessToVault,
 
         [Parameter(Mandatory=$False)]
+        [ValidatePattern("[a-zA-Z0-9]+@[a-zA-Z0-9]+")]
+        [string[]]$AuthorizedPrincipalString,
+
+        [Parameter(Mandatory=$False)]
         [string]$VaultAuthToken,
 
         [Parameter(Mandatory=$True)]
@@ -155,6 +171,14 @@ function New-SSHCredentials {
             return
         }
     }
+    if (!$DomainCredentialsWithAccessToVault -and !$AuthorizedPrincipalString) {
+        $ErrMsg = "Either the -DomainCredentialsWithAccessToVault parameter or -AuthorizedPrincipalString parameter is required!`n" +
+        "The value for -DomainCredentialsWithAccessToVault should be in format '<DomainRoot>\<DomainUser>'`n" +
+        "The value for -AuthorizedPrincipalString should be in format '<DomainUser>@<FullDomain>' or '<LocalUser>@<RemoteHostName>'"
+        Write-Error $ErrMsg
+        $global:FunctionResult = "1"
+        return
+    }
 
     $HeadersParameters = @{
         "X-Vault-Token" = $VaultAuthToken
@@ -198,13 +222,31 @@ function New-SSHCredentials {
     }
 
     # Have Vault sign the User's New public key
-    if ($DomainCredentialsWithAccessToVault) {
+    if (!$AuthorizedPrincipalString) {
         $AuthorizedPrincipalUserPrep = $DomainCredentialsWithAccessToVault.UserName -split "\\"
         $AuthorizedPrincipalString = $AuthorizedPrincipalUserPrep[-1] + "@" + $AuthorizedPrincipalUserPrep[0]
     }
+    <#
     else {
-        $AuthorizedPrincipalString = $($(whoami) -split "\\")[-1] + "@" + $($(whoami) -split "\\")[0]
+        #$AuthorizedPrincipalString = $($(whoami) -split "\\")[-1] + "@" + $($(whoami) -split "\\")[0]
+        $UserName = whoami
+        if ($UserName -match '\\') {
+            $DomainNameShort = $($UserName -split '\\')[0]
+            $UserNameShort = $($UserName -split '\\')[-1]
+            $AuthorizedPrincipalString = $UserNameShort + "@" + $DomainNameShort
+        }
+        else {
+            $UserNameShort = $UserName
+            if ($env:HOSTNAME) {
+                $ActualHostName = if ($env:HOSTNAME -match '\.') {$($env:HOSTNAME -split '\.')[0]} else {$env:HOSTNAME}
+            }
+            else {
+                $ActualHostName = if ($env:ComputerName -match '\.') {$($env:ComputerName -split '\.')[0]} else {$env:ComputerName}
+            }
+            $AuthorizedPrincipalString = $UserNameShort + "@" + $ActualHostName
+        }
     }
+    #>
 
     $SignSSHUserPubKeySplatParams = @{
         VaultSSHClientSigningUrl        = "$VaultServerBaseUri/ssh-client-signer/sign/clientrole"
@@ -254,6 +296,10 @@ function New-SSHCredentials {
     }
 
     # Finally, figure out the most efficient ssh command to use to remote into the remote host.
+    Write-Host "Determing the most efficient ssh command to use with your new credentials..."
+    if ($PSVersionTable.Platform -eq "Unix" -or $PSVersionTable.OS -match "Darwin") {
+        Write-Warning "Please IGNORE any password prompts that may appear in STDOUT."
+    }
     $Output = Get-SSHClientAuthSanity -SSHKeyFilePath $NewSSHKeyResult.PublicKeyFilePath -AuthMethod PublicKeyCertificate
     if (Test-Path $NewSSHKeyResult.PrivateKeyFilePath) {
         $Output | Add-Member -Type NoteProperty -Name PrivateKeyPath -Value $NewSSHKeyResult.PrivateKeyFilePath
@@ -274,8 +320,8 @@ function New-SSHCredentials {
 # SIG # Begin signature block
 # MIIMiAYJKoZIhvcNAQcCoIIMeTCCDHUCAQExCzAJBgUrDgMCGgUAMGkGCisGAQQB
 # gjcCAQSgWzBZMDQGCisGAQQBgjcCAR4wJgIDAQAABBAfzDtgWUsITrck0sYpfvNR
-# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUVuyK6D2ZMth0JbEqmi8JJeD5
-# SMCgggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
+# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUItJumvQZ+rphRzzpSFB/KL4v
+# lVmgggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
 # 9w0BAQsFADAwMQwwCgYDVQQGEwNMQUIxDTALBgNVBAoTBFpFUk8xETAPBgNVBAMT
 # CFplcm9EQzAxMB4XDTE3MDkyMDIxMDM1OFoXDTE5MDkyMDIxMTM1OFowPTETMBEG
 # CgmSJomT8ixkARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMT
@@ -332,11 +378,11 @@ function New-SSHCredentials {
 # ARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMTB1plcm9TQ0EC
 # E1gAAAH5oOvjAv3166MAAQAAAfkwCQYFKw4DAhoFAKB4MBgGCisGAQQBgjcCAQwx
 # CjAIoAKAAKECgAAwGQYJKoZIhvcNAQkDMQwGCisGAQQBgjcCAQQwHAYKKwYBBAGC
-# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFLhanwWT7c7shj9L
-# Ywaqpi3wMwX/MA0GCSqGSIb3DQEBAQUABIIBAAntG8NhPliCAOi8PCEohXzTsxIl
-# 3uGJso5JNtHwVfFC12EGRVwuyPnQfWIs7dVRiFg05EGTR/b1I80BjRos79gBnsox
-# F6eaoHwF4fWmKSeiE2xn7RAEXm1E1FdbWmJ/Hi+UKJZPlXs2V4UUTg+bQkS0wWPG
-# grMTv7FmuqQmtGf8UfjOgpPPFJo1W45UHmjUt/S255tLB+COmKlXWiZQxBXqoPw0
-# ziK0U5w4gp0pW4w/845LS8EDg19wSv6XTLi+YtRKvQyGqZICUKMPOxyWGA+JcL/L
-# 5B0yms71G3q3uBBuf6TjCcvSchFU1leKWp8KeY3jEnE44uuWs0cAK+isE40=
+# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFJL8ubxcgYIiwAzq
+# aRh5gXgoor/dMA0GCSqGSIb3DQEBAQUABIIBAIqhRsNaM9uIVU37J+rmvMrwmN9u
+# UnHPiGQwd7jHfe6poU81KbodBQTAFDQtC/N+SqTO13YZzDbMEcvCFH/lWbUjPyI1
+# bVtU9FCU08SAW2Bg6p2douYbIaD84DnCGQnduHeO5gay1fwbVVVpzJCxc/xk3qIU
+# juFnSeHBa2C6CrE0CHsh0ZgdbYR4aBvsKM57pUtiibNp48dp2/bSqqHJ+IUMKfS9
+# 9fLtFMkKoQjpaQnmK5ap3q2bNvDryE7fCfqMF3m7bQvllUzhVE7CT8udP5p+z8XE
+# 684yybklICoBkzkmCu2qSrNMF3ah4TNNNgO+WBY/jArhnKYaFT9kPO4divw=
 # SIG # End signature block

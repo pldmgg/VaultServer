@@ -120,6 +120,25 @@ function Get-SSHClientAuthSanity {
         $global:FunctionResult = "1"
         return
     }
+    if (![bool]$(Get-Command ssh-add -ErrorAction SilentlyContinue)) {
+        Write-Error "Unable to find 'ssh-keygen'! Halting!"
+        $global:FunctionResult = "1"
+        return
+    }
+
+    if ($PSVersionTable.Platform -eq "Unix" -or $PSVersionTable.OS -match "Darwin") {
+        $SSHAgentProcesses = Get-Process -Name ssh-agent -IncludeUserName -ErrorAction SilentlyContinue | Where-Object {$_.UserName -eq $env:USER}
+        if ($SSHAgentProcesses.Count -gt 0) {
+            $LatestSSHAgentProcess = $(@($SSHAgentProcesses) | Sort-Object StartTime)[-1]
+            $env:SSH_AUTH_SOCK = $(Get-ChildItem /tmp -Recurse -File -ErrorAction SilentlyContinue | Where-Object {$_.FullName -match "\.$($LatestSSHAgentProcess.Id-1)"}).FullName
+            $env:SSH_AGENT_PID = $LatestSSHAgentProcess.Id
+        }
+        else {                
+            $SSHAgentInfo = ssh-agent
+            $env:SSH_AUTH_SOCK = $($($($SSHAgentInfo -match "AUTH_SOCK") -replace 'SSH_AUTH_SOCK=','') -split ';')[0]
+            $env:SSH_AGENT_PID = $($($($SSHAgentInfo -match "SSH_AGENT_PID") -replace 'SSH_AGENT_PID=','') -split ';')[0]
+        }
+    }
 
     $BoundParametersDictionary = $PSCmdlet.MyInvocation.BoundParameters
     [array]$UsedParameterNames = $($BoundParametersDictionary.GetEnumerator()).Key
@@ -866,8 +885,8 @@ function Get-SSHClientAuthSanity {
 # SIG # Begin signature block
 # MIIMiAYJKoZIhvcNAQcCoIIMeTCCDHUCAQExCzAJBgUrDgMCGgUAMGkGCisGAQQB
 # gjcCAQSgWzBZMDQGCisGAQQBgjcCAR4wJgIDAQAABBAfzDtgWUsITrck0sYpfvNR
-# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUQh5GNPL/j40gqVckMyiA+A1r
-# Wyygggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
+# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUg6UB9YtkCnHhOlpCrYzQkRTj
+# hgugggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
 # 9w0BAQsFADAwMQwwCgYDVQQGEwNMQUIxDTALBgNVBAoTBFpFUk8xETAPBgNVBAMT
 # CFplcm9EQzAxMB4XDTE3MDkyMDIxMDM1OFoXDTE5MDkyMDIxMTM1OFowPTETMBEG
 # CgmSJomT8ixkARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMT
@@ -924,11 +943,11 @@ function Get-SSHClientAuthSanity {
 # ARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMTB1plcm9TQ0EC
 # E1gAAAH5oOvjAv3166MAAQAAAfkwCQYFKw4DAhoFAKB4MBgGCisGAQQBgjcCAQwx
 # CjAIoAKAAKECgAAwGQYJKoZIhvcNAQkDMQwGCisGAQQBgjcCAQQwHAYKKwYBBAGC
-# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFN5eHEtl09bSKsa8
-# GvJPPPNg3u8jMA0GCSqGSIb3DQEBAQUABIIBAGKxEXSAey05SoDHjXJyWejWrj2W
-# hat9Ee/0BsQvRNXigP0f29UYU6C6IXOh9iUo34VrLFZYmRMqhstPyZuYW3/vxqlb
-# XWMQncepp41KoBMeYthzUgZMHI9HSSA5AeI2S17sZXyu7zqVw9swlCNOKnHaM3xj
-# 0WXcP7WRuQaW/3JclaJbndHMzjw/sy8+iL8vRo7kBCViZnGYlbChTBaLIW7Ej7Kg
-# 9AhnuoXF4dnJ5RNYRnsEGwdsNLFkCvq4bT1jFURTqmQs/Guk1iGaD9WylIqCtZtj
-# Ck6YX7wffi3ZjJucVs6IxYSNmCv7rhauWy0LtbSTmEswxwBFBObiwRxV4Aw=
+# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFKNbJ6dstrb2h+D8
+# ny/A7Qi+n0OYMA0GCSqGSIb3DQEBAQUABIIBAKx7jLE51iw+M3FNGaEXSkYSWSeo
+# nL07yQchrnfrYmI9mXYs3tnftC7O+qIivViRGpzRPA8sbc6VPgR/1VJIbCVKku9u
+# bl0BziR0lSn9mCDx9gxVBL9XRwgC3rG/qhJ2Q/RsoFqQu+w+iSP/7VZZKQR99wIe
+# uVGlLUYu/F3eGjRB9k4z1hmVAvnQx+LMz3Ogemvvhnb9fkrL9v+UIDiuUHkf/HJ9
+# 0MlpCG0/rTYvS6SaHeLr9KaY5GXf8v7ItclqNLO1X1NZrbvCiwvUx2IW8Tmu1n5d
+# WbpztvkHSxQ70sxUQHFDUlYfFEHQvqWy4+CDx6mhLfdEcgtYSMHxmPKlW/M=
 # SIG # End signature block

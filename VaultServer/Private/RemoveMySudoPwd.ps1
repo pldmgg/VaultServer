@@ -58,7 +58,7 @@ function RemoveMySudoPwd {
         $SudoersCheck = sudo bash -c "$SudoersCheckScript"
 
         if ($SudoersCheck -eq "present") {
-            Write-Host "The account '$(whoami)' is already allowed to run 'sudo pwsh' without being prompted for a password! No changes made." -ForegroundColor Green
+            Write-Verbose "The account '$(whoami)' is already allowed to run 'sudo pwsh' without being prompted for a password! No changes made."
             return
         }
     }
@@ -154,8 +154,8 @@ function RemoveMySudoPwd {
 # SIG # Begin signature block
 # MIIMiAYJKoZIhvcNAQcCoIIMeTCCDHUCAQExCzAJBgUrDgMCGgUAMGkGCisGAQQB
 # gjcCAQSgWzBZMDQGCisGAQQBgjcCAR4wJgIDAQAABBAfzDtgWUsITrck0sYpfvNR
-# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUnF3ZbGWTYnBINEnBAdWxJLz9
-# lTSgggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
+# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUU9UG/ZlayR8hdEZhVxrtNqv1
+# cXygggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
 # 9w0BAQsFADAwMQwwCgYDVQQGEwNMQUIxDTALBgNVBAoTBFpFUk8xETAPBgNVBAMT
 # CFplcm9EQzAxMB4XDTE3MDkyMDIxMDM1OFoXDTE5MDkyMDIxMTM1OFowPTETMBEG
 # CgmSJomT8ixkARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMT
@@ -212,11 +212,11 @@ function RemoveMySudoPwd {
 # ARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMTB1plcm9TQ0EC
 # E1gAAAH5oOvjAv3166MAAQAAAfkwCQYFKw4DAhoFAKB4MBgGCisGAQQBgjcCAQwx
 # CjAIoAKAAKECgAAwGQYJKoZIhvcNAQkDMQwGCisGAQQBgjcCAQQwHAYKKwYBBAGC
-# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFBN62vn2T8BIVXnP
-# TVGMespIkGNPMA0GCSqGSIb3DQEBAQUABIIBAC0xhHRdzbzo6SBcN2FMyJ/eU6hU
-# 2HOuh3KRS428xQ2i/jDwwfYfueCTxs8rPUknw+/8ydIvRWQzazWQqsa5yzzG+xrC
-# +DViC5AZUfwCTyDrG4c1XWoni4U8v/zMkQGdMnrz79W/o0s5i/Iq55lq44g0zlUG
-# MwIzQ7JRZ9zrqBdsq4JaNqh5C5xb3XvHRpJ6SVLPjpmYPT483f0enN6odRxuPu14
-# RWnY/K+jcpc+QH2H+819kWTPoBkhaGOifIjrR2icnBUlb89pLACENna8wraxtdPi
-# /7GxefU6dBoPnC6Dyw6CIyeLG5Kfxw92aVqNG5cbRT7F1y1tJXmVAP4xP3I=
+# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFKP5NBGHtssENxJL
+# U81XqwMOm6OdMA0GCSqGSIb3DQEBAQUABIIBALgiNwqCy9cWNVZpDNsSIDY/sj2g
+# MZ3Xglqfq0kH5b1B9neI4IvDSnVsxHXYXz0qv346+4N/wo7gIbiXHcI0fociI5pT
+# 8Yon8Ss6+wXFRwgArvXS3VEYRIokxtEQ6G2VL5qnk6O6dinBysCfswxgKAbsBQoU
+# WMMN+8/QalemWDlrpQ3mYo6V0y+510WMLN2qwl+ayFz3IJiZrNqxeY5+A0RR2YA1
+# r5WeG+lSbLtWPCCdWJiRrN/m7gT+9ZKbOtFw+utjHNZuln5k79PUbmREgy9Z8FuO
+# jzSRCV0Mo40WmlituyuElmj3jNbD8IENWxvrTYJF8EQYNOCUMY5nwgDVIfo=
 # SIG # End signature block

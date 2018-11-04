@@ -644,8 +644,10 @@ function Add-CAPubKeyToSSHAndSSHDConfig {
 
         # Add the CA Public Certs to $sshdir/authorized_keys in their appropriate formats
         $ContentToAddToAuthKeys = @(
-            "ssh-rsa-cert-v01@openssh.com " + $PublicKeyOfCAUsedToSignUserKeysAsString
-            "ssh-rsa-cert-v01@openssh.com " + $PublicKeyOfCAUsedToSignHostKeysAsString
+            #"ssh-rsa-cert-v01@openssh.com " + $PublicKeyOfCAUsedToSignUserKeysAsString
+            #"ssh-rsa-cert-v01@openssh.com " + $PublicKeyOfCAUsedToSignHostKeysAsString
+            "cert-authority " + $PublicKeyOfCAUsedToSignUserKeysAsString
+            "cert-authority " + $PublicKeyOfCAUsedToSignHostKeysAsString
         )
         $ContentToAddToAuthKeysString = $ContentToAddToAuthKeys -join "`n"
         try {
@@ -685,8 +687,8 @@ function Add-CAPubKeyToSSHAndSSHDConfig {
 
         # Add the CA Public Certs to $sshdir/ssh_known_hosts in their appropriate formats
         $ContentToAddToKnownHosts = @(
-            "@cert-authority * " + $PublicKeyOfCAUsedToSignUserKeysAsString
-            "@cert-authority * " + $PublicKeyOfCAUsedToSignHostKeysAsString
+            '@cert-authority * ' + $PublicKeyOfCAUsedToSignUserKeysAsString
+            '@cert-authority * ' + $PublicKeyOfCAUsedToSignHostKeysAsString
         )
         $ContentToAddToKnownHostsString = $ContentToAddToKnownHosts -join "`n"
         try {
@@ -1066,7 +1068,7 @@ function Add-CAPubKeyToSSHAndSSHDConfig {
                 }
             }
             else {
-                Write-Warning "The specified 'TrustedUserCAKeys' option is already active in the the sshd_config file. No changes made."
+                Write-Verbose "The specified 'TrustedUserCAKeys' option is already active in the sshd_config file. No changes made."
             }
         }
 
@@ -1148,7 +1150,7 @@ function Add-CAPubKeyToSSHAndSSHDConfig {
                 }
             }
             else {
-                Write-Warning "The specified 'AuthorizedPrincipalsFile' option is already active in the the sshd_config file. No changes made."
+                Write-Verbose "The specified 'AuthorizedPrincipalsFile' option is already active in the sshd_config file. No changes made."
             }
         }
 
@@ -1230,7 +1232,7 @@ function Add-CAPubKeyToSSHAndSSHDConfig {
                 }
             }
             else {
-                Write-Warning "The specified 'AuthorizedKeysFile' option is already active in the the sshd_config file. No changes made."
+                Write-Verbose "The specified 'AuthorizedKeysFile' option is already active in the sshd_config file. No changes made."
             }
         }
     }
@@ -1255,17 +1257,39 @@ function Add-CAPubKeyToSSHAndSSHDConfig {
 
         # Add the CA Public Certs to $sshdir/authorized_keys in their appropriate formats
         $ContentToAddToAuthKeys = @(
-            "ssh-rsa-cert-v01@openssh.com " + $PublicKeyOfCAUsedToSignUserKeysAsString
-            "ssh-rsa-cert-v01@openssh.com " + $PublicKeyOfCAUsedToSignHostKeysAsString
+            #"ssh-rsa-cert-v01@openssh.com " + $PublicKeyOfCAUsedToSignUserKeysAsString
+            #"ssh-rsa-cert-v01@openssh.com " + $PublicKeyOfCAUsedToSignHostKeysAsString
+            "cert-authority " + $PublicKeyOfCAUsedToSignUserKeysAsString
+            "cert-authority " + $PublicKeyOfCAUsedToSignHostKeysAsString
         )
         $ContentToAddToAuthKeysString = $ContentToAddToAuthKeys -join "`n"
         Add-Content -Path "$sshdir/authorized_keys" -Value $ContentToAddToAuthKeysString
         $null = $FilesUpdated.Add("$sshdir/authorized_keys")
 
+        # Now we need to fix permissions for $sshdir/authorized_keys...
+        if ($PSVersionTable.PSEdition -eq "Core") {
+            Invoke-WinCommand -ComputerName localhost -ScriptBlock {
+                $SecurityDescriptor = Get-NTFSSecurityDescriptor -Path "$($args[0])/authorized_keys"
+                $SecurityDescriptor | Disable-NTFSAccessInheritance -RemoveInheritedAccessRules
+                $SecurityDescriptor | Clear-NTFSAccess
+                $SecurityDescriptor | Add-NTFSAccess -Account "NT AUTHORITY\SYSTEM" -AccessRights "FullControl" -AppliesTo ThisFolderSubfoldersAndFiles
+                $SecurityDescriptor | Add-NTFSAccess -Account "Administrators" -AccessRights "FullControl" -AppliesTo ThisFolderSubfoldersAndFiles
+                $SecurityDescriptor | Set-NTFSSecurityDescriptor
+            } -ArgumentList $sshdir
+        }
+        else {
+            $SecurityDescriptor = Get-NTFSSecurityDescriptor -Path "$sshdir/authorized_keys"
+            $SecurityDescriptor | Disable-NTFSAccessInheritance -RemoveInheritedAccessRules
+            $SecurityDescriptor | Clear-NTFSAccess
+            $SecurityDescriptor | Add-NTFSAccess -Account "NT AUTHORITY\SYSTEM" -AccessRights "FullControl" -AppliesTo ThisFolderSubfoldersAndFiles
+            $SecurityDescriptor | Add-NTFSAccess -Account "Administrators" -AccessRights "FullControl" -AppliesTo ThisFolderSubfoldersAndFiles
+            $SecurityDescriptor | Set-NTFSSecurityDescriptor
+        }
+
         # Add the CA Public Certs to $sshdir/ssh_known_hosts in their appropriate formats
         $ContentToAddToKnownHosts = @(
-            "@cert-authority * " + $PublicKeyOfCAUsedToSignUserKeysAsString
-            "@cert-authority * " + $PublicKeyOfCAUsedToSignHostKeysAsString
+            '@cert-authority * ' + $PublicKeyOfCAUsedToSignUserKeysAsString
+            '@cert-authority * ' + $PublicKeyOfCAUsedToSignHostKeysAsString
         )
         $ContentToAddToKnownHostsString = $ContentToAddToKnownHosts -join "`n"
         Add-Content -Path $sshdir/ssh_known_hosts -Value $ContentToAddToKnownHostsString
@@ -1421,7 +1445,7 @@ function Add-CAPubKeyToSSHAndSSHDConfig {
                 }
             }
             else {
-                Write-Warning "The specified 'TrustedUserCAKeys' option is already active in the the sshd_config file. No changes made."
+                Write-Verbose "The specified 'TrustedUserCAKeys' option is already active in the sshd_config file. No changes made."
             }
         }
 
@@ -1455,7 +1479,7 @@ function Add-CAPubKeyToSSHAndSSHDConfig {
                 }
             }
             else {
-                Write-Warning "The specified 'AuthorizedPrincipalsFile' option is already active in the the sshd_config file. No changes made."
+                Write-Verbose "The specified 'AuthorizedPrincipalsFile' option is already active in the sshd_config file. No changes made."
             }
         }
 
@@ -1489,7 +1513,7 @@ function Add-CAPubKeyToSSHAndSSHDConfig {
                 }
             }
             else {
-                Write-Warning "The specified 'AuthorizedKeysFile' option is already active in the the sshd_config file. No changes made."
+                Write-Verbose "The specified 'AuthorizedKeysFile' option is already active in the sshd_config file. No changes made."
             }
         }
     }
@@ -3725,7 +3749,11 @@ function Generate-SSHUserDirFileInfo {
     }
 
     # Get a list of all files under $HOME\.ssh
-    [array]$SSHHomeFiles = Get-ChildItem -Path $PathToHomeDotSSHDirectory -File | Where-Object {$_.Name -ne "SSHDirectoryFileInfo.xml"}
+    [array]$SSHHomeFiles = Get-ChildItem -Path $PathToHomeDotSSHDirectory -File | Where-Object {
+        $_.Name -ne "SSHDirectoryFileInfo.xml" -and
+        $_.Name -ne "authorized_keys" -and
+        $_.Name -ne "known_hosts"
+    }
 
     if ($SSHHomeFiles.Count -eq 0) {
         Write-Error "Unable to find any files under '$PathToHomeDotSSHDirectory'! Halting!"
@@ -4429,6 +4457,25 @@ function Get-SSHClientAuthSanity {
         Write-Error "Unable to find 'ssh-keygen'! Halting!"
         $global:FunctionResult = "1"
         return
+    }
+    if (![bool]$(Get-Command ssh-add -ErrorAction SilentlyContinue)) {
+        Write-Error "Unable to find 'ssh-keygen'! Halting!"
+        $global:FunctionResult = "1"
+        return
+    }
+
+    if ($PSVersionTable.Platform -eq "Unix" -or $PSVersionTable.OS -match "Darwin") {
+        $SSHAgentProcesses = Get-Process -Name ssh-agent -IncludeUserName -ErrorAction SilentlyContinue | Where-Object {$_.UserName -eq $env:USER}
+        if ($SSHAgentProcesses.Count -gt 0) {
+            $LatestSSHAgentProcess = $(@($SSHAgentProcesses) | Sort-Object StartTime)[-1]
+            $env:SSH_AUTH_SOCK = $(Get-ChildItem /tmp -Recurse -File -ErrorAction SilentlyContinue | Where-Object {$_.FullName -match "\.$($LatestSSHAgentProcess.Id-1)"}).FullName
+            $env:SSH_AGENT_PID = $LatestSSHAgentProcess.Id
+        }
+        else {                
+            $SSHAgentInfo = ssh-agent
+            $env:SSH_AUTH_SOCK = $($($($SSHAgentInfo -match "AUTH_SOCK") -replace 'SSH_AUTH_SOCK=','') -split ';')[0]
+            $env:SSH_AGENT_PID = $($($($SSHAgentInfo -match "SSH_AGENT_PID") -replace 'SSH_AGENT_PID=','') -split ';')[0]
+        }
     }
 
     $BoundParametersDictionary = $PSCmdlet.MyInvocation.BoundParameters
@@ -5262,9 +5309,9 @@ function Get-SSHFileInfo {
     $ProcessInfo.Arguments = $SSHKeyGenArguments
     $Process = New-Object System.Diagnostics.Process
     $Process.StartInfo = $ProcessInfo
-    $Process.Start() | Out-Null
+    $Process.Start() *> $null
     # Below $FinishedInAlottedTime returns boolean true/false
-    $FinishedInAlottedTime = $Process.WaitForExit(5000)
+    $FinishedInAlottedTime = $Process.WaitForExit(2000)
     if (!$FinishedInAlottedTime) {
         $Process.Kill()
         $ProcessKilled = $True
@@ -6711,6 +6758,18 @@ function Manage-StoredCredentials {
         This parameter takes a PSCredential. Example:
         $Creds = [pscredential]::new("zero\zeroadmin",$(Read-Host "Please enter the password for 'zero\zeroadmin'" -AsSecureString))
 
+    .PARAMETER AuthorizedPrincipalString
+        This parameter is OPTIONAL.
+
+        This parameter takes a a string that represents the "Authorized Principal" that will be addedd to the user
+        ssh certificate. This user account should be listed in the 'authorized_principals' file on the Remote Host(s) you
+        would like to ssh to.
+
+        The value for thhis parameter should be in format '<DomainUser>@<FullDomain>' or '<LocalUser>@<RemoteHostName>'
+
+        If you do NOT use this parameter, then the user account provided with the -DomainCredentialsWithAccessToVault parameter
+        will be used.
+
     .PARAMETER VaultAuthToken
         This parameter is OPTIONAL, however, either -DomainCredentialsWithAccessToVault or -VaultAuthToken are REQUIRED.
 
@@ -6784,6 +6843,10 @@ function New-SSHCredentials {
         [pscredential]$DomainCredentialsWithAccessToVault,
 
         [Parameter(Mandatory=$False)]
+        [ValidatePattern("[a-zA-Z0-9]+@[a-zA-Z0-9]+")]
+        [string[]]$AuthorizedPrincipalString,
+
+        [Parameter(Mandatory=$False)]
         [string]$VaultAuthToken,
 
         [Parameter(Mandatory=$True)]
@@ -6846,6 +6909,14 @@ function New-SSHCredentials {
             return
         }
     }
+    if (!$DomainCredentialsWithAccessToVault -and !$AuthorizedPrincipalString) {
+        $ErrMsg = "Either the -DomainCredentialsWithAccessToVault parameter or -AuthorizedPrincipalString parameter is required!`n" +
+        "The value for -DomainCredentialsWithAccessToVault should be in format '<DomainRoot>\<DomainUser>'`n" +
+        "The value for -AuthorizedPrincipalString should be in format '<DomainUser>@<FullDomain>' or '<LocalUser>@<RemoteHostName>'"
+        Write-Error $ErrMsg
+        $global:FunctionResult = "1"
+        return
+    }
 
     $HeadersParameters = @{
         "X-Vault-Token" = $VaultAuthToken
@@ -6889,13 +6960,31 @@ function New-SSHCredentials {
     }
 
     # Have Vault sign the User's New public key
-    if ($DomainCredentialsWithAccessToVault) {
+    if (!$AuthorizedPrincipalString) {
         $AuthorizedPrincipalUserPrep = $DomainCredentialsWithAccessToVault.UserName -split "\\"
         $AuthorizedPrincipalString = $AuthorizedPrincipalUserPrep[-1] + "@" + $AuthorizedPrincipalUserPrep[0]
     }
+    <#
     else {
-        $AuthorizedPrincipalString = $($(whoami) -split "\\")[-1] + "@" + $($(whoami) -split "\\")[0]
+        #$AuthorizedPrincipalString = $($(whoami) -split "\\")[-1] + "@" + $($(whoami) -split "\\")[0]
+        $UserName = whoami
+        if ($UserName -match '\\') {
+            $DomainNameShort = $($UserName -split '\\')[0]
+            $UserNameShort = $($UserName -split '\\')[-1]
+            $AuthorizedPrincipalString = $UserNameShort + "@" + $DomainNameShort
+        }
+        else {
+            $UserNameShort = $UserName
+            if ($env:HOSTNAME) {
+                $ActualHostName = if ($env:HOSTNAME -match '\.') {$($env:HOSTNAME -split '\.')[0]} else {$env:HOSTNAME}
+            }
+            else {
+                $ActualHostName = if ($env:ComputerName -match '\.') {$($env:ComputerName -split '\.')[0]} else {$env:ComputerName}
+            }
+            $AuthorizedPrincipalString = $UserNameShort + "@" + $ActualHostName
+        }
     }
+    #>
 
     $SignSSHUserPubKeySplatParams = @{
         VaultSSHClientSigningUrl        = "$VaultServerBaseUri/ssh-client-signer/sign/clientrole"
@@ -6945,6 +7034,10 @@ function New-SSHCredentials {
     }
 
     # Finally, figure out the most efficient ssh command to use to remote into the remote host.
+    Write-Host "Determing the most efficient ssh command to use with your new credentials..."
+    if ($PSVersionTable.Platform -eq "Unix" -or $PSVersionTable.OS -match "Darwin") {
+        Write-Warning "Please IGNORE any password prompts that may appear in STDOUT."
+    }
     $Output = Get-SSHClientAuthSanity -SSHKeyFilePath $NewSSHKeyResult.PublicKeyFilePath -AuthMethod PublicKeyCertificate
     if (Test-Path $NewSSHKeyResult.PrivateKeyFilePath) {
         $Output | Add-Member -Type NoteProperty -Name PrivateKeyPath -Value $NewSSHKeyResult.PrivateKeyFilePath
@@ -7182,6 +7275,20 @@ function New-SSHKey {
                 Write-Error $SSHDErrMsg
                 $global:FunctionResult = "1"
                 return
+            }
+        }
+
+        if ($PSVersionTable.Platform -eq "Unix" -or $PSVersionTable.OS -match "Darwin") {
+            $SSHAgentProcesses = Get-Process -Name ssh-agent -IncludeUserName -ErrorAction SilentlyContinue | Where-Object {$_.UserName -eq $env:USER}
+            if ($SSHAgentProcesses.Count -gt 0) {
+                $LatestSSHAgentProcess = $(@($SSHAgentProcesses) | Sort-Object StartTime)[-1]
+                $env:SSH_AUTH_SOCK = $(Get-ChildItem /tmp -Recurse -File -ErrorAction SilentlyContinue | Where-Object {$_.FullName -match "\.$($LatestSSHAgentProcess.Id-1)"}).FullName
+                $env:SSH_AGENT_PID = $LatestSSHAgentProcess.Id
+            }
+            else {                
+                $SSHAgentInfo = ssh-agent
+                $env:SSH_AUTH_SOCK = $($($($SSHAgentInfo -match "AUTH_SOCK") -replace 'SSH_AUTH_SOCK=','') -split ';')[0]
+                $env:SSH_AGENT_PID = $($($($SSHAgentInfo -match "SSH_AGENT_PID") -replace 'SSH_AGENT_PID=','') -split ';')[0]
             }
         }
     }
@@ -7679,7 +7786,11 @@ function New-SSHKey {
         $SSHKeyGenOutput = $ExpectOutput
     }
 
-    $PubPrivKeyPairFiles = Get-ChildItem -Path $UserSSHDir -File | Where-Object {$_.Name -match "$NewSSHKeyName"}
+    $CurrentDateTime = Get-Date
+    $PubPrivKeyPairFiles = Get-ChildItem -Path $UserSSHDir -File | Where-Object {
+        $_.Name -match "$NewSSHKeyName" -and
+        $($CurrentDateTime - $_.CreationTime) -le $(New-TimeSpan -Seconds 20)
+    }
     $PubKey = $PubPrivKeyPairFiles | Where-Object {$_.Extension -eq ".pub"}
     $PrivKey = $PubPrivKeyPairFiles | Where-Object {$_.Extension -ne ".pub"}
 
@@ -7719,9 +7830,15 @@ function New-SSHKey {
 
     if ($AddToSSHAgent) {
         # Add the New Private Key to the ssh-agent
-        $null = [scriptblock]::Create("ssh-add $($PrivKey.FullName)").InvokeReturnAsIs()
+        try {
+            #$null = [scriptblock]::Create("ssh-add $($PrivKey.FullName)").InvokeReturnAsIs()
+            $null = ssh-add $($PrivKey.FullName)
+        }
+        catch {
+            Write-Verbose "Successfully adding the ssh key to the ssh-agent outputs to success message to the error stream for some reason. `$LASTEXITCODE is better for error handling."
+        }
         if ($LASTEXITCODE -ne 0) {
-            Write-Warning $Error[0].Exception.Message
+            #Write-Warning $Error[0].Exception.Message
             Write-Warning "There was a problem adding $($PrivKey.FullName) to the ssh-agent PID $env:SSH_AGENT_PID!"
         }
 
@@ -8521,11 +8638,35 @@ function Sign-SSHUserPublicKey {
         [Net.ServicePointManager]::SecurityProtocol = "tls12, tls11, tls"
     }
 
-    if ($AddedToSSHAgent) {
+    if ($AddToSSHAgent) {
         if (!$(Get-Command ssh-add -ErrorAction SilentlyContinue)) {
             Write-Error "Unable to find ssh-add! Halting!"
             $global:FunctionResult = "1"
             return
+        }
+
+        if (!$PSVersionTable.Platform -or $PSVersionTable.Platform -eq "Win32NT") {
+            if ($(Get-Service ssh-agent).Status -ne "Running") {
+                $SSHDErrMsg = "The ssh-agent service is NOT curently running! No ssh key pair has been created. Please ensure that the " +
+                "ssh-agent and sshd services are running and try again. Halting!'"
+                Write-Error $SSHDErrMsg
+                $global:FunctionResult = "1"
+                return
+            }
+        }
+
+        if ($PSVersionTable.Platform -eq "Unix" -or $PSVersionTable.OS -match "Darwin") {
+            $SSHAgentProcesses = Get-Process -Name ssh-agent -IncludeUserName -ErrorAction SilentlyContinue | Where-Object {$_.UserName -eq $env:USER}
+            if ($SSHAgentProcesses.Count -gt 0) {
+                $LatestSSHAgentProcess = $(@($SSHAgentProcesses) | Sort-Object StartTime)[-1]
+                $env:SSH_AUTH_SOCK = $(Get-ChildItem /tmp -Recurse -File -ErrorAction SilentlyContinue | Where-Object {$_.FullName -match "\.$($LatestSSHAgentProcess.Id-1)"}).FullName
+                $env:SSH_AGENT_PID = $LatestSSHAgentProcess.Id
+            }
+            else {                
+                $SSHAgentInfo = ssh-agent
+                $env:SSH_AUTH_SOCK = $($($($SSHAgentInfo -match "AUTH_SOCK") -replace 'SSH_AUTH_SOCK=','') -split ';')[0]
+                $env:SSH_AGENT_PID = $($($($SSHAgentInfo -match "SSH_AGENT_PID") -replace 'SSH_AGENT_PID=','') -split ';')[0]
+            }
         }
     }
     
@@ -8653,7 +8794,8 @@ function Sign-SSHUserPublicKey {
     Set-Content -Value $($SignedSSHClientPubKeyCertResponse.Content | ConvertFrom-Json).data.signed_key.Trim() -Path $SignedPubKeyCertFilePath
 
     if ($AddToSSHAgent) {
-        $null = [scriptblock]::Create("ssh-add `"$CorrespondingPrivateKeyPath`"").InvokeReturnAsIs()
+        #$null = [scriptblock]::Create("ssh-add `"$CorrespondingPrivateKeyPath`"").InvokeReturnAsIs()
+        $null = ssh-add "$CorrespondingPrivateKeyPath"
         if ($LASTEXITCODE -ne 0) {
             Write-Warning $Error[0].Exception.Message
         }
@@ -8743,9 +8885,9 @@ function Validate-SSHPrivateKey {
     $ProcessInfo.Arguments = $SSHKeyGenArguments
     $Process = New-Object System.Diagnostics.Process
     $Process.StartInfo = $ProcessInfo
-    $Process.Start() | Out-Null
+    $Process.Start() *> $null
     # Below $FinishedInAlottedTime returns boolean true/false
-    $FinishedInAlottedTime = $Process.WaitForExit(5000)
+    $FinishedInAlottedTime = $Process.WaitForExit(2000)
     if (!$FinishedInAlottedTime) {
         $Process.Kill()
         $ProcessKilled = $True
@@ -10070,8 +10212,8 @@ if(Win32.CertStrToName(X509_ASN_ENCODING, DN, CERT_X500_NAME_STR, IntPtr.Zero, n
 # SIG # Begin signature block
 # MIIMiAYJKoZIhvcNAQcCoIIMeTCCDHUCAQExCzAJBgUrDgMCGgUAMGkGCisGAQQB
 # gjcCAQSgWzBZMDQGCisGAQQBgjcCAR4wJgIDAQAABBAfzDtgWUsITrck0sYpfvNR
-# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQU5vO8f1pwDsB2vFpGCoPRj3r3
-# xYGgggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
+# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUPquc8tnToQkXtdVVfpkHRfJT
+# flegggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
 # 9w0BAQsFADAwMQwwCgYDVQQGEwNMQUIxDTALBgNVBAoTBFpFUk8xETAPBgNVBAMT
 # CFplcm9EQzAxMB4XDTE3MDkyMDIxMDM1OFoXDTE5MDkyMDIxMTM1OFowPTETMBEG
 # CgmSJomT8ixkARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMT
@@ -10128,11 +10270,11 @@ if(Win32.CertStrToName(X509_ASN_ENCODING, DN, CERT_X500_NAME_STR, IntPtr.Zero, n
 # ARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMTB1plcm9TQ0EC
 # E1gAAAH5oOvjAv3166MAAQAAAfkwCQYFKw4DAhoFAKB4MBgGCisGAQQBgjcCAQwx
 # CjAIoAKAAKECgAAwGQYJKoZIhvcNAQkDMQwGCisGAQQBgjcCAQQwHAYKKwYBBAGC
-# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFNxhEgcLRxOwmWbm
-# iVe78KqQtfRhMA0GCSqGSIb3DQEBAQUABIIBAIw53cOUrsZ77UganbPcQMwWl7ND
-# nkX/pZ0f/imkR5lC1QI+rbVwZK6ZBpfjLp/FyliR1Jz5g99RG/1zyCuDOenSg6lb
-# hwv0FeBnsLo5D4AkHVqAULh2ct5zjM40Z0VCVLkHA3/Q4A2lBquEnb74teqSq7of
-# bbposC9hh3hokEJUBMQ5fe2cDpX/Hu/DBJwXSKeY/2i0+E0NbAhoFG7qCcB8QvhC
-# hY+m8Yz7oJJ2xEa0zQscZH7KFUgjmbgOGgNNNJsCQsZnK2EtYpXoZrgOqrrPMHoa
-# oZu4xAoeyLZrQ43URfHl55U178VSaJcCesGB08974RfhzuL/uSEENDYhFF8=
+# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFMlumQPZ1/OfsTEs
+# s2CMrP894iGUMA0GCSqGSIb3DQEBAQUABIIBAIK7YpQ9xymLC2sykNwDviti/Ntn
+# WbXkJyviPGfXAVeQGECsfkMiCSCspoTTCSwifICc5PcCZQyevdOaEEe5jy8h+YKM
+# OkmQHYCQvU2z43NjkE46ir35CtTOC9IuS3Tt3S02Prsx11/toAcrXIhZUTIA7yKz
+# DOZtxvogddEGx+vlps41xKmVsXjgGtnP96xTIvLFDmnwEM+iRwcDlEethP4NlmXV
+# jpTrHLeK8sokr9WzAKhkjiR/Ns+wF6tBOmm9jKPPDH6B1ucnxHiVOZ1pxw5Hng6k
+# q5QUCfPBiTxArqtwvWlvi78YLSVx41rSR+uZOxl+l7O6FN/n7I61h6tROUo=
 # SIG # End signature block
