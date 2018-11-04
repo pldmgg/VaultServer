@@ -94,7 +94,7 @@ function Generate-AuthorizedPrincipalsFile {
 
     if ($PSVersionTable.Platform -eq "Unix" -or $PSVersionTable.OS -match "Darwin" -and $env:SudoPwdPrompt) {
         if (GetElevation) {
-            Write-Error "You should not be running the VaultServer Module as root! Halting!"
+            Write-Error "You should not be running the $($MyInvocation.MyCommand.Name) function Module as root! Halting!"
             $global:FunctionResult = "1"
             return
         }
@@ -107,6 +107,12 @@ function Generate-AuthorizedPrincipalsFile {
     if (!$PSVersionTable.Platform -or $PSVersionTable.Platform -eq "Win32NT") {
         [Net.ServicePointManager]::SecurityProtocol = "tls12, tls11, tls"
         $ActualHostName = $env:ComputerName
+
+        if (!$(GetElevation)) {
+            Write-Error "The $($MyInvocation.MyCommand.Name) function must be run from an elevated PowerShell session! Halting!"
+            $global:FunctionResult = "1"
+            return
+        }
     }
 
     if (!$AuthorizedPrincipalsFileLocation) {
@@ -634,8 +640,8 @@ function Generate-AuthorizedPrincipalsFile {
 # SIG # Begin signature block
 # MIIMiAYJKoZIhvcNAQcCoIIMeTCCDHUCAQExCzAJBgUrDgMCGgUAMGkGCisGAQQB
 # gjcCAQSgWzBZMDQGCisGAQQBgjcCAR4wJgIDAQAABBAfzDtgWUsITrck0sYpfvNR
-# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUZzT4httnGSKq4FQZBATFFr+2
-# PVGgggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
+# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUXTeTX2JlbZ1htoxaEbCZo3Ps
+# VAugggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
 # 9w0BAQsFADAwMQwwCgYDVQQGEwNMQUIxDTALBgNVBAoTBFpFUk8xETAPBgNVBAMT
 # CFplcm9EQzAxMB4XDTE3MDkyMDIxMDM1OFoXDTE5MDkyMDIxMTM1OFowPTETMBEG
 # CgmSJomT8ixkARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMT
@@ -692,11 +698,11 @@ function Generate-AuthorizedPrincipalsFile {
 # ARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMTB1plcm9TQ0EC
 # E1gAAAH5oOvjAv3166MAAQAAAfkwCQYFKw4DAhoFAKB4MBgGCisGAQQBgjcCAQwx
 # CjAIoAKAAKECgAAwGQYJKoZIhvcNAQkDMQwGCisGAQQBgjcCAQQwHAYKKwYBBAGC
-# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFN/4h5lwz53bjTaG
-# /Nx99nYKLd71MA0GCSqGSIb3DQEBAQUABIIBAFS1uDeNZH08Y05rNRjLWo/SX/Je
-# kc7NvxKnl+rvd+EQ5tx9MCkAxkglVvPsqDoNAR5nWQ38gvyo93GwgROIkRll9oMk
-# GqM8yJJUaJteEweG4mxLBpk9I6IxEP25mAicVpWUK8MykFHnfXEM8GALogHuynTO
-# Ai8wLlSBB0br/HaKN45Qj7A1J24V/EPkAFYLiILrmcqz7/ezTSknIGTNudCtwvEj
-# jNLAzzpmdbK4WmJeoEINodU26+NYk+VESChuX72j5+TFT81TRBSmBVd80rQtd+bc
-# UCOnPJLdfTvlnARMyXuwmJ6pbU3lfTGPWGB1jQOeWZkWnITdqoHwI0jtDeU=
+# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFPn7Tiyb1BERqpbs
+# cJMQlJH6WVTGMA0GCSqGSIb3DQEBAQUABIIBALz2RnVfU2TgQr/I74DLS8Pm+Y/l
+# mSGjvP8FPh7J988nI+yjstKJi1xcXwkYrhcgxUqf/whQtt0jL/uFcnMe7nNd51nZ
+# d3QVISfXKRCm/WzXywYr770tdownHgzd4YXJbSCohmMWfkBUqCJTqjTGsASJxa63
+# opz9u23/vtb3egT1msZKSVu3R82ZQ1hStc/hL1zZjpvNBZl7R/mj+LEWv2pEzXpP
+# o6NVCZKk8GPmzVEYROGHwG6Uyc4z/XVV34iExc65t6fQT6jtqxMwmUCAv5gUvJsP
+# EkvYYpKZszgyZoUpPc9XOuLBihGpGf/1YS8ndxOGlKr1AOJHAgp3JTHuDl8=
 # SIG # End signature block

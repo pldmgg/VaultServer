@@ -47,6 +47,12 @@ function Get-VaultTokenAccessors {
     }
     if (!$PSVersionTable.Platform -or $PSVersionTable.Platform -eq "Win32NT") {
         [Net.ServicePointManager]::SecurityProtocol = "tls12, tls11, tls"
+
+        if (!$(GetElevation)) {
+            Write-Error "The $($MyInvocation.MyCommand.Name) function must be run from an elevated PowerShell session! Halting!"
+            $global:FunctionResult = "1"
+            return
+        }
     }
 
     # Make sure $VaultServerBaseUri is a valid Url
@@ -77,8 +83,8 @@ function Get-VaultTokenAccessors {
 # SIG # Begin signature block
 # MIIMiAYJKoZIhvcNAQcCoIIMeTCCDHUCAQExCzAJBgUrDgMCGgUAMGkGCisGAQQB
 # gjcCAQSgWzBZMDQGCisGAQQBgjcCAR4wJgIDAQAABBAfzDtgWUsITrck0sYpfvNR
-# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQU8VT2hrz/EhSA+7fgu7N34pbF
-# +Pygggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
+# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQULjfSSbmgi0yyXx2p2GCGbjqk
+# +yGgggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
 # 9w0BAQsFADAwMQwwCgYDVQQGEwNMQUIxDTALBgNVBAoTBFpFUk8xETAPBgNVBAMT
 # CFplcm9EQzAxMB4XDTE3MDkyMDIxMDM1OFoXDTE5MDkyMDIxMTM1OFowPTETMBEG
 # CgmSJomT8ixkARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMT
@@ -135,11 +141,11 @@ function Get-VaultTokenAccessors {
 # ARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMTB1plcm9TQ0EC
 # E1gAAAH5oOvjAv3166MAAQAAAfkwCQYFKw4DAhoFAKB4MBgGCisGAQQBgjcCAQwx
 # CjAIoAKAAKECgAAwGQYJKoZIhvcNAQkDMQwGCisGAQQBgjcCAQQwHAYKKwYBBAGC
-# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFN9Rx79wZ51AHRR5
-# g5USc10jDgzdMA0GCSqGSIb3DQEBAQUABIIBAMFRKgx4bt8G8bjjwaRaayj7gcCV
-# De7/vimtwg31JTpX6ja2kpb4mvrhrwRJjZZdKP9j9j0ZRHdHP786rn/VqSTG9flh
-# phcpKXfo9yKnOKJw59AHHK9ETW9Q8JumbK4d6rBcYKijrPYT0wD9xr0UIQvYHADU
-# kPvAMyfEhpN/MkOdMZLTPTr+e9KpCYJuzM9+kw9RcpfJHJHgMTIBVwIf2r2PqVIv
-# LtMY4LLhmkwr7NM52oRJxkJ4SI30gnw/x8EEryW/TDxJhkC1+dD8tFO8+7ao1MXr
-# bskCS/9l2MWlfgFgvb76w1SySYWVlks5IpOVUGvl2qW2U9ITvuvcXMJv7cE=
+# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFPiSGl8GScdm9cW0
+# N8EpRC28nmd3MA0GCSqGSIb3DQEBAQUABIIBAK0a/TYgtRaJk087ETCAurJdaFRe
+# sdXUpiZmD7YcDjkNBd5TLFn8XhrpgghnDoAf3CGK3L3KZpGY8NysiM/ECtuHP1+O
+# TutmsJCN/FLyshWUc7MkG9GzwA/rMD5lTdW+YIp9doUeHp6oLujGbeOfovqNAoVl
+# wQlO33WEZ9/jGGvd+0CG61QlklQDMAMUpsIjd0YzwDkq9szIbq3QkbsJ7995N+L4
+# +6S3dykexDnJoP7ARgUy7KfxnYjif9QwceqSwJqlWeryz/+KgIlJNUrm7a80uyeR
+# qape9uak0IXXPbUagUsiLuTtO8BsYx4M/HIZjIf3dX3l0MZ/FEzg1Uw3KHU=
 # SIG # End signature block

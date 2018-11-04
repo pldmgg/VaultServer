@@ -76,7 +76,7 @@ function Get-LDAPCert {
 
     if ($PSVersionTable.Platform -eq "Unix" -or $PSVersionTable.OS -match "Darwin" -and $env:SudoPwdPrompt) {
         if (GetElevation) {
-            Write-Error "You should not be running the VaultServer Module as root! Halting!"
+            Write-Error "You should not be running the $($MyInvocation.MyCommand.Name) function as root! Halting!"
             $global:FunctionResult = "1"
             return
         }
@@ -86,6 +86,12 @@ function Get-LDAPCert {
     }
     if (!$PSVersionTable.Platform -or $PSVersionTable.Platform -eq "Win32NT") {
         [Net.ServicePointManager]::SecurityProtocol = "tls12, tls11, tls"
+
+        if (!$(GetElevation)) {
+            Write-Error "The $($MyInvocation.MyCommand.Name) function must be run from an elevated PowerShell session! Halting!"
+            $global:FunctionResult = "1"
+            return
+        }
     }
 
     try {
@@ -490,8 +496,8 @@ function Get-LDAPCert {
 # SIG # Begin signature block
 # MIIMiAYJKoZIhvcNAQcCoIIMeTCCDHUCAQExCzAJBgUrDgMCGgUAMGkGCisGAQQB
 # gjcCAQSgWzBZMDQGCisGAQQBgjcCAR4wJgIDAQAABBAfzDtgWUsITrck0sYpfvNR
-# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUu2A9SudkFQ/EBWic77uJoYNe
-# edugggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
+# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUutWEllCKliLw5yYN6u9ICjPP
+# Q+agggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
 # 9w0BAQsFADAwMQwwCgYDVQQGEwNMQUIxDTALBgNVBAoTBFpFUk8xETAPBgNVBAMT
 # CFplcm9EQzAxMB4XDTE3MDkyMDIxMDM1OFoXDTE5MDkyMDIxMTM1OFowPTETMBEG
 # CgmSJomT8ixkARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMT
@@ -548,11 +554,11 @@ function Get-LDAPCert {
 # ARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMTB1plcm9TQ0EC
 # E1gAAAH5oOvjAv3166MAAQAAAfkwCQYFKw4DAhoFAKB4MBgGCisGAQQBgjcCAQwx
 # CjAIoAKAAKECgAAwGQYJKoZIhvcNAQkDMQwGCisGAQQBgjcCAQQwHAYKKwYBBAGC
-# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFEPKa4AdD3aTbHQx
-# s9r2jJN5XjCJMA0GCSqGSIb3DQEBAQUABIIBAB+6S3BrrlBxCO5LcXiyWprh58yB
-# byZqUkUXxCz0jCQB91sffsPgU9lyLd/Bw7Oi8LlQ3MihOjGZHP8maEquypwmeBR5
-# dUdlYHHbnuf9+M894tU8pT4kNxihGv7BrbrweK7BqsxUGa36ETvAJ+nz6ynlnh7c
-# cEmugwdCXkZoCzQ1K3P+GL5IeaCG8Z50dEhNACHL6cXVD9AL9GwwlvfI6t7XYoLB
-# ANOygUOXNPsdrYXPrqyBuT0j6aqZdzZgp/mGbQIP39qgj2Xqnf1FMs6OGfq1UGm2
-# EQzg56nlIcsi6XcLCVEx/FXpUr3PThWJvDolW2YbhmZ7HZr2vKgzIrSUCpQ=
+# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFKqGo7Ng7Xcjiy7u
+# Ztcvtz3alKOkMA0GCSqGSIb3DQEBAQUABIIBALshtdRaGWetZBH9ghomzGb+qFF+
+# PhQWWJmXmRda0cLO8ghd58DOSmVYZOzXx08SU7bZ+P61JkhEUpdSqOOMMuqsjFcF
+# mKlm4Ofhvaqeb+9fB9vDCwsXTsSi4/+cCsdpoN3S5wCD71QZ8/xirkjCX4KUggiF
+# mHqKILeUQttmFuo8ElkeqsjuCFkWRUz1ohl2Vx/A9AdrDDahB8Fp/Ank6RjcJWHo
+# qiWQsGapQSNj4KJ6KzjzrD8xvaXUzRXsuwYFHwP7JNZV69kTe+e6l9InWuafx2Bo
+# 9x8+dsqTovZw2FlSYkqC8YNY2/+ZtnXqwvvWBaZDohsYtK1wIB8Iirw3jxQ=
 # SIG # End signature block

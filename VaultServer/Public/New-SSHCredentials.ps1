@@ -136,7 +136,7 @@ function New-SSHCredentials {
 
     if ($PSVersionTable.Platform -eq "Unix" -or $PSVersionTable.OS -match "Darwin" -and $env:SudoPwdPrompt) {
         if (GetElevation) {
-            Write-Error "You should not be running the VaultServer Module as root! Halting!"
+            Write-Error "You should not be running the $($MyInvocation.MyCommand.Name) function as root! Halting!"
             $global:FunctionResult = "1"
             return
         }
@@ -146,6 +146,12 @@ function New-SSHCredentials {
     }
     if (!$PSVersionTable.Platform -or $PSVersionTable.Platform -eq "Win32NT") {
         [Net.ServicePointManager]::SecurityProtocol = "tls12, tls11, tls"
+
+        if (!$(GetElevation)) {
+            Write-Error "The $($MyInvocation.MyCommand.Name) function must be run from an elevated PowerShell session! Halting!"
+            $global:FunctionResult = "1"
+            return
+        }
     }
 
     if ($(!$VaultAuthToken -and !$DomainCredentialsWithAccessToVault) -or $($VaultAuthToken -and $DomainCredentialsWithAccessToVault)) {
@@ -296,7 +302,7 @@ function New-SSHCredentials {
     }
 
     # Finally, figure out the most efficient ssh command to use to remote into the remote host.
-    Write-Host "Determing the most efficient ssh command to use with your new credentials..."
+    Write-Host "Determining the most efficient ssh command to use with your new credentials..."
     if ($PSVersionTable.Platform -eq "Unix" -or $PSVersionTable.OS -match "Darwin") {
         Write-Warning "Please IGNORE any password prompts that may appear in STDOUT."
     }
@@ -320,8 +326,8 @@ function New-SSHCredentials {
 # SIG # Begin signature block
 # MIIMiAYJKoZIhvcNAQcCoIIMeTCCDHUCAQExCzAJBgUrDgMCGgUAMGkGCisGAQQB
 # gjcCAQSgWzBZMDQGCisGAQQBgjcCAR4wJgIDAQAABBAfzDtgWUsITrck0sYpfvNR
-# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUItJumvQZ+rphRzzpSFB/KL4v
-# lVmgggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
+# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUStv1JtqkthbwT6XKz7tKjyHI
+# GL6gggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
 # 9w0BAQsFADAwMQwwCgYDVQQGEwNMQUIxDTALBgNVBAoTBFpFUk8xETAPBgNVBAMT
 # CFplcm9EQzAxMB4XDTE3MDkyMDIxMDM1OFoXDTE5MDkyMDIxMTM1OFowPTETMBEG
 # CgmSJomT8ixkARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMT
@@ -378,11 +384,11 @@ function New-SSHCredentials {
 # ARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMTB1plcm9TQ0EC
 # E1gAAAH5oOvjAv3166MAAQAAAfkwCQYFKw4DAhoFAKB4MBgGCisGAQQBgjcCAQwx
 # CjAIoAKAAKECgAAwGQYJKoZIhvcNAQkDMQwGCisGAQQBgjcCAQQwHAYKKwYBBAGC
-# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFJL8ubxcgYIiwAzq
-# aRh5gXgoor/dMA0GCSqGSIb3DQEBAQUABIIBAIqhRsNaM9uIVU37J+rmvMrwmN9u
-# UnHPiGQwd7jHfe6poU81KbodBQTAFDQtC/N+SqTO13YZzDbMEcvCFH/lWbUjPyI1
-# bVtU9FCU08SAW2Bg6p2douYbIaD84DnCGQnduHeO5gay1fwbVVVpzJCxc/xk3qIU
-# juFnSeHBa2C6CrE0CHsh0ZgdbYR4aBvsKM57pUtiibNp48dp2/bSqqHJ+IUMKfS9
-# 9fLtFMkKoQjpaQnmK5ap3q2bNvDryE7fCfqMF3m7bQvllUzhVE7CT8udP5p+z8XE
-# 684yybklICoBkzkmCu2qSrNMF3ah4TNNNgO+WBY/jArhnKYaFT9kPO4divw=
+# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFP0nGIQTiO/aBNYt
+# vYic026d+POJMA0GCSqGSIb3DQEBAQUABIIBAHE7Cozdao5yWXv8K9NVCDGWJs/r
+# eFDA1KyFgvQz5pUShCIbsWVoRbTYc1b29iOX8n8S0cYVnLNWLmF4eQ0VY4Rl4nog
+# FKB+T5EfYTxM6gCOAIzHYGsfAb+HvXfDLduxfzBB8bj55JeJl9q4T4W+XUxuu8ZZ
+# sigEwUq6OHvflGvG/T0hihQcqTCwzM+vOyn+mWND9TpsGU1dTg9ng4X+lol2P4qh
+# 3LKAoKlDzl9ErbwziDkJx9HXmuLBSSlSW+3vpEluxM55t7pzhmHzp+Qm9levtZFo
+# dgpSWKGPMXN2ynOR/X0VFCAIQiZe74cjWCf7DzL/y8/ECPmkgZUQAYrlRfc=
 # SIG # End signature block

@@ -113,13 +113,20 @@ function New-SSHKey {
 
     if ($PSVersionTable.Platform -eq "Unix" -or $PSVersionTable.OS -match "Darwin" -and $env:SudoPwdPrompt) {
         if (GetElevation) {
-            Write-Error "You should not be running the VaultServer Module as root! Halting!"
+            Write-Error "You should not be running the $($MyInvocation.MyCommand.Name) as root! Halting!"
             $global:FunctionResult = "1"
             return
         }
         RemoveMySudoPwd
         NewCronToAddSudoPwd
         $env:SudoPwdPrompt = $False
+    }
+    if (!$PSVersionTable.Platform -or $PSVersionTable.Platform -eq "Win32NT") {
+        if (!$(GetElevation)) {
+            Write-Error "The $($MyInvocation.MyCommand.Name) function must be run from an elevated PowerShell session! Halting!"
+            $global:FunctionResult = "1"
+            return
+        }
     }
 
     if (!$PSVersionTable.Platform -or $PSVersionTable.Platform -eq "Win32NT") {
@@ -860,8 +867,8 @@ function New-SSHKey {
 # SIG # Begin signature block
 # MIIMiAYJKoZIhvcNAQcCoIIMeTCCDHUCAQExCzAJBgUrDgMCGgUAMGkGCisGAQQB
 # gjcCAQSgWzBZMDQGCisGAQQBgjcCAR4wJgIDAQAABBAfzDtgWUsITrck0sYpfvNR
-# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUsEbUEz+aXcUb/bViO//ndar1
-# JBWgggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
+# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUJU1dnCnltyJZUz1Jn8E2bov/
+# bU+gggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
 # 9w0BAQsFADAwMQwwCgYDVQQGEwNMQUIxDTALBgNVBAoTBFpFUk8xETAPBgNVBAMT
 # CFplcm9EQzAxMB4XDTE3MDkyMDIxMDM1OFoXDTE5MDkyMDIxMTM1OFowPTETMBEG
 # CgmSJomT8ixkARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMT
@@ -918,11 +925,11 @@ function New-SSHKey {
 # ARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMTB1plcm9TQ0EC
 # E1gAAAH5oOvjAv3166MAAQAAAfkwCQYFKw4DAhoFAKB4MBgGCisGAQQBgjcCAQwx
 # CjAIoAKAAKECgAAwGQYJKoZIhvcNAQkDMQwGCisGAQQBgjcCAQQwHAYKKwYBBAGC
-# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFC+QVmUeJjauM/iH
-# GMnyeJ/AhMLEMA0GCSqGSIb3DQEBAQUABIIBAJV0RpbWaNlchK/ZCtuy5aucwGX8
-# ZBEgbfK83IxF4gGuEAvpAgTN6O5MpYoVD8kt1Ch22x/UuNPIVIoHHh2sQR2bBRz1
-# /sxdJ8Nyi+CbnZtv9zkGM5z3w8dRbWkgNxolCI+qgTKb6aPBR6ZzEYDTO5gkoXDB
-# 3BPPgFBr2fCPFORIWHllTURyut9HZbfycbue9K30aajnj4UYyHKEWsWm7wcPmI7r
-# IgQyIaySzI9vm/OtyJLLJv1bCkusrANWm3Ncdg/gUHu1UGpGw8vzXy3yTpf1IQIt
-# a/FpGSSUWDO8XHwedBJbiLHkNJ72VjuTm2i7LsmHX9fp7qvIrSFkSfpOMI0=
+# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFIiG4ELVOxi6pMYe
+# s/VCBHnuNgDcMA0GCSqGSIb3DQEBAQUABIIBAHAULpcyU1uG9yx6IQh85A1USVeJ
+# GCgAot1HaBnDm2ocbM9lT/KhiUuojskLRlqzmCK6hQsqCO2XiX4E0B/lZwiTHyGt
+# GvAnp0CSEG0paULANeubxQ2GoJAYEBKCxJk1f7LD8DGtnO5WbDLppoWVjGG5Ho9q
+# 9lb/wb4cJTyUfyQ6qthv6u40P+8Q/T1upsfyGDpYm9vVzkl+D7dc7Oi5/13oTcAS
+# 7VLlKC0bm2HPDUjuwRDprhar1zgTyGdAe3WK4wT3jsA2A6jJm/wj2dIL9dMQd6bV
+# eh/HkFRYSgn+0rVRViErJ2P08y7nic1KQ3qprpMzAlbw5FdrsaG1tYp6ihs=
 # SIG # End signature block

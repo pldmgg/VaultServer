@@ -42,7 +42,7 @@ function Sign-SSHHostPublicKey {
 
     if ($PSVersionTable.Platform -eq "Unix" -or $PSVersionTable.OS -match "Darwin" -and $env:SudoPwdPrompt) {
         if (GetElevation) {
-            Write-Error "You should not be running the VaultServer Module as root! Halting!"
+            Write-Error "You should not be running the $($MyInvocation.MyCommand.Name) function as root! Halting!"
             $global:FunctionResult = "1"
             return
         }
@@ -52,6 +52,12 @@ function Sign-SSHHostPublicKey {
     }
     if (!$PSVersionTable.Platform -or $PSVersionTable.Platform -eq "Win32NT") {
         [Net.ServicePointManager]::SecurityProtocol = "tls12, tls11, tls"
+
+        if (!$(GetElevation)) {
+            Write-Error "The $($MyInvocation.MyCommand.Name) function must be run from an elevated PowerShell session! Halting!"
+            $global:FunctionResult = "1"
+            return
+        }
     }
 
     if (!$PSVersionTable.Platform -or $PSVersionTable.Platform -eq "Win32NT") {
@@ -354,9 +360,10 @@ function Sign-SSHHostPublicKey {
     }
 
     # Determine if sshd_config already has the 'HostCertificate' option active
-    $ExistingHostCertificateOption = $sshdContent -match "HostCertificate" | Where-Object {$_ -notmatch "#"}
-    $HostCertificatePath =  $PathToSSHHostPublicKeyFile -replace "\.pub","-cert.pub"
-    $HostCertificateOptionLine = "HostCertificate $HostCertificatePathWithForwardSlashes"
+    $HostCertificatePath =  $PathToSSHHostPublicKeyFile -replace "\.pub","-cert.pub" -replace "\\","/"
+    $HostCertificateOptionLine = "HostCertificate $HostCertificatePath"
+    #$ExistingHostCertificateOption = $sshdContent -match [regex]::Escape($HostCertificateOptionLine) | Where-Object {$_ -notmatch "#"}
+    $ExistingHostCertificateOption = $sshdContent -match "^HostCertificate"
     
     if (!$ExistingHostCertificateOption) {
         $LineNumberToInsertOn = $sshdContent.IndexOf($($sshdContent -match "HostKey .*ssh_host_rsa_key$")) + 1
@@ -467,8 +474,8 @@ function Sign-SSHHostPublicKey {
 # SIG # Begin signature block
 # MIIMiAYJKoZIhvcNAQcCoIIMeTCCDHUCAQExCzAJBgUrDgMCGgUAMGkGCisGAQQB
 # gjcCAQSgWzBZMDQGCisGAQQBgjcCAR4wJgIDAQAABBAfzDtgWUsITrck0sYpfvNR
-# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUUAfabax4RO/6Ihbyh/klf+AL
-# JASgggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
+# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUVGLwsY4pWRmHEwmO0otiP2uj
+# 3JOgggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
 # 9w0BAQsFADAwMQwwCgYDVQQGEwNMQUIxDTALBgNVBAoTBFpFUk8xETAPBgNVBAMT
 # CFplcm9EQzAxMB4XDTE3MDkyMDIxMDM1OFoXDTE5MDkyMDIxMTM1OFowPTETMBEG
 # CgmSJomT8ixkARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMT
@@ -525,11 +532,11 @@ function Sign-SSHHostPublicKey {
 # ARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMTB1plcm9TQ0EC
 # E1gAAAH5oOvjAv3166MAAQAAAfkwCQYFKw4DAhoFAKB4MBgGCisGAQQBgjcCAQwx
 # CjAIoAKAAKECgAAwGQYJKoZIhvcNAQkDMQwGCisGAQQBgjcCAQQwHAYKKwYBBAGC
-# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFPIuEdgxKuRUXoV3
-# tfgM1fJVKmmrMA0GCSqGSIb3DQEBAQUABIIBAEExtnWEZbfGGmtzrxl4fJlzRrRt
-# b3pdwSOd5UGfULxiaUbCMiNwR8oKcG5HTpqg4WpV6+RFLw8D0xyT9/tB6BVR0TnW
-# kWmImbQQOHWer1/TVf6dUwKIrBbXTAO4cT5VWnIEB8Tt5iD07uEKPMQ3Maxue2Eb
-# vrF+rC6IZ9p93CSLkBTW8ukNgga5x71v8L58FBMh2lDdLE08bmCyXtkFTc3LS1a9
-# mZ/iCVrXnJKR7HDa98gmwvE8lliA7SFE3+kycTZPmOqempmYs0ohl3A2NJrgY8n6
-# hKCLOaAByRIgKwA7PkCtmWRD61feDnVIfVMJeVl5xcUe+GcX3DQ1fx6lYUk=
+# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFIFeDxXaMFRHhEbH
+# H7LXlOOSn06tMA0GCSqGSIb3DQEBAQUABIIBAKFkL6ZM5bca5qvAkdxDnbICsrrq
+# sFQbY+yBRjOGbAYcj8Oz1okisdIA4B1g+odfQihKHAl5v3BHFk+Z5B1RMblGeHXr
+# 9k4YFc+7Szcx+fu/+f6lQnzT9NWmOELdZ06QbAnbX0W6e6X07BYQYJcidGK03jGx
+# VWdlYgweUjOxz7A368ToIqLQhHWPD0u6OFQllWe6dbvQIguqCgiQSm53DpOvnPGO
+# Sn1l8pri+iQa2p/vBbOrFB3RPnBxC+Id50BXopJaJAjYtG1kFtgZ3lHIgLMK76kd
+# OqXBx3hJcYGcU7gM5qH/br9HnLhlXiha5w3OFRU5gYxwsVeYmSeEA+eYpm4=
 # SIG # End signature block

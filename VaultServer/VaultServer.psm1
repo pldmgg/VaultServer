@@ -288,7 +288,7 @@ function Add-CAPubKeyToSSHAndSSHDConfig {
 
     if ($PSVersionTable.Platform -eq "Unix" -or $PSVersionTable.OS -match "Darwin" -and $env:SudoPwdPrompt) {
         if (GetElevation) {
-            Write-Error "You should not be running the VaultServer Module as root! Halting!"
+            Write-Error "You should not be running the $($MyInvocation.MyCommand.Name) function as root! Halting!"
             $global:FunctionResult = "1"
             return
         }
@@ -298,6 +298,12 @@ function Add-CAPubKeyToSSHAndSSHDConfig {
     }
     if (!$PSVersionTable.Platform -or $PSVersionTable.Platform -eq "Win32NT") {
         [Net.ServicePointManager]::SecurityProtocol = "tls12, tls11, tls"
+
+        if (!$(GetElevation)) {
+            Write-Error "The $($MyInvocation.MyCommand.Name) function must be run from an elevated PowerShell session! Halting!"
+            $global:FunctionResult = "1"
+            return
+        }
     }
 
     if ($($PSBoundParameters.Keys -match "UserKeys").Count -gt 1) {
@@ -1935,7 +1941,7 @@ function Configure-VaultServerForLDAPAuth {
 
     if ($PSVersionTable.Platform -eq "Unix" -or $PSVersionTable.OS -match "Darwin" -and $env:SudoPwdPrompt) {
         if (GetElevation) {
-            Write-Error "You should not be running the VaultServer Module as root! Halting!"
+            Write-Error "You should not be running the $($MyInvocation.MyCommand.Name) function as root! Halting!"
             $global:FunctionResult = "1"
             return
         }
@@ -1945,6 +1951,12 @@ function Configure-VaultServerForLDAPAuth {
     }
     if (!$PSVersionTable.Platform -or $PSVersionTable.Platform -eq "Win32NT") {
         [Net.ServicePointManager]::SecurityProtocol = "tls12, tls11, tls"
+
+        if (!$(GetElevation)) {
+            Write-Error "The $($MyInvocation.MyCommand.Name) function must be run from an elevated PowerShell session! Halting!"
+            $global:FunctionResult = "1"
+            return
+        }
     }
 
     # Create $Ouput Hashtable so we can add to it as we go and return whatever was done in case of error
@@ -3141,7 +3153,7 @@ function Generate-AuthorizedPrincipalsFile {
 
     if ($PSVersionTable.Platform -eq "Unix" -or $PSVersionTable.OS -match "Darwin" -and $env:SudoPwdPrompt) {
         if (GetElevation) {
-            Write-Error "You should not be running the VaultServer Module as root! Halting!"
+            Write-Error "You should not be running the $($MyInvocation.MyCommand.Name) function Module as root! Halting!"
             $global:FunctionResult = "1"
             return
         }
@@ -3154,6 +3166,12 @@ function Generate-AuthorizedPrincipalsFile {
     if (!$PSVersionTable.Platform -or $PSVersionTable.Platform -eq "Win32NT") {
         [Net.ServicePointManager]::SecurityProtocol = "tls12, tls11, tls"
         $ActualHostName = $env:ComputerName
+
+        if (!$(GetElevation)) {
+            Write-Error "The $($MyInvocation.MyCommand.Name) function must be run from an elevated PowerShell session! Halting!"
+            $global:FunctionResult = "1"
+            return
+        }
     }
 
     if (!$AuthorizedPrincipalsFileLocation) {
@@ -3722,13 +3740,20 @@ function Generate-SSHUserDirFileInfo {
 
     if ($PSVersionTable.Platform -eq "Unix" -or $PSVersionTable.OS -match "Darwin" -and $env:SudoPwdPrompt) {
         if (GetElevation) {
-            Write-Error "You should not be running the VaultServer Module as root! Halting!"
+            Write-Error "You should not be running the $($MyInvocation.MyCommand.Name) function as root! Halting!"
             $global:FunctionResult = "1"
             return
         }
         RemoveMySudoPwd
         NewCronToAddSudoPwd
         $env:SudoPwdPrompt = $False
+    }
+    if (!$PSVersionTable.Platform -or $PSVersionTable.Platform -eq "Win32NT") {
+        if (!$(GetElevation)) {
+            Write-Error "The $($MyInvocation.MyCommand.Name) function must be run from an elevated PowerShell session! Halting!"
+            $global:FunctionResult = "1"
+            return
+        }
     }
 
     # Make sure we have access to ssh binaries
@@ -3878,7 +3903,7 @@ function Get-LDAPCert {
 
     if ($PSVersionTable.Platform -eq "Unix" -or $PSVersionTable.OS -match "Darwin" -and $env:SudoPwdPrompt) {
         if (GetElevation) {
-            Write-Error "You should not be running the VaultServer Module as root! Halting!"
+            Write-Error "You should not be running the $($MyInvocation.MyCommand.Name) function as root! Halting!"
             $global:FunctionResult = "1"
             return
         }
@@ -3888,6 +3913,12 @@ function Get-LDAPCert {
     }
     if (!$PSVersionTable.Platform -or $PSVersionTable.Platform -eq "Win32NT") {
         [Net.ServicePointManager]::SecurityProtocol = "tls12, tls11, tls"
+
+        if (!$(GetElevation)) {
+            Write-Error "The $($MyInvocation.MyCommand.Name) function must be run from an elevated PowerShell session! Halting!"
+            $global:FunctionResult = "1"
+            return
+        }
     }
 
     try {
@@ -4443,13 +4474,20 @@ function Get-SSHClientAuthSanity {
 
     if ($PSVersionTable.Platform -eq "Unix" -or $PSVersionTable.OS -match "Darwin" -and $env:SudoPwdPrompt) {
         if (GetElevation) {
-            Write-Error "You should not be running the VaultServer Module as root! Halting!"
+            Write-Error "You should not be running the $($MyInvocation.MyCommand.Name) function as root! Halting!"
             $global:FunctionResult = "1"
             return
         }
         RemoveMySudoPwd
         NewCronToAddSudoPwd
         $env:SudoPwdPrompt = $False
+    }
+    if (!$PSVersionTable.Platform -or $PSVersionTable.Platform -eq "Win32NT") {
+        if (!$(GetElevation)) {
+            Write-Error "The $($MyInvocation.MyCommand.Name) function must be run from an elevated PowerShell session! Halting!"
+            $global:FunctionResult = "1"
+            return
+        }
     }
 
     # Make sure we have access to ssh binaries
@@ -5643,6 +5681,12 @@ function Get-VaultTokenAccessors {
     }
     if (!$PSVersionTable.Platform -or $PSVersionTable.Platform -eq "Win32NT") {
         [Net.ServicePointManager]::SecurityProtocol = "tls12, tls11, tls"
+
+        if (!$(GetElevation)) {
+            Write-Error "The $($MyInvocation.MyCommand.Name) function must be run from an elevated PowerShell session! Halting!"
+            $global:FunctionResult = "1"
+            return
+        }
     }
 
     # Make sure $VaultServerBaseUri is a valid Url
@@ -6874,7 +6918,7 @@ function New-SSHCredentials {
 
     if ($PSVersionTable.Platform -eq "Unix" -or $PSVersionTable.OS -match "Darwin" -and $env:SudoPwdPrompt) {
         if (GetElevation) {
-            Write-Error "You should not be running the VaultServer Module as root! Halting!"
+            Write-Error "You should not be running the $($MyInvocation.MyCommand.Name) function as root! Halting!"
             $global:FunctionResult = "1"
             return
         }
@@ -6884,6 +6928,12 @@ function New-SSHCredentials {
     }
     if (!$PSVersionTable.Platform -or $PSVersionTable.Platform -eq "Win32NT") {
         [Net.ServicePointManager]::SecurityProtocol = "tls12, tls11, tls"
+
+        if (!$(GetElevation)) {
+            Write-Error "The $($MyInvocation.MyCommand.Name) function must be run from an elevated PowerShell session! Halting!"
+            $global:FunctionResult = "1"
+            return
+        }
     }
 
     if ($(!$VaultAuthToken -and !$DomainCredentialsWithAccessToVault) -or $($VaultAuthToken -and $DomainCredentialsWithAccessToVault)) {
@@ -7034,7 +7084,7 @@ function New-SSHCredentials {
     }
 
     # Finally, figure out the most efficient ssh command to use to remote into the remote host.
-    Write-Host "Determing the most efficient ssh command to use with your new credentials..."
+    Write-Host "Determining the most efficient ssh command to use with your new credentials..."
     if ($PSVersionTable.Platform -eq "Unix" -or $PSVersionTable.OS -match "Darwin") {
         Write-Warning "Please IGNORE any password prompts that may appear in STDOUT."
     }
@@ -7171,13 +7221,20 @@ function New-SSHKey {
 
     if ($PSVersionTable.Platform -eq "Unix" -or $PSVersionTable.OS -match "Darwin" -and $env:SudoPwdPrompt) {
         if (GetElevation) {
-            Write-Error "You should not be running the VaultServer Module as root! Halting!"
+            Write-Error "You should not be running the $($MyInvocation.MyCommand.Name) as root! Halting!"
             $global:FunctionResult = "1"
             return
         }
         RemoveMySudoPwd
         NewCronToAddSudoPwd
         $env:SudoPwdPrompt = $False
+    }
+    if (!$PSVersionTable.Platform -or $PSVersionTable.Platform -eq "Win32NT") {
+        if (!$(GetElevation)) {
+            Write-Error "The $($MyInvocation.MyCommand.Name) function must be run from an elevated PowerShell session! Halting!"
+            $global:FunctionResult = "1"
+            return
+        }
     }
 
     if (!$PSVersionTable.Platform -or $PSVersionTable.Platform -eq "Win32NT") {
@@ -8100,7 +8157,7 @@ function Sign-SSHHostPublicKey {
 
     if ($PSVersionTable.Platform -eq "Unix" -or $PSVersionTable.OS -match "Darwin" -and $env:SudoPwdPrompt) {
         if (GetElevation) {
-            Write-Error "You should not be running the VaultServer Module as root! Halting!"
+            Write-Error "You should not be running the $($MyInvocation.MyCommand.Name) function as root! Halting!"
             $global:FunctionResult = "1"
             return
         }
@@ -8110,6 +8167,12 @@ function Sign-SSHHostPublicKey {
     }
     if (!$PSVersionTable.Platform -or $PSVersionTable.Platform -eq "Win32NT") {
         [Net.ServicePointManager]::SecurityProtocol = "tls12, tls11, tls"
+
+        if (!$(GetElevation)) {
+            Write-Error "The $($MyInvocation.MyCommand.Name) function must be run from an elevated PowerShell session! Halting!"
+            $global:FunctionResult = "1"
+            return
+        }
     }
 
     if (!$PSVersionTable.Platform -or $PSVersionTable.Platform -eq "Win32NT") {
@@ -8412,9 +8475,10 @@ function Sign-SSHHostPublicKey {
     }
 
     # Determine if sshd_config already has the 'HostCertificate' option active
-    $ExistingHostCertificateOption = $sshdContent -match "HostCertificate" | Where-Object {$_ -notmatch "#"}
-    $HostCertificatePath =  $PathToSSHHostPublicKeyFile -replace "\.pub","-cert.pub"
-    $HostCertificateOptionLine = "HostCertificate $HostCertificatePathWithForwardSlashes"
+    $HostCertificatePath =  $PathToSSHHostPublicKeyFile -replace "\.pub","-cert.pub" -replace "\\","/"
+    $HostCertificateOptionLine = "HostCertificate $HostCertificatePath"
+    #$ExistingHostCertificateOption = $sshdContent -match [regex]::Escape($HostCertificateOptionLine) | Where-Object {$_ -notmatch "#"}
+    $ExistingHostCertificateOption = $sshdContent -match "^HostCertificate"
     
     if (!$ExistingHostCertificateOption) {
         $LineNumberToInsertOn = $sshdContent.IndexOf($($sshdContent -match "HostKey .*ssh_host_rsa_key$")) + 1
@@ -8626,7 +8690,7 @@ function Sign-SSHUserPublicKey {
 
     if ($PSVersionTable.Platform -eq "Unix" -or $PSVersionTable.OS -match "Darwin" -and $env:SudoPwdPrompt) {
         if (GetElevation) {
-            Write-Error "You should not be running the VaultServer Module as root! Halting!"
+            Write-Error "You should not be running the $($MyInvocation.MyCommand.Name) function as root! Halting!"
             $global:FunctionResult = "1"
             return
         }
@@ -8636,6 +8700,12 @@ function Sign-SSHUserPublicKey {
     }
     if (!$PSVersionTable.Platform -or $PSVersionTable.Platform -eq "Win32NT") {
         [Net.ServicePointManager]::SecurityProtocol = "tls12, tls11, tls"
+
+        if (!$(GetElevation)) {
+            Write-Error "The $($MyInvocation.MyCommand.Name) function must be run from an elevated PowerShell session! Halting!"
+            $global:FunctionResult = "1"
+            return
+        }
     }
 
     if ($AddToSSHAgent) {
@@ -10212,8 +10282,8 @@ if(Win32.CertStrToName(X509_ASN_ENCODING, DN, CERT_X500_NAME_STR, IntPtr.Zero, n
 # SIG # Begin signature block
 # MIIMiAYJKoZIhvcNAQcCoIIMeTCCDHUCAQExCzAJBgUrDgMCGgUAMGkGCisGAQQB
 # gjcCAQSgWzBZMDQGCisGAQQBgjcCAR4wJgIDAQAABBAfzDtgWUsITrck0sYpfvNR
-# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUPquc8tnToQkXtdVVfpkHRfJT
-# flegggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
+# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUMo91Jq/dlDjSCHdJgSh9NXjV
+# olagggn9MIIEJjCCAw6gAwIBAgITawAAAB/Nnq77QGja+wAAAAAAHzANBgkqhkiG
 # 9w0BAQsFADAwMQwwCgYDVQQGEwNMQUIxDTALBgNVBAoTBFpFUk8xETAPBgNVBAMT
 # CFplcm9EQzAxMB4XDTE3MDkyMDIxMDM1OFoXDTE5MDkyMDIxMTM1OFowPTETMBEG
 # CgmSJomT8ixkARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMT
@@ -10270,11 +10340,11 @@ if(Win32.CertStrToName(X509_ASN_ENCODING, DN, CERT_X500_NAME_STR, IntPtr.Zero, n
 # ARkWA0xBQjEUMBIGCgmSJomT8ixkARkWBFpFUk8xEDAOBgNVBAMTB1plcm9TQ0EC
 # E1gAAAH5oOvjAv3166MAAQAAAfkwCQYFKw4DAhoFAKB4MBgGCisGAQQBgjcCAQwx
 # CjAIoAKAAKECgAAwGQYJKoZIhvcNAQkDMQwGCisGAQQBgjcCAQQwHAYKKwYBBAGC
-# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFMlumQPZ1/OfsTEs
-# s2CMrP894iGUMA0GCSqGSIb3DQEBAQUABIIBAIK7YpQ9xymLC2sykNwDviti/Ntn
-# WbXkJyviPGfXAVeQGECsfkMiCSCspoTTCSwifICc5PcCZQyevdOaEEe5jy8h+YKM
-# OkmQHYCQvU2z43NjkE46ir35CtTOC9IuS3Tt3S02Prsx11/toAcrXIhZUTIA7yKz
-# DOZtxvogddEGx+vlps41xKmVsXjgGtnP96xTIvLFDmnwEM+iRwcDlEethP4NlmXV
-# jpTrHLeK8sokr9WzAKhkjiR/Ns+wF6tBOmm9jKPPDH6B1ucnxHiVOZ1pxw5Hng6k
-# q5QUCfPBiTxArqtwvWlvi78YLSVx41rSR+uZOxl+l7O6FN/n7I61h6tROUo=
+# NwIBCzEOMAwGCisGAQQBgjcCARUwIwYJKoZIhvcNAQkEMRYEFJOYSA3AymfBlx1E
+# giv/C3AFgMngMA0GCSqGSIb3DQEBAQUABIIBAAuYro2WF9WyIkR8Cjbs76e3GrE9
+# ijmT0HxP8CedJ3PZtKi03CKcQFzCo3PtYcisTo2CZGda+Zs3tnaU2AHNUDWl0qcK
+# EZ0/P7Krl/rdcc3pB6srXIub9nFOFNXyZc2F/SRO4eIuIcM3LixmJBFthckHp64V
+# H1sPlzHQeZ5YR+mVtf1RVisGuearNtj4Y8Z2aE6M5Ie+CwU2WVvb+97/gnvUjr5I
+# y8VC6wsjaT4MNYHUVI4MqFqrDdUGzC0PjGv7uASyXGD75iLs/RRDBBsltmleaCXK
+# Eb83BAtnTSXa+MV39urpcMAjQNEfQ8usW8Fo5QK3R4uNUO2ujcFJ+1Ojgak=
 # SIG # End signature block
