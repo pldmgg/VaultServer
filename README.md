@@ -4,7 +4,7 @@
 # VaultServer
 Create, configure, and interact with [Hashicorp Vault Server](https://www.vaultproject.io/) to help manage secrets on your domain.
 
-Compatible with Windows PowerShell 5.1 and PowerShell Core 6.X (on Windows).
+Compatible with Windows PowerShell 5.1 and PowerShell Core 6.X (on Windows and Linux).
 
 ## Getting Started
 
