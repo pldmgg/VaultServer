@@ -1,5 +1,9 @@
 # Change log
 
+## 1.0.1 (November 14, 2018)
+
+- Fix Authenticode Signature Attempt 1
+
 ## 1.0.0 (November 4, 2018)
 
 - Now works crossplatform
